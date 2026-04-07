@@ -1,0 +1,78 @@
+﻿services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: xlh-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: xiaolanhe
+      POSTGRES_USER: xlh
+      POSTGRES_PASSWORD: xlh123456
+    ports:
+      - "5432:5432"
+    volumes:
+      - xlh-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xlh -d xiaolanhe"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4
+    container_name: xlh-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - xlh-redis-data:/data
+    command: redis-server --appendonly yes
+
+  rmqnamesrv:
+    image: apache/rocketmq:5.3.2
+    container_name: xlh-rmq-namesrv
+    restart: unless-stopped
+    ports:
+      - "9876:9876"
+    command: sh mqnamesrv
+
+  rmqbroker:
+    image: apache/rocketmq:5.3.2
+    container_name: xlh-rmq-broker
+    restart: unless-stopped
+    user: "0:0"
+    depends_on:
+      - rmqnamesrv
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+      - "10912:10912"
+    environment:
+      NAMESRV_ADDR: rmqnamesrv:9876
+      JAVA_OPT_EXT: "-server -Xms512m -Xmx512m -Xmn256m"
+    volumes:
+      - ./rocketmq/broker.conf:/home/rocketmq/broker.conf
+      - xlh-rocketmq-logs:/home/rocketmq/logs
+      - xlh-rocketmq-store:/home/rocketmq/store
+    command: sh mqbroker -c /home/rocketmq/broker.conf
+
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: xlh-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: xlhminio
+      MINIO_ROOT_PASSWORD: xlhminio123456
+    volumes:
+      - xlh-minio-data:/data
+    command: server /data --console-address ":9001"
+
+volumes:
+  xlh-postgres-data:
+  xlh-redis-data:
+  xlh-rocketmq-logs:
+  xlh-rocketmq-store:
+  xlh-minio-data:

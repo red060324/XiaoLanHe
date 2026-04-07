@@ -1,0 +1,36 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/xiaolanhe
+    username: xlh
+    password: xlh123456
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 3s
+  flyway:
+    enabled: true
+  ai:
+    openai:
+      base-url: ${XLH_AI_BASE_URL:https://api.openai.com}
+      api-key: ${XLH_AI_API_KEY:replace-me}
+      chat:
+        options:
+          model: ${XLH_AI_CHAT_MODEL:gpt-4.1-mini}
+          temperature: 0.4
+      embedding:
+        options:
+          model: ${XLH_AI_EMBEDDING_MODEL:text-embedding-3-small}
+
+rocketmq:
+  name-server: 127.0.0.1:9876
+  producer:
+    group: xiaolanhe-local-producer
+
+xiaolanhe:
+  storage:
+    minio:
+      endpoint: http://127.0.0.1:9000
+      access-key: xlhminio
+      secret-key: xlhminio123456
+      bucket: xlh-dev

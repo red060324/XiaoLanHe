@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: xiaolanhe
+  profiles:
+    active: dev
+
+server:
+  port: 8088
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+xiaolanhe:
+  agent:
+    mode: single-orchestrator
+    default-game: genshin
+    default-region: cn
+  messaging:
+    topics:
+      chat-audit: xiaolanhe.event.chat.audit
+  search:
+    enabled: false
+    provider: placeholder
+    endpoint:
+    api-key:
+    cache-ttl: 10m
