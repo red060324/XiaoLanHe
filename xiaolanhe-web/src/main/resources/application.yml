@@ -19,14 +19,9 @@ management:
 xiaolanhe:
   agent:
     mode: single-orchestrator
-    default-game: genshin
-    default-region: cn
   messaging:
     topics:
-      chat-audit: xiaolanhe.event.chat.audit
+      chat-audit: xiaolanhe_chat_audit
   search:
     enabled: false
-    provider: placeholder
-    endpoint:
-    api-key:
     cache-ttl: 10m

@@ -20,7 +20,7 @@ public class ConversationRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public long findOrCreateSession(String sessionKey, String gameCode, String regionCode) {
+    public long findOrCreateSession(String sessionKey) {
         Long existing = jdbcTemplate.query(
                 "select id from conversation_session where session_key = ?",
                 ps -> ps.setString(1, sessionKey),
@@ -35,15 +35,13 @@ public class ConversationRepository {
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(
                     """
-                    insert into conversation_session(session_key, game_code, region_code, metadata)
-                    values (?, ?, ?, ?::jsonb)
+                    insert into conversation_session(session_key, metadata)
+                    values (?, ?::jsonb)
                     """,
-                    Statement.RETURN_GENERATED_KEYS
+                    new String[]{"id"}
             );
             ps.setString(1, sessionKey);
-            ps.setString(2, gameCode);
-            ps.setString(3, regionCode);
-            ps.setString(4, "{}");
+            ps.setString(2, "{}");
             return ps;
         }, keyHolder);
 

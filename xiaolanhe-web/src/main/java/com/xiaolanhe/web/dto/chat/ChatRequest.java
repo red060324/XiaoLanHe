@@ -4,8 +4,6 @@ import jakarta.validation.constraints.NotBlank;
 
 public record ChatRequest(
         String sessionId,
-        @NotBlank(message = "message cannot be blank") String message,
-        String gameCode,
-        String regionCode
+        @NotBlank(message = "message cannot be blank") String message
 ) {
 }

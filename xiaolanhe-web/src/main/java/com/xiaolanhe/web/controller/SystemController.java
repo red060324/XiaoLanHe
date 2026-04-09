@@ -25,7 +25,6 @@ public class SystemController {
                 "name", "xiaolanhe",
                 "status", "ok",
                 "agentMode", agentProperties.mode(),
-                "defaultGame", agentProperties.defaultGame(),
                 "minioBucket", storageProperties.minio().bucket()
         );
     }

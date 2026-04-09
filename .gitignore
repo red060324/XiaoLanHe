@@ -1,14 +1,22 @@
 target/
 **/target/
+**/node_modules/
+**/dist/
+*.tsbuildinfo
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
 .kotlin
+xiaolanhe-web-run.log
+*.log
+!**/src/main/resources/**/*.log
 deploy/postgres/data/
 deploy/redis/data/
 deploy/minio/data/
 deploy/rocketmq/logs/
 deploy/rocketmq/store/
+deploy/
+docs/
 
 ### IntelliJ IDEA ###
 .idea/

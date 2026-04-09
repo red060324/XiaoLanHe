@@ -1,15 +1,15 @@
 package com.xiaolanhe.web.controller;
 
-import com.xiaolanhe.agent.model.ChatCommand;
-import com.xiaolanhe.agent.model.ChatResult;
 import com.xiaolanhe.agent.service.ChatService;
 import com.xiaolanhe.web.dto.chat.ChatRequest;
 import com.xiaolanhe.web.dto.chat.ChatResponse;
 import jakarta.validation.Valid;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Flux;
 
 @RestController
 @RequestMapping("/api/chat")
@@ -23,12 +23,12 @@ public class ChatController {
 
     @PostMapping("/message")
     public ChatResponse message(@Valid @RequestBody ChatRequest request) {
-        ChatResult result = chatService.chat(new ChatCommand(
-                request.sessionId(),
-                request.message(),
-                request.gameCode(),
-                request.regionCode()
-        ));
-        return new ChatResponse(result.sessionId(), result.answer(), result.model(), result.fallback(), result.createdAt());
+        ChatService.ChatResponseData result = chatService.chat(request.sessionId(), request.message());
+        return new ChatResponse(result.sessionId(), result.answer(), result.createdAt());
+    }
+
+    @PostMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<String> stream(@Valid @RequestBody ChatRequest request) {
+        return chatService.stream(request.sessionId(), request.message());
     }
 }

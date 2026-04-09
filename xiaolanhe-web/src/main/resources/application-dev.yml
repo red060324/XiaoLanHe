@@ -12,15 +12,15 @@ spring:
     enabled: true
   ai:
     openai:
-      base-url: ${XLH_AI_BASE_URL:https://api.openai.com}
-      api-key: ${XLH_AI_API_KEY:replace-me}
+      base-url: ${XLH_AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
+      api-key: ${XLH_AI_API_KEY:${DASHSCOPE_API_KEY:}}
       chat:
         options:
-          model: ${XLH_AI_CHAT_MODEL:gpt-4.1-mini}
+          model: ${XLH_AI_CHAT_MODEL:qwen3.5-plus}
           temperature: 0.4
       embedding:
         options:
-          model: ${XLH_AI_EMBEDDING_MODEL:text-embedding-3-small}
+          model: ${XLH_AI_EMBEDDING_MODEL:text-embedding-v4}
 
 rocketmq:
   name-server: 127.0.0.1:9876
@@ -28,6 +28,10 @@ rocketmq:
     group: xiaolanhe-local-producer
 
 xiaolanhe:
+  search:
+    enabled: true
+    provider: searxng
+    endpoint: ${SEARXNG_BASE_URL:http://127.0.0.1:8080}
   storage:
     minio:
       endpoint: http://127.0.0.1:9000
