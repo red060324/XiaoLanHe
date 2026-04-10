@@ -342,6 +342,26 @@ button {
   margin-bottom: 16px;
 }
 
+.message-markdown h1,
+.message-markdown h2,
+.message-markdown h3 {
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+
+.message-markdown h1 {
+  font-size: 20px;
+}
+
+.message-markdown h2 {
+  font-size: 18px;
+}
+
+.message-markdown h3 {
+  font-size: 17px;
+}
+
 .message-markdown p:last-child,
 .message-markdown ul:last-child,
 .message-markdown ol:last-child,
@@ -355,8 +375,21 @@ button {
   padding-left: 24px;
 }
 
+.message-markdown ul ul,
+.message-markdown ul ol,
+.message-markdown ol ul,
+.message-markdown ol ol {
+  margin-top: 8px;
+  margin-bottom: 8px;
+  padding-left: 22px;
+}
+
 .message-markdown li + li {
   margin-top: 6px;
+}
+
+.message-markdown li > p {
+  margin: 0;
 }
 
 .message-markdown code {

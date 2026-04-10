@@ -1,5 +1,4 @@
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { Streamdown } from 'streamdown';
 import { ConversationMessage } from '../lib/conversationStore';
 
 type Props = {
@@ -12,20 +11,27 @@ function normalizeAssistantContent(content: string): string {
     .replace(/^data:\s?/gm, '')
     .replace(/\r\n/g, '\n')
     .replace(/\u00a0/g, ' ')
-    .replace(/[ \t]*\n[ \t]*(#{1,6}[ \t]*\d+\.)/g, '\n\n$1')
-    .replace(/[ \t]*\n[ \t]*(-[ \t]+\*\*[^*\n]+\*\*[:：]?)/g, '\n$1')
-    .replace(/^[ \t]+(?=#{1,6}\s)/gm, '')
-    .replace(/^[ \t]+(?=-\s)/gm, '')
-    .replace(/^(#{1,6})\s*(\d+\.)\s*/gm, '$1 $2 ')
-    .replace(/^(#{1,6})(\S)/gm, '$1 $2')
-    .replace(/^(\s*)-\s*([^\s])/gm, '$1- $2')
-    .replace(/^(\s*)\*\s+\*\*([^*]+)\*\*[:：]?\s*/gm, '$1- **$2**：')
-    .replace(/^(\s*)\*\s+\*([^*]+)\*[:：]?\s*/gm, '$1- **$2**：')
-    .replace(/^(\s*)\*{1,2}([^*\n]+)\*{1,2}[:：]?\s*/gm, '$1- **$2**：')
+    .replace(/(^|\n)\s*(#{1,6})\s*\n+\s*(\d+\.\s*[^\n]+)/g, '$1$2 $3')
+    .replace(/(^|\n)\s*(#{1,6})\s*\n+\s*([^\n#-][^\n]*)/g, '$1$2 $3')
+    .replace(/(^|\n)\s*(#{1,6})\s*([^\s#][^\n]*)/g, '$1$2 $3')
+    .replace(/(^|\n)\s*(\d+)\.\s*([^\n]{1,40})(?=\n(?:- |\* |\d+\.|$))/g, '$1### $2. $3')
+    .replace(/(^|\n)\s*(\d+)\.\s*([^\n]+)/g, '$1$2. $3')
+    .replace(/([^\n])\n(#{1,6}\s)/g, '$1\n\n$2')
+    .replace(/([。！？：:])\s*(#{1,6}\s)/g, '$1\n\n$2')
+    .replace(/([。！？])\s*(-\s+\*\*|- |\d+\.\s)/g, '$1\n$2')
+    .replace(/([^\n])\n(-\s+\*\*)/g, '$1\n\n$2')
+    .replace(/([^\n])\n(-\s)/g, '$1\n$2')
+    .replace(/([：:])\n(?=-\s)/g, '$1\n\n')
+    .replace(/([：:])\n(?=\d+\.\s)/g, '$1\n\n')
+    .replace(/([：:])\s+(-\s)/g, '$1\n\n$2')
+    .replace(/([：:])\s+(\d+\.\s)/g, '$1\n\n$2')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
 export default function ChatMessageList({ messages, loading }: Props) {
+  const lastAssistantMessageId = [...messages].reverse().find((message) => message.role === 'assistant')?.id;
+
   return (
     <div className="message-list">
       {messages.map((message) => (
@@ -34,9 +40,13 @@ export default function ChatMessageList({ messages, loading }: Props) {
           <div className="message-bubble">
             {message.role === 'assistant' ? (
               <div className="message-markdown">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <Streamdown
+                  mode={loading && message.id === lastAssistantMessageId ? 'streaming' : 'static'}
+                  parseIncompleteMarkdown={loading && message.id === lastAssistantMessageId}
+                  isAnimating={loading && message.id === lastAssistantMessageId}
+                >
                   {normalizeAssistantContent(message.content)}
-                </ReactMarkdown>
+                </Streamdown>
               </div>
             ) : (
               <div className="message-text">{message.content}</div>

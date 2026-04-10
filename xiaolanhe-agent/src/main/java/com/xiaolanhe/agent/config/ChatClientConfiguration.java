@@ -26,4 +26,19 @@ public class ChatClientConfiguration {
                 .defaultOptions(defaultOptions)
                 .build();
     }
+
+    @Bean("memorySummaryChatClient")
+    public ChatClient memorySummaryChatClient(ChatClient.Builder chatClientBuilder,
+                                              @Value("${spring.ai.openai.chat.options.model:qwen3.5-plus}") String chatModel,
+                                              @Value("classpath:/prompts/memory-summary.md") Resource memorySummaryPrompt) {
+        OpenAiChatOptions defaultOptions = new OpenAiChatOptions();
+        defaultOptions.setModel(chatModel);
+        defaultOptions.setTemperature(0.2);
+        defaultOptions.setExtraBody(Map.of("enable_thinking", false));
+
+        return chatClientBuilder
+                .defaultSystem(memorySummaryPrompt)
+                .defaultOptions(defaultOptions)
+                .build();
+    }
 }

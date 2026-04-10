@@ -20,13 +20,16 @@ public class ChatService {
     private static final Logger log = LoggerFactory.getLogger(ChatService.class);
 
     private final ConversationRepository conversationRepository;
+    private final MemoryProfileAgentService memoryProfileAgentService;
     private final ChatClient chatClient;
     private final String chatModel;
 
     public ChatService(ConversationRepository conversationRepository,
+                       MemoryProfileAgentService memoryProfileAgentService,
                        ChatClient chatClient,
                        @Value("${spring.ai.openai.chat.options.model:qwen3.5-plus}") String chatModel) {
         this.conversationRepository = conversationRepository;
+        this.memoryProfileAgentService = memoryProfileAgentService;
         this.chatClient = chatClient;
         this.chatModel = chatModel;
         log.info("ChatService initialized with Spring AI ChatClient via DashScope compatible mode. model={}", chatModel);
@@ -37,7 +40,7 @@ public class ChatService {
         try {
             log.info("Calling chat model. sessionId={}, model={}", context.sessionId(), chatModel);
             String answer = chatClient.prompt()
-                    .user(context.userMessage())
+                    .user(context.promptInput())
                     .call()
                     .content();
             persistAssistant(context, answer);
@@ -55,7 +58,7 @@ public class ChatService {
         final boolean[] firstChunkLogged = {false};
 
         return chatClient.prompt()
-                .user(context.userMessage())
+                .user(context.promptInput())
                 .stream()
                 .content()
                 .doOnSubscribe(subscription -> log.info("Calling stream chat model. sessionId={}, model={}", context.sessionId(), chatModel))
@@ -80,12 +83,32 @@ public class ChatService {
         String resolvedSessionId = StringUtils.hasText(sessionId) ? sessionId : UUID.randomUUID().toString();
         long sessionDbId = conversationRepository.findOrCreateSession(resolvedSessionId);
         conversationRepository.saveMessage(sessionDbId, "user", userMessage, null, Map.of());
+        MemoryProfileAgentService.ContextSnapshot contextSnapshot = memoryProfileAgentService.loadContext(sessionDbId);
         log.info("Chat request received. sessionId={}, query={}", resolvedSessionId, trim(userMessage, 80));
-        return new ChatSessionContext(resolvedSessionId, sessionDbId, userMessage);
+        return new ChatSessionContext(
+                resolvedSessionId,
+                sessionDbId,
+                userMessage,
+                buildPromptInput(contextSnapshot, userMessage)
+        );
     }
 
     private void persistAssistant(ChatSessionContext context, String answer) {
         conversationRepository.saveMessage(context.sessionDbId(), "assistant", answer, chatModel, Map.of());
+        memoryProfileAgentService.refreshSummaryIfNeeded(context.sessionDbId());
+    }
+
+    private String buildPromptInput(MemoryProfileAgentService.ContextSnapshot contextSnapshot, String userMessage) {
+        if (!StringUtils.hasText(contextSnapshot.promptContext())) {
+            return userMessage;
+        }
+        return """
+                以下是当前会话上下文，请仅作为辅助参考，不要机械复述。
+
+                %s
+
+                请直接回答最近一条用户消息。
+                """.formatted(contextSnapshot.promptContext()).trim();
     }
 
     private String trim(String value, int maxLength) {
@@ -95,7 +118,7 @@ public class ChatService {
         return value.substring(0, maxLength) + "...";
     }
 
-    private record ChatSessionContext(String sessionId, long sessionDbId, String userMessage) {
+    private record ChatSessionContext(String sessionId, long sessionDbId, String userMessage, String promptInput) {
     }
 
     public record ChatResponseData(String sessionId, String answer, OffsetDateTime createdAt) {

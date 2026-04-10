@@ -62,7 +62,7 @@ export async function streamChatMessage(
 
     for (const line of lines) {
       if (line.startsWith('data:')) {
-        dataLines.push(line.slice(5).trimStart());
+        dataLines.push(line.startsWith('data: ') ? line.slice(6) : line.slice(5));
       }
     }
 
