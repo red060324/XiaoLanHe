@@ -1,9 +1,14 @@
 package com.xiaolanhe.agent.service;
 
 import com.xiaolanhe.infrastructure.persistence.repository.ConversationRepository;
+import com.xiaolanhe.search.model.EvidenceBundle;
+import com.xiaolanhe.search.model.EvidenceItem;
+import com.xiaolanhe.search.model.SearchAgentRequest;
+import com.xiaolanhe.search.service.SearchAgentService;
 import java.time.Duration;
-import java.time.OffsetDateTime;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -21,15 +26,18 @@ public class ChatService {
 
     private final ConversationRepository conversationRepository;
     private final MemoryProfileAgentService memoryProfileAgentService;
+    private final SearchAgentService searchAgentService;
     private final ChatClient chatClient;
     private final String chatModel;
 
     public ChatService(ConversationRepository conversationRepository,
                        MemoryProfileAgentService memoryProfileAgentService,
+                       SearchAgentService searchAgentService,
                        ChatClient chatClient,
                        @Value("${spring.ai.openai.chat.options.model:qwen3.5-plus}") String chatModel) {
         this.conversationRepository = conversationRepository;
         this.memoryProfileAgentService = memoryProfileAgentService;
+        this.searchAgentService = searchAgentService;
         this.chatClient = chatClient;
         this.chatModel = chatModel;
         log.info("ChatService initialized with Spring AI ChatClient via DashScope compatible mode. model={}", chatModel);
@@ -83,13 +91,36 @@ public class ChatService {
         String resolvedSessionId = StringUtils.hasText(sessionId) ? sessionId : UUID.randomUUID().toString();
         long sessionDbId = conversationRepository.findOrCreateSession(resolvedSessionId);
         conversationRepository.saveMessage(sessionDbId, "user", userMessage, null, Map.of());
+
         MemoryProfileAgentService.ContextSnapshot contextSnapshot = memoryProfileAgentService.loadContext(sessionDbId);
+        SearchPlan searchPlan = buildSearchPlan(userMessage);
+        EvidenceBundle evidenceBundle = searchPlan.requiresEvidence()
+                ? searchAgentService.retrieveEvidence(new SearchAgentRequest(
+                        userMessage,
+                        null,
+                        null,
+                        searchPlan.needLocalKnowledge(),
+                        searchPlan.needWebSearch(),
+                        searchPlan.freshnessRequired(),
+                        5
+                ))
+                : new EvidenceBundle(userMessage, false, false, false, List.of(), List.of());
+
         log.info("Chat request received. sessionId={}, query={}", resolvedSessionId, trim(userMessage, 80));
+        log.info(
+                "Search plan created. sessionId={}, needLocalKnowledge={}, needWebSearch={}, freshnessRequired={}, evidenceItemCount={}",
+                resolvedSessionId,
+                searchPlan.needLocalKnowledge(),
+                searchPlan.needWebSearch(),
+                searchPlan.freshnessRequired(),
+                evidenceBundle.items().size()
+        );
+
         return new ChatSessionContext(
                 resolvedSessionId,
                 sessionDbId,
                 userMessage,
-                buildPromptInput(contextSnapshot, userMessage)
+                buildPromptInput(contextSnapshot, evidenceBundle, userMessage)
         );
     }
 
@@ -98,17 +129,75 @@ public class ChatService {
         memoryProfileAgentService.refreshSummaryIfNeeded(context.sessionDbId());
     }
 
-    private String buildPromptInput(MemoryProfileAgentService.ContextSnapshot contextSnapshot, String userMessage) {
-        if (!StringUtils.hasText(contextSnapshot.promptContext())) {
+    private String buildPromptInput(MemoryProfileAgentService.ContextSnapshot contextSnapshot,
+                                    EvidenceBundle evidenceBundle,
+                                    String userMessage) {
+        String contextText = contextSnapshot.promptContext();
+        String evidenceText = buildEvidenceContext(evidenceBundle);
+
+        if (!StringUtils.hasText(contextText) && !StringUtils.hasText(evidenceText)) {
             return userMessage;
         }
+
         return """
-                以下是当前会话上下文，请仅作为辅助参考，不要机械复述。
+                以下是当前可用上下文，请仅作为辅助参考，不要机械复述。
+
+                %s
 
                 %s
 
                 请直接回答最近一条用户消息。
-                """.formatted(contextSnapshot.promptContext()).trim();
+                """.formatted(contextText, evidenceText).trim();
+    }
+
+    private String buildEvidenceContext(EvidenceBundle evidenceBundle) {
+        if (evidenceBundle == null || evidenceBundle.items().isEmpty()) {
+            return "";
+        }
+
+        StringBuilder builder = new StringBuilder("【证据材料】\n");
+        int index = 1;
+        for (EvidenceItem item : evidenceBundle.items()) {
+            builder.append(index++)
+                    .append(". [")
+                    .append(item.sourceType())
+                    .append("] ")
+                    .append(item.title())
+                    .append('\n')
+                    .append(item.content())
+                    .append('\n');
+            if (StringUtils.hasText(item.sourceUrl())) {
+                builder.append("来源：").append(item.sourceUrl()).append('\n');
+            }
+            builder.append('\n');
+        }
+
+        if (!evidenceBundle.notes().isEmpty()) {
+            builder.append("【检索备注】\n");
+            evidenceBundle.notes().forEach(note -> builder.append("- ").append(note).append('\n'));
+        }
+
+        return builder.toString().trim();
+    }
+
+    private SearchPlan buildSearchPlan(String userMessage) {
+        String normalized = userMessage == null ? "" : userMessage.trim().toLowerCase();
+        boolean isGreeting = normalized.length() <= 6
+                && (normalized.contains("你好")
+                || normalized.contains("hi")
+                || normalized.contains("hello"));
+        boolean freshnessRequired = normalized.contains("最新")
+                || normalized.contains("今天")
+                || normalized.contains("刚更新")
+                || normalized.contains("当前活动")
+                || normalized.contains("版本")
+                || normalized.contains("补丁")
+                || normalized.contains("hotfix")
+                || normalized.contains("update")
+                || normalized.contains("today");
+        boolean needLocalKnowledge = !isGreeting;
+        boolean needWebSearch = freshnessRequired;
+        return new SearchPlan(needLocalKnowledge, needWebSearch, freshnessRequired);
     }
 
     private String trim(String value, int maxLength) {
@@ -119,6 +208,12 @@ public class ChatService {
     }
 
     private record ChatSessionContext(String sessionId, long sessionDbId, String userMessage, String promptInput) {
+    }
+
+    private record SearchPlan(boolean needLocalKnowledge, boolean needWebSearch, boolean freshnessRequired) {
+        private boolean requiresEvidence() {
+            return needLocalKnowledge || needWebSearch;
+        }
     }
 
     public record ChatResponseData(String sessionId, String answer, OffsetDateTime createdAt) {
