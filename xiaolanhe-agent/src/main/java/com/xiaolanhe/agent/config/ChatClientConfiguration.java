@@ -41,4 +41,20 @@ public class ChatClientConfiguration {
                 .defaultOptions(defaultOptions)
                 .build();
     }
+
+    @Bean("synthesisChatClient")
+    public ChatClient synthesisChatClient(ChatClient.Builder chatClientBuilder,
+                                          @Value("${spring.ai.openai.chat.options.model:qwen3.5-plus}") String chatModel,
+                                          @Value("${spring.ai.openai.chat.options.temperature:0.4}") Double temperature,
+                                          @Value("classpath:/prompts/synthesis.md") Resource synthesisPrompt) {
+        OpenAiChatOptions defaultOptions = new OpenAiChatOptions();
+        defaultOptions.setModel(chatModel);
+        defaultOptions.setTemperature(temperature);
+        defaultOptions.setExtraBody(Map.of("enable_thinking", false));
+
+        return chatClientBuilder
+                .defaultSystem(synthesisPrompt)
+                .defaultOptions(defaultOptions)
+                .build();
+    }
 }

@@ -1,8 +1,9 @@
 package com.xiaolanhe.agent.service;
 
+import com.xiaolanhe.agent.model.SynthesisRequest;
+import com.xiaolanhe.agent.model.SynthesisResult;
 import com.xiaolanhe.infrastructure.persistence.repository.ConversationRepository;
 import com.xiaolanhe.search.model.EvidenceBundle;
-import com.xiaolanhe.search.model.EvidenceItem;
 import com.xiaolanhe.search.model.SearchAgentRequest;
 import com.xiaolanhe.search.service.SearchAgentService;
 import java.time.Duration;
@@ -13,7 +14,6 @@ import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -27,35 +27,39 @@ public class ChatService {
     private final ConversationRepository conversationRepository;
     private final MemoryProfileAgentService memoryProfileAgentService;
     private final SearchAgentService searchAgentService;
-    private final ChatClient chatClient;
+    private final SynthesisAgentService synthesisAgentService;
     private final String chatModel;
 
     public ChatService(ConversationRepository conversationRepository,
                        MemoryProfileAgentService memoryProfileAgentService,
                        SearchAgentService searchAgentService,
-                       ChatClient chatClient,
+                       SynthesisAgentService synthesisAgentService,
                        @Value("${spring.ai.openai.chat.options.model:qwen3.5-plus}") String chatModel) {
         this.conversationRepository = conversationRepository;
         this.memoryProfileAgentService = memoryProfileAgentService;
         this.searchAgentService = searchAgentService;
-        this.chatClient = chatClient;
+        this.synthesisAgentService = synthesisAgentService;
         this.chatModel = chatModel;
-        log.info("ChatService initialized with Spring AI ChatClient via DashScope compatible mode. model={}", chatModel);
+        log.info("ChatService initialized. model={}", chatModel);
     }
 
     public ChatResponseData chat(String sessionId, String userMessage) {
         ChatSessionContext context = prepareContext(sessionId, userMessage);
         try {
-            log.info("Calling chat model. sessionId={}, model={}", context.sessionId(), chatModel);
-            String answer = chatClient.prompt()
-                    .user(context.promptInput())
-                    .call()
-                    .content();
-            persistAssistant(context, answer);
-            return new ChatResponseData(context.sessionId(), answer, OffsetDateTime.now());
+            log.info("Calling synthesis agent. sessionId={}, model={}", context.sessionId(), chatModel);
+            SynthesisResult result = synthesisAgentService.synthesize(
+                    new SynthesisRequest(
+                            userMessage,
+                            "chat",
+                            context.contextSnapshot(),
+                            context.evidenceBundle()
+                    )
+            );
+            persistAssistant(context, result.content());
+            return new ChatResponseData(context.sessionId(), result.content(), OffsetDateTime.now());
         } catch (Exception ex) {
-            log.warn("Chat model call failed. sessionId={}", context.sessionId(), ex);
-            throw new IllegalStateException("Chat model call failed", ex);
+            log.warn("Synthesis agent call failed. sessionId={}", context.sessionId(), ex);
+            throw new IllegalStateException("Synthesis agent call failed", ex);
         }
     }
 
@@ -65,11 +69,15 @@ public class ChatService {
         Instant requestStart = Instant.now();
         final boolean[] firstChunkLogged = {false};
 
-        return chatClient.prompt()
-                .user(context.promptInput())
-                .stream()
-                .content()
-                .doOnSubscribe(subscription -> log.info("Calling stream chat model. sessionId={}, model={}", context.sessionId(), chatModel))
+        return synthesisAgentService.streamSynthesis(
+                        new SynthesisRequest(
+                                userMessage,
+                                "chat",
+                                context.contextSnapshot(),
+                                context.evidenceBundle()
+                        )
+                )
+                .doOnSubscribe(subscription -> log.info("Calling synthesis agent stream. sessionId={}, model={}", context.sessionId(), chatModel))
                 .doOnNext(chunk -> {
                     answerBuilder.append(chunk);
                     if (!firstChunkLogged[0]) {
@@ -119,65 +127,14 @@ public class ChatService {
         return new ChatSessionContext(
                 resolvedSessionId,
                 sessionDbId,
-                userMessage,
-                buildPromptInput(contextSnapshot, evidenceBundle, userMessage)
+                contextSnapshot,
+                evidenceBundle
         );
     }
 
     private void persistAssistant(ChatSessionContext context, String answer) {
         conversationRepository.saveMessage(context.sessionDbId(), "assistant", answer, chatModel, Map.of());
         memoryProfileAgentService.refreshSummaryIfNeeded(context.sessionDbId());
-    }
-
-    private String buildPromptInput(MemoryProfileAgentService.ContextSnapshot contextSnapshot,
-                                    EvidenceBundle evidenceBundle,
-                                    String userMessage) {
-        String contextText = contextSnapshot.promptContext();
-        String evidenceText = buildEvidenceContext(evidenceBundle);
-
-        if (!StringUtils.hasText(contextText) && !StringUtils.hasText(evidenceText)) {
-            return userMessage;
-        }
-
-        return """
-                以下是当前可用上下文，请仅作为辅助参考，不要机械复述。
-
-                %s
-
-                %s
-
-                请直接回答最近一条用户消息。
-                """.formatted(contextText, evidenceText).trim();
-    }
-
-    private String buildEvidenceContext(EvidenceBundle evidenceBundle) {
-        if (evidenceBundle == null || evidenceBundle.items().isEmpty()) {
-            return "";
-        }
-
-        StringBuilder builder = new StringBuilder("【证据材料】\n");
-        int index = 1;
-        for (EvidenceItem item : evidenceBundle.items()) {
-            builder.append(index++)
-                    .append(". [")
-                    .append(item.sourceType())
-                    .append("] ")
-                    .append(item.title())
-                    .append('\n')
-                    .append(item.content())
-                    .append('\n');
-            if (StringUtils.hasText(item.sourceUrl())) {
-                builder.append("来源：").append(item.sourceUrl()).append('\n');
-            }
-            builder.append('\n');
-        }
-
-        if (!evidenceBundle.notes().isEmpty()) {
-            builder.append("【检索备注】\n");
-            evidenceBundle.notes().forEach(note -> builder.append("- ").append(note).append('\n'));
-        }
-
-        return builder.toString().trim();
     }
 
     private SearchPlan buildSearchPlan(String userMessage) {
@@ -207,7 +164,12 @@ public class ChatService {
         return value.substring(0, maxLength) + "...";
     }
 
-    private record ChatSessionContext(String sessionId, long sessionDbId, String userMessage, String promptInput) {
+    private record ChatSessionContext(
+            String sessionId,
+            long sessionDbId,
+            MemoryProfileAgentService.ContextSnapshot contextSnapshot,
+            EvidenceBundle evidenceBundle
+    ) {
     }
 
     private record SearchPlan(boolean needLocalKnowledge, boolean needWebSearch, boolean freshnessRequired) {
