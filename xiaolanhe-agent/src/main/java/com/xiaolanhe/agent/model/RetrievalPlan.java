@@ -1,21 +1,23 @@
-package com.xiaolanhe.search.model;
+package com.xiaolanhe.agent.model;
 
 import java.util.List;
 
-public record SearchAgentRequest(
-        String query,
+public record RetrievalPlan(
+        String originalQuery,
         String normalizedQuery,
         String queryIntent,
-        String gameCode,
-        String regionCode,
+        boolean freshnessRequired,
         boolean needLocalKnowledge,
         boolean needWebSearch,
-        boolean freshnessRequired,
         boolean needLowLevelRetrieval,
         boolean needHighLevelRetrieval,
         List<String> querySteps,
         List<String> subQueries,
         int topK,
-        boolean rerankEnabled
+        boolean rerankEnabled,
+        List<String> notes
 ) {
+    public boolean requiresEvidence() {
+        return needLocalKnowledge || needWebSearch;
+    }
 }

@@ -1,7 +1,9 @@
 package com.xiaolanhe.agent.service;
 
+import com.xiaolanhe.agent.model.RetrievalPlan;
 import com.xiaolanhe.agent.model.SynthesisRequest;
 import com.xiaolanhe.agent.model.SynthesisResult;
+import com.xiaolanhe.agent.model.TaskPlan;
 import com.xiaolanhe.infrastructure.persistence.repository.ConversationRepository;
 import com.xiaolanhe.search.model.EvidenceBundle;
 import com.xiaolanhe.search.model.SearchAgentRequest;
@@ -25,17 +27,20 @@ public class ChatService {
     private static final Logger log = LoggerFactory.getLogger(ChatService.class);
 
     private final ConversationRepository conversationRepository;
+    private final MainAgentService mainAgentService;
     private final MemoryProfileAgentService memoryProfileAgentService;
     private final SearchAgentService searchAgentService;
     private final SynthesisAgentService synthesisAgentService;
     private final String chatModel;
 
     public ChatService(ConversationRepository conversationRepository,
+                       MainAgentService mainAgentService,
                        MemoryProfileAgentService memoryProfileAgentService,
                        SearchAgentService searchAgentService,
                        SynthesisAgentService synthesisAgentService,
                        @Value("${spring.ai.openai.chat.options.model:qwen3.5-plus}") String chatModel) {
         this.conversationRepository = conversationRepository;
+        this.mainAgentService = mainAgentService;
         this.memoryProfileAgentService = memoryProfileAgentService;
         this.searchAgentService = searchAgentService;
         this.synthesisAgentService = synthesisAgentService;
@@ -50,7 +55,7 @@ public class ChatService {
             SynthesisResult result = synthesisAgentService.synthesize(
                     new SynthesisRequest(
                             userMessage,
-                            "chat",
+                            context.taskPlan().responseMode().code(),
                             context.contextSnapshot(),
                             context.evidenceBundle()
                     )
@@ -72,7 +77,7 @@ public class ChatService {
         return synthesisAgentService.streamSynthesis(
                         new SynthesisRequest(
                                 userMessage,
-                                "chat",
+                                context.taskPlan().responseMode().code(),
                                 context.contextSnapshot(),
                                 context.evidenceBundle()
                         )
@@ -100,61 +105,70 @@ public class ChatService {
         long sessionDbId = conversationRepository.findOrCreateSession(resolvedSessionId);
         conversationRepository.saveMessage(sessionDbId, "user", userMessage, null, Map.of());
 
-        MemoryProfileAgentService.ContextSnapshot contextSnapshot = memoryProfileAgentService.loadContext(sessionDbId);
-        SearchPlan searchPlan = buildSearchPlan(userMessage);
-        EvidenceBundle evidenceBundle = searchPlan.requiresEvidence()
-                ? searchAgentService.retrieveEvidence(new SearchAgentRequest(
-                        userMessage,
-                        null,
-                        null,
-                        searchPlan.needLocalKnowledge(),
-                        searchPlan.needWebSearch(),
-                        searchPlan.freshnessRequired(),
-                        5
-                ))
-                : new EvidenceBundle(userMessage, false, false, false, List.of(), List.of());
+        TaskPlan taskPlan = mainAgentService.plan(userMessage);
+        MemoryProfileAgentService.ContextSnapshot contextSnapshot = taskPlan.needMemory()
+                ? memoryProfileAgentService.loadContext(sessionDbId)
+                : new MemoryProfileAgentService.ContextSnapshot("", List.of(), "");
+        EvidenceBundle evidenceBundle = retrieveEvidence(taskPlan);
 
         log.info("Chat request received. sessionId={}, query={}", resolvedSessionId, trim(userMessage, 80));
         log.info(
-                "Search plan created. sessionId={}, needLocalKnowledge={}, needWebSearch={}, freshnessRequired={}, evidenceItemCount={}",
+                "Task plan created. sessionId={}, taskType={}, intentType={}, responseMode={}, needMemory={}, needSearch={}, evidenceItemCount={}",
                 resolvedSessionId,
-                searchPlan.needLocalKnowledge(),
-                searchPlan.needWebSearch(),
-                searchPlan.freshnessRequired(),
+                taskPlan.taskType(),
+                taskPlan.intentType(),
+                taskPlan.responseMode(),
+                taskPlan.needMemory(),
+                taskPlan.needSearch(),
                 evidenceBundle.items().size()
         );
+        if (taskPlan.retrievalPlan() != null) {
+            log.info(
+                    "Retrieval plan created. sessionId={}, freshnessRequired={}, needLocalKnowledge={}, needWebSearch={}, subQueryCount={}",
+                    resolvedSessionId,
+                    taskPlan.retrievalPlan().freshnessRequired(),
+                    taskPlan.retrievalPlan().needLocalKnowledge(),
+                    taskPlan.retrievalPlan().needWebSearch(),
+                    taskPlan.retrievalPlan().subQueries().size()
+            );
+        }
 
         return new ChatSessionContext(
                 resolvedSessionId,
                 sessionDbId,
+                taskPlan,
                 contextSnapshot,
                 evidenceBundle
         );
     }
 
+    private EvidenceBundle retrieveEvidence(TaskPlan taskPlan) {
+        RetrievalPlan retrievalPlan = taskPlan.retrievalPlan();
+        if (!taskPlan.needSearch() || retrievalPlan == null || !retrievalPlan.requiresEvidence()) {
+            return new EvidenceBundle("", false, false, false, List.of(), List.of());
+        }
+
+        return searchAgentService.retrieveEvidence(new SearchAgentRequest(
+                retrievalPlan.originalQuery(),
+                retrievalPlan.normalizedQuery(),
+                retrievalPlan.queryIntent(),
+                null,
+                null,
+                retrievalPlan.needLocalKnowledge(),
+                retrievalPlan.needWebSearch(),
+                retrievalPlan.freshnessRequired(),
+                retrievalPlan.needLowLevelRetrieval(),
+                retrievalPlan.needHighLevelRetrieval(),
+                retrievalPlan.querySteps(),
+                retrievalPlan.subQueries(),
+                retrievalPlan.topK(),
+                retrievalPlan.rerankEnabled()
+        ));
+    }
+
     private void persistAssistant(ChatSessionContext context, String answer) {
         conversationRepository.saveMessage(context.sessionDbId(), "assistant", answer, chatModel, Map.of());
         memoryProfileAgentService.refreshSummaryIfNeeded(context.sessionDbId());
-    }
-
-    private SearchPlan buildSearchPlan(String userMessage) {
-        String normalized = userMessage == null ? "" : userMessage.trim().toLowerCase();
-        boolean isGreeting = normalized.length() <= 6
-                && (normalized.contains("你好")
-                || normalized.contains("hi")
-                || normalized.contains("hello"));
-        boolean freshnessRequired = normalized.contains("最新")
-                || normalized.contains("今天")
-                || normalized.contains("刚更新")
-                || normalized.contains("当前活动")
-                || normalized.contains("版本")
-                || normalized.contains("补丁")
-                || normalized.contains("hotfix")
-                || normalized.contains("update")
-                || normalized.contains("today");
-        boolean needLocalKnowledge = !isGreeting;
-        boolean needWebSearch = freshnessRequired;
-        return new SearchPlan(needLocalKnowledge, needWebSearch, freshnessRequired);
     }
 
     private String trim(String value, int maxLength) {
@@ -167,15 +181,10 @@ public class ChatService {
     private record ChatSessionContext(
             String sessionId,
             long sessionDbId,
+            TaskPlan taskPlan,
             MemoryProfileAgentService.ContextSnapshot contextSnapshot,
             EvidenceBundle evidenceBundle
     ) {
-    }
-
-    private record SearchPlan(boolean needLocalKnowledge, boolean needWebSearch, boolean freshnessRequired) {
-        private boolean requiresEvidence() {
-            return needLocalKnowledge || needWebSearch;
-        }
     }
 
     public record ChatResponseData(String sessionId, String answer, OffsetDateTime createdAt) {

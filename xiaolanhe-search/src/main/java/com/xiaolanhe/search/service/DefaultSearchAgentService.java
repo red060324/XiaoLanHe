@@ -8,6 +8,7 @@ import com.xiaolanhe.search.model.EvidenceItem;
 import com.xiaolanhe.search.model.SearchAgentRequest;
 import com.xiaolanhe.search.model.SearchResponse;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,30 +34,40 @@ public class DefaultSearchAgentService implements SearchAgentService {
         int topK = normalizeTopK(request.topK());
         List<EvidenceItem> rawItems = new ArrayList<>();
         List<String> notes = new ArrayList<>();
+        List<String> effectiveQueries = effectiveQueries(request);
 
         if (request.needLocalKnowledge()) {
-            List<KnowledgeSnippet> snippets = knowledgeDocumentService.search(
-                    request.query(),
-                    request.gameCode(),
-                    request.regionCode(),
-                    topK
-            );
-            rawItems.addAll(
-                    snippets.stream()
-                            .map(this::toKnowledgeEvidence)
-                            .toList()
-            );
-            notes.add("Local knowledge search returned " + snippets.size() + " snippets.");
+            int totalSnippets = 0;
+            for (String query : effectiveQueries) {
+                List<KnowledgeSnippet> snippets = knowledgeDocumentService.search(
+                        query,
+                        request.gameCode(),
+                        request.regionCode(),
+                        topK
+                );
+                totalSnippets += snippets.size();
+                rawItems.addAll(
+                        snippets.stream()
+                                .map(this::toKnowledgeEvidence)
+                                .toList()
+                );
+            }
+            notes.add("Local knowledge search executed " + effectiveQueries.size() + " queries and returned " + totalSnippets + " snippets.");
         }
 
         if (request.needWebSearch()) {
-            SearchResponse response = webSearchService.search(request.query());
-            rawItems.addAll(
-                    response.items().stream()
-                            .map(this::toWebEvidence)
-                            .toList()
-            );
-            notes.add(response.note());
+            int totalResults = 0;
+            for (String query : effectiveQueries) {
+                SearchResponse response = webSearchService.search(query);
+                totalResults += response.items().size();
+                rawItems.addAll(
+                        response.items().stream()
+                                .map(this::toWebEvidence)
+                                .toList()
+                );
+                notes.add("[" + query + "] " + response.note());
+            }
+            notes.add("Web search executed " + effectiveQueries.size() + " queries and returned " + totalResults + " results.");
         }
 
         List<EvidenceItem> mergedItems = mergeAndTrim(rawItems, request.freshnessRequired(), topK);
@@ -134,5 +145,19 @@ public class DefaultSearchAgentService implements SearchAgentService {
             return DEFAULT_TOP_K;
         }
         return Math.min(topK, 10);
+    }
+
+    private List<String> effectiveQueries(SearchAgentRequest request) {
+        LinkedHashSet<String> queries = new LinkedHashSet<>();
+        if (StringUtils.hasText(request.query())) {
+            queries.add(request.query().trim());
+        }
+        if (request.subQueries() != null) {
+            request.subQueries().stream()
+                    .filter(StringUtils::hasText)
+                    .map(String::trim)
+                    .forEach(queries::add);
+        }
+        return List.copyOf(queries);
     }
 }
