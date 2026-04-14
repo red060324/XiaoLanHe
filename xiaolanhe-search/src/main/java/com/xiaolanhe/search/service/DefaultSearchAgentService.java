@@ -41,8 +41,8 @@ public class DefaultSearchAgentService implements SearchAgentService {
             for (String query : effectiveQueries) {
                 List<KnowledgeSnippet> snippets = knowledgeDocumentService.search(
                         query,
-                        request.gameCode(),
-                        request.regionCode(),
+                        null,
+                        null,
                         topK
                 );
                 totalSnippets += snippets.size();

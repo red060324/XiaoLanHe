@@ -4,6 +4,7 @@ import com.xiaolanhe.agent.model.RetrievalPlan;
 import com.xiaolanhe.agent.model.SynthesisRequest;
 import com.xiaolanhe.agent.model.SynthesisResult;
 import com.xiaolanhe.agent.model.TaskPlan;
+import com.xiaolanhe.agent.model.VerificationResult;
 import com.xiaolanhe.infrastructure.persistence.repository.ConversationRepository;
 import com.xiaolanhe.search.model.EvidenceBundle;
 import com.xiaolanhe.search.model.SearchAgentRequest;
@@ -52,14 +53,13 @@ public class ChatService {
         ChatSessionContext context = prepareContext(sessionId, userMessage);
         try {
             log.info("Calling synthesis agent. sessionId={}, model={}", context.sessionId(), chatModel);
-            SynthesisResult result = synthesisAgentService.synthesize(
-                    new SynthesisRequest(
-                            userMessage,
-                            context.taskPlan().responseMode().code(),
-                            context.contextSnapshot(),
-                            context.evidenceBundle()
-                    )
+            SynthesisRequest synthesisRequest = new SynthesisRequest(
+                    userMessage,
+                    context.taskPlan().responseMode().code(),
+                    context.contextSnapshot(),
+                    context.evidenceBundle()
             );
+            SynthesisResult result = synthesisAgentService.synthesize(synthesisRequest);
             persistAssistant(context, result.content());
             return new ChatResponseData(context.sessionId(), result.content(), OffsetDateTime.now());
         } catch (Exception ex) {
@@ -70,17 +70,18 @@ public class ChatService {
 
     public Flux<String> stream(String sessionId, String userMessage) {
         ChatSessionContext context = prepareContext(sessionId, userMessage);
+        SynthesisRequest synthesisRequest = new SynthesisRequest(
+                userMessage,
+                context.taskPlan().responseMode().code(),
+                context.contextSnapshot(),
+                context.evidenceBundle()
+        );
         StringBuilder answerBuilder = new StringBuilder();
         Instant requestStart = Instant.now();
         final boolean[] firstChunkLogged = {false};
 
         return synthesisAgentService.streamSynthesis(
-                        new SynthesisRequest(
-                                userMessage,
-                                context.taskPlan().responseMode().code(),
-                                context.contextSnapshot(),
-                                context.evidenceBundle()
-                        )
+                        synthesisRequest
                 )
                 .doOnSubscribe(subscription -> log.info("Calling synthesis agent stream. sessionId={}, model={}", context.sessionId(), chatModel))
                 .doOnNext(chunk -> {
@@ -93,6 +94,14 @@ public class ChatService {
                     log.info("Stream chunk received. sessionId={}, chunk={}", context.sessionId(), trim(chunk, 120));
                 })
                 .doOnComplete(() -> {
+                    VerificationResult verificationResult = synthesisAgentService.verifyAnswer(synthesisRequest, answerBuilder.toString());
+                    log.info(
+                            "Synthesis verification finished. sessionId={}, passed={}, revised={}, reason={}",
+                            context.sessionId(),
+                            verificationResult.passed(),
+                            verificationResult.revised(),
+                            verificationResult.reason()
+                    );
                     persistAssistant(context, answerBuilder.toString());
                     long totalLatency = Duration.between(requestStart, Instant.now()).toMillis();
                     log.info("Stream chat finished. sessionId={}, answerLength={}, totalLatencyMs={}", context.sessionId(), answerBuilder.length(), totalLatency);
@@ -152,8 +161,6 @@ public class ChatService {
                 retrievalPlan.originalQuery(),
                 retrievalPlan.normalizedQuery(),
                 retrievalPlan.queryIntent(),
-                null,
-                null,
                 retrievalPlan.needLocalKnowledge(),
                 retrievalPlan.needWebSearch(),
                 retrievalPlan.freshnessRequired(),

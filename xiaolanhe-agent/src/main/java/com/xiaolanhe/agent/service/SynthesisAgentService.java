@@ -2,6 +2,7 @@ package com.xiaolanhe.agent.service;
 
 import com.xiaolanhe.agent.model.SynthesisRequest;
 import com.xiaolanhe.agent.model.SynthesisResult;
+import com.xiaolanhe.agent.model.VerificationResult;
 import com.xiaolanhe.search.model.EvidenceBundle;
 import com.xiaolanhe.search.model.EvidenceItem;
 import java.util.ArrayList;
@@ -16,9 +17,12 @@ import reactor.core.publisher.Flux;
 public class SynthesisAgentService {
 
     private final ChatClient synthesisChatClient;
+    private final ChatClient synthesisVerificationChatClient;
 
-    public SynthesisAgentService(@Qualifier("synthesisChatClient") ChatClient synthesisChatClient) {
+    public SynthesisAgentService(@Qualifier("synthesisChatClient") ChatClient synthesisChatClient,
+                                 @Qualifier("synthesisVerificationChatClient") ChatClient synthesisVerificationChatClient) {
         this.synthesisChatClient = synthesisChatClient;
+        this.synthesisVerificationChatClient = synthesisVerificationChatClient;
     }
 
     public SynthesisResult synthesize(SynthesisRequest request) {
@@ -26,7 +30,11 @@ public class SynthesisAgentService {
                 .user(buildUserPrompt(request))
                 .call()
                 .content();
-        return new SynthesisResult(content, request.responseMode(), extractCitations(request.evidenceBundle()));
+        VerificationResult verificationResult = verifyAnswer(request, content);
+        String finalContent = verificationResult.revised() && StringUtils.hasText(verificationResult.revisedContent())
+                ? verificationResult.revisedContent()
+                : content;
+        return new SynthesisResult(finalContent, request.responseMode(), extractCitations(request.evidenceBundle()));
     }
 
     public Flux<String> streamSynthesis(SynthesisRequest request) {
@@ -86,6 +94,90 @@ public class SynthesisAgentService {
             evidenceBundle.notes().forEach(note -> builder.append("- ").append(note).append('\n'));
         }
         return builder.toString().trim();
+    }
+
+    public VerificationResult verifyAnswer(SynthesisRequest request, String answer) {
+        if (!StringUtils.hasText(answer)) {
+            return VerificationResult.pass("答案为空，跳过校验。");
+        }
+
+        String verificationOutput = synthesisVerificationChatClient.prompt()
+                .user(buildVerificationPrompt(request, answer))
+                .call()
+                .content();
+
+        return parseVerificationResult(verificationOutput, answer);
+    }
+
+    private String buildVerificationPrompt(SynthesisRequest request, String answer) {
+        String contextText = request.contextSnapshot() == null ? "" : request.contextSnapshot().promptContext();
+        String evidenceText = buildEvidenceSection(request.evidenceBundle());
+
+        return """
+                【用户问题】
+                %s
+
+                【输出模式】
+                %s
+
+                【上下文】
+                %s
+
+                【证据材料】
+                %s
+
+                【候选答案】
+                %s
+                """.formatted(
+                request.query(),
+                defaultText(request.responseMode(), "chat"),
+                defaultText(contextText, "无"),
+                defaultText(evidenceText, "无"),
+                answer
+        ).trim();
+    }
+
+    private VerificationResult parseVerificationResult(String output, String originalAnswer) {
+        if (!StringUtils.hasText(output)) {
+            return VerificationResult.pass("校验结果为空，默认通过。");
+        }
+
+        String normalized = output.replace("\r", "").trim();
+        String[] lines = normalized.split("\n");
+        String decision = "";
+        String reason = "";
+        StringBuilder revised = new StringBuilder();
+        boolean readingRevisedAnswer = false;
+
+        for (String line : lines) {
+            if (line.startsWith("DECISION:")) {
+                decision = line.substring("DECISION:".length()).trim();
+                continue;
+            }
+            if (line.startsWith("REASON:")) {
+                reason = line.substring("REASON:".length()).trim();
+                continue;
+            }
+            if (line.startsWith("REVISED_ANSWER:")) {
+                readingRevisedAnswer = true;
+                String inline = line.substring("REVISED_ANSWER:".length()).trim();
+                if (StringUtils.hasText(inline)) {
+                    revised.append(inline);
+                }
+                continue;
+            }
+            if (readingRevisedAnswer) {
+                if (revised.length() > 0) {
+                    revised.append('\n');
+                }
+                revised.append(line);
+            }
+        }
+
+        if ("REVISE".equalsIgnoreCase(decision) && StringUtils.hasText(revised.toString())) {
+            return new VerificationResult(false, true, defaultText(reason, "校验建议修正答案。"), revised.toString().trim());
+        }
+        return VerificationResult.pass(defaultText(reason, "校验通过。"));
     }
 
     private List<String> extractCitations(EvidenceBundle evidenceBundle) {

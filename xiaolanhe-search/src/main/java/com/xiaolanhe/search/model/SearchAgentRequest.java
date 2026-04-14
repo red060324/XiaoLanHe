@@ -6,8 +6,6 @@ public record SearchAgentRequest(
         String query,
         String normalizedQuery,
         String queryIntent,
-        String gameCode,
-        String regionCode,
         boolean needLocalKnowledge,
         boolean needWebSearch,
         boolean freshnessRequired,

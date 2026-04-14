@@ -11,18 +11,17 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class ChatClientConfiguration {
 
-    @Bean
-    public ChatClient chatClient(ChatClient.Builder chatClientBuilder,
-                                 @Value("${spring.ai.openai.chat.options.model:qwen3.5-plus}") String chatModel,
-                                 @Value("${spring.ai.openai.chat.options.temperature:0.4}") Double temperature,
-                                 @Value("classpath:/prompts/system.md") Resource systemPrompt) {
+    @Bean("mainAgentPlanningChatClient")
+    public ChatClient mainAgentPlanningChatClient(ChatClient.Builder chatClientBuilder,
+                                                  @Value("${spring.ai.openai.chat.options.model:qwen3.5-plus}") String chatModel,
+                                                  @Value("classpath:/prompts/main-agent-planning.md") Resource planningPrompt) {
         OpenAiChatOptions defaultOptions = new OpenAiChatOptions();
         defaultOptions.setModel(chatModel);
-        defaultOptions.setTemperature(temperature);
+        defaultOptions.setTemperature(0.2);
         defaultOptions.setExtraBody(Map.of("enable_thinking", false));
 
         return chatClientBuilder
-                .defaultSystem(systemPrompt)
+                .defaultSystem(planningPrompt)
                 .defaultOptions(defaultOptions)
                 .build();
     }
@@ -54,6 +53,21 @@ public class ChatClientConfiguration {
 
         return chatClientBuilder
                 .defaultSystem(synthesisPrompt)
+                .defaultOptions(defaultOptions)
+                .build();
+    }
+
+    @Bean("synthesisVerificationChatClient")
+    public ChatClient synthesisVerificationChatClient(ChatClient.Builder chatClientBuilder,
+                                                      @Value("${spring.ai.openai.chat.options.model:qwen3.5-plus}") String chatModel,
+                                                      @Value("classpath:/prompts/verification.md") Resource verificationPrompt) {
+        OpenAiChatOptions defaultOptions = new OpenAiChatOptions();
+        defaultOptions.setModel(chatModel);
+        defaultOptions.setTemperature(0.1);
+        defaultOptions.setExtraBody(Map.of("enable_thinking", false));
+
+        return chatClientBuilder
+                .defaultSystem(verificationPrompt)
                 .defaultOptions(defaultOptions)
                 .build();
     }
