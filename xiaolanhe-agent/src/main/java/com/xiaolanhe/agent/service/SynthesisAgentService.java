@@ -3,6 +3,7 @@ package com.xiaolanhe.agent.service;
 import com.xiaolanhe.agent.model.SynthesisRequest;
 import com.xiaolanhe.agent.model.SynthesisResult;
 import com.xiaolanhe.agent.model.VerificationResult;
+import com.xiaolanhe.infrastructure.config.AgentProperties;
 import com.xiaolanhe.search.model.EvidenceBundle;
 import com.xiaolanhe.search.model.EvidenceItem;
 import java.util.ArrayList;
@@ -18,11 +19,14 @@ public class SynthesisAgentService {
 
     private final ChatClient synthesisChatClient;
     private final ChatClient synthesisVerificationChatClient;
+    private final AgentProperties agentProperties;
 
     public SynthesisAgentService(@Qualifier("synthesisChatClient") ChatClient synthesisChatClient,
-                                 @Qualifier("synthesisVerificationChatClient") ChatClient synthesisVerificationChatClient) {
+                                 @Qualifier("synthesisVerificationChatClient") ChatClient synthesisVerificationChatClient,
+                                 AgentProperties agentProperties) {
         this.synthesisChatClient = synthesisChatClient;
         this.synthesisVerificationChatClient = synthesisVerificationChatClient;
+        this.agentProperties = agentProperties;
     }
 
     public SynthesisResult synthesize(SynthesisRequest request) {
@@ -97,6 +101,9 @@ public class SynthesisAgentService {
     }
 
     public VerificationResult verifyAnswer(SynthesisRequest request, String answer) {
+        if (agentProperties.verification() == null || !agentProperties.verification().enabled()) {
+            return VerificationResult.pass("Verification disabled.");
+        }
         if (!StringUtils.hasText(answer)) {
             return VerificationResult.pass("答案为空，跳过校验。");
         }

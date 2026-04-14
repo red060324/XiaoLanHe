@@ -1,5 +1,6 @@
 package com.xiaolanhe.agent.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xiaolanhe.agent.model.IntentType;
 import com.xiaolanhe.agent.model.MemoryType;
 import com.xiaolanhe.agent.model.ResponseMode;
@@ -12,13 +13,86 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 public class MainAgentService {
 
+    private static final Logger log = LoggerFactory.getLogger(MainAgentService.class);
+
+    private final ChatClient mainAgentPlanningChatClient;
+    private final ObjectMapper objectMapper;
+
+    public MainAgentService(@Qualifier("mainAgentPlanningChatClient") ChatClient mainAgentPlanningChatClient,
+                            ObjectMapper objectMapper) {
+        this.mainAgentPlanningChatClient = mainAgentPlanningChatClient;
+        this.objectMapper = objectMapper;
+    }
+
     public TaskPlan plan(String userMessage) {
+        try {
+            String raw = mainAgentPlanningChatClient.prompt()
+                    .user(buildPlanningInput(userMessage))
+                    .call()
+                    .content();
+            MainAgentPlanPayload payload = objectMapper.readValue(extractJson(raw), MainAgentPlanPayload.class);
+            return toTaskPlan(userMessage, payload);
+        } catch (Exception ex) {
+            log.warn("Main agent planning fallback triggered for query={}", userMessage, ex);
+            return fallbackPlan(userMessage);
+        }
+    }
+
+    private String buildPlanningInput(String userMessage) {
+        return """
+                【用户问题】
+                %s
+                """.formatted(defaultText(userMessage, "无")).trim();
+    }
+
+    private TaskPlan toTaskPlan(String userMessage, MainAgentPlanPayload payload) {
+        RetrievalDirective retrieval = payload.retrieval() == null ? new RetrievalDirective() : payload.retrieval();
+        RetrievalPlan retrievalPlan = payload.needSearch()
+                ? new RetrievalPlan(
+                userMessage,
+                normalize(userMessage),
+                defaultText(retrieval.queryIntent(), "factual"),
+                retrieval.freshnessRequired(),
+                retrieval.needLocalKnowledge(),
+                retrieval.needWebSearch(),
+                retrieval.needLowLevelRetrieval(),
+                retrieval.needHighLevelRetrieval(),
+                List.of(),
+                List.of(),
+                retrieval.topK() <= 0 ? 5 : retrieval.topK(),
+                retrieval.rerankEnabled(),
+                safeList(retrieval.notes())
+        )
+                : null;
+
+        return new TaskPlan(
+                UUID.randomUUID().toString(),
+                parseTaskType(payload.taskType()),
+                parseIntentType(payload.intentType()),
+                parseResponseMode(payload.responseMode()),
+                payload.needMemory(),
+                payload.needSearch(),
+                payload.needVerification(),
+                payload.needSkill(),
+                parseMemoryTypes(payload.memoryTypes()),
+                retrievalPlan,
+                List.of(),
+                TaskState.PLAN,
+                safeList(payload.notes())
+        );
+    }
+
+    private TaskPlan fallbackPlan(String userMessage) {
         String normalized = normalize(userMessage);
         boolean greeting = isGreeting(normalized);
         boolean followUp = isFollowUp(normalized);
@@ -32,7 +106,7 @@ public class MainAgentService {
         ResponseMode responseMode = resolveResponseMode(greeting, compare, recommendation, strategy);
         boolean needMemory = needsMemory(greeting, followUp, recommendation, compare, strategy);
         boolean needSearch = !greeting;
-        RetrievalPlan retrievalPlan = needSearch ? buildRetrievalPlan(userMessage, normalized, freshness, strategy, compare, recommendation) : null;
+        RetrievalPlan retrievalPlan = needSearch ? fallbackRetrievalPlan(userMessage, normalized, freshness, strategy, compare, recommendation) : null;
 
         return new TaskPlan(
                 UUID.randomUUID().toString(),
@@ -51,49 +125,13 @@ public class MainAgentService {
         );
     }
 
-    private RetrievalPlan buildRetrievalPlan(String originalQuery,
-                                             String normalizedQuery,
-                                             boolean freshness,
-                                             boolean strategy,
-                                             boolean compare,
-                                             boolean recommendation) {
-        List<String> querySteps = new ArrayList<>();
-        List<String> subQueries = new ArrayList<>();
-        LinkedHashSet<String> deduplicatedQueries = new LinkedHashSet<>();
-
-        querySteps.add("理解用户问题并抽取核心检索目标");
-        deduplicatedQueries.add(originalQuery.trim());
-
-        if (freshness) {
-            querySteps.add("补充版本、活动、最新信息等时效检索");
-            deduplicatedQueries.add(originalQuery.trim() + " 最新");
-            deduplicatedQueries.add(originalQuery.trim() + " 官方公告");
-            deduplicatedQueries.add(originalQuery.trim() + " 版本前瞻");
-        }
-
-        if (strategy) {
-            querySteps.add("补充攻略、玩法和阵容检索");
-            deduplicatedQueries.add(originalQuery.trim() + " 攻略");
-            deduplicatedQueries.add(originalQuery.trim() + " 配队");
-            deduplicatedQueries.add(originalQuery.trim() + " 玩法思路");
-        }
-
-        if (compare) {
-            querySteps.add("补充对比维度检索");
-            deduplicatedQueries.add(originalQuery.trim() + " 对比");
-            deduplicatedQueries.add(originalQuery.trim() + " 区别");
-        }
-
-        if (recommendation) {
-            querySteps.add("补充推荐和投入回报维度检索");
-            deduplicatedQueries.add(originalQuery.trim() + " 推荐");
-            deduplicatedQueries.add(originalQuery.trim() + " 值不值得");
-            deduplicatedQueries.add(originalQuery.trim() + " 养成成本");
-        }
-
-        subQueries.addAll(deduplicatedQueries);
-
-        boolean highLevel = strategy || compare || recommendation || containsAny(normalizedQuery, "环境", "思路", "体系", "整体");
+    private RetrievalPlan fallbackRetrievalPlan(String originalQuery,
+                                                String normalizedQuery,
+                                                boolean freshness,
+                                                boolean strategy,
+                                                boolean compare,
+                                                boolean recommendation) {
+        boolean highLevel = strategy || compare || recommendation || containsAny(normalizedQuery, "环境", "思路", "体系", "整体", "趋势");
         return new RetrievalPlan(
                 originalQuery,
                 normalizedQuery,
@@ -103,12 +141,129 @@ public class MainAgentService {
                 freshness,
                 true,
                 highLevel,
-                List.copyOf(querySteps),
-                List.copyOf(subQueries),
-                highLevel ? 6 : 5,
+                List.of("规则兜底：按问题类型进行基础检索"),
+                List.of(originalQuery.trim()),
+                highLevel ? 6 : (freshness ? 6 : 5),
                 true,
                 buildRetrievalNotes(freshness, highLevel)
         );
+    }
+
+    private TaskType parseTaskType(String value) {
+        try {
+            return TaskType.valueOf(defaultText(value, TaskType.SIMPLE_QA.name()));
+        } catch (Exception ex) {
+            return TaskType.SIMPLE_QA;
+        }
+    }
+
+    private IntentType parseIntentType(String value) {
+        try {
+            return IntentType.valueOf(defaultText(value, IntentType.FACTUAL_LOOKUP.name()));
+        } catch (Exception ex) {
+            return IntentType.FACTUAL_LOOKUP;
+        }
+    }
+
+    private ResponseMode parseResponseMode(String value) {
+        String mode = defaultText(value, "qa").toLowerCase(Locale.ROOT);
+        return switch (mode) {
+            case "chat" -> ResponseMode.CHAT;
+            case "guide" -> ResponseMode.GUIDE;
+            case "compare" -> ResponseMode.COMPARE;
+            case "recommendation" -> ResponseMode.RECOMMENDATION;
+            default -> ResponseMode.QA;
+        };
+    }
+
+    private List<MemoryType> parseMemoryTypes(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        List<MemoryType> result = new ArrayList<>();
+        for (String value : values) {
+            try {
+                result.add(MemoryType.valueOf(value));
+            } catch (Exception ignored) {
+            }
+        }
+        return result.isEmpty() ? List.of() : List.copyOf(result);
+    }
+
+    private String extractJson(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return "{}";
+        }
+        String trimmed = raw.trim();
+        if (trimmed.startsWith("```")) {
+            int firstBrace = trimmed.indexOf('{');
+            int lastBrace = trimmed.lastIndexOf('}');
+            if (firstBrace >= 0 && lastBrace > firstBrace) {
+                return trimmed.substring(firstBrace, lastBrace + 1);
+            }
+        }
+        return trimmed;
+    }
+
+    private List<MemoryType> defaultMemoryTypes(boolean needMemory, boolean recommendation) {
+        if (!needMemory) {
+            return List.of();
+        }
+        if (recommendation) {
+            return List.of(MemoryType.RECENT_SESSION, MemoryType.SESSION_SUMMARY, MemoryType.RESOURCE_CONSTRAINTS);
+        }
+        return List.of(MemoryType.RECENT_SESSION, MemoryType.SESSION_SUMMARY);
+    }
+
+    private List<String> buildPlanNotes(boolean greeting,
+                                        boolean followUp,
+                                        boolean freshness,
+                                        boolean recommendation,
+                                        boolean needMemory) {
+        List<String> notes = new ArrayList<>();
+        if (greeting) {
+            notes.add("当前问题接近闲聊，走最轻链路。");
+        }
+        if (followUp) {
+            notes.add("检测到连续对话痕迹，保留会话上下文。");
+        }
+        if (freshness) {
+            notes.add("问题带有明显时效性，优先考虑联网检索。");
+        }
+        if (recommendation) {
+            notes.add("问题带有建议或取舍性质，保留记忆上下文。");
+        }
+        if (!needMemory) {
+            notes.add("当前问题更适合隔离历史上下文，避免旧话题干扰。");
+        }
+        return List.copyOf(notes);
+    }
+
+    private List<String> buildRetrievalNotes(boolean freshness, boolean highLevel) {
+        List<String> notes = new ArrayList<>();
+        if (freshness) {
+            notes.add("优先补充最新版本、活动、公告类证据。");
+        }
+        if (highLevel) {
+            notes.add("问题更偏策略或对比，后续适合接入高层检索。");
+        }
+        return List.copyOf(notes);
+    }
+
+    private String resolveQueryIntent(boolean freshness, boolean strategy, boolean compare, boolean recommendation) {
+        if (recommendation) {
+            return "recommendation";
+        }
+        if (compare) {
+            return "comparison";
+        }
+        if (strategy) {
+            return "strategy";
+        }
+        if (freshness) {
+            return "freshness";
+        }
+        return "factual";
     }
 
     private IntentType resolveIntentType(boolean greeting,
@@ -174,67 +329,6 @@ public class MainAgentService {
             return ResponseMode.GUIDE;
         }
         return ResponseMode.QA;
-    }
-
-    private List<MemoryType> defaultMemoryTypes(boolean needMemory, boolean recommendation) {
-        if (!needMemory) {
-            return List.of();
-        }
-        if (recommendation) {
-            return List.of(MemoryType.RECENT_SESSION, MemoryType.SESSION_SUMMARY, MemoryType.RESOURCE_CONSTRAINTS);
-        }
-        return List.of(MemoryType.RECENT_SESSION, MemoryType.SESSION_SUMMARY);
-    }
-
-    private List<String> buildPlanNotes(boolean greeting,
-                                        boolean followUp,
-                                        boolean freshness,
-                                        boolean recommendation,
-                                        boolean needMemory) {
-        List<String> notes = new ArrayList<>();
-        if (greeting) {
-            notes.add("当前问题接近闲聊，走最轻链路。");
-        }
-        if (followUp) {
-            notes.add("检测到连续对话痕迹，保留会话上下文。");
-        }
-        if (freshness) {
-            notes.add("问题带有明显时效性，优先考虑联网检索。");
-        }
-        if (recommendation) {
-            notes.add("问题带有建议或取舍性质，保留记忆上下文。");
-        }
-        if (!needMemory) {
-            notes.add("当前问题更适合隔离历史上下文，避免旧话题干扰。");
-        }
-        return List.copyOf(notes);
-    }
-
-    private List<String> buildRetrievalNotes(boolean freshness, boolean highLevel) {
-        List<String> notes = new ArrayList<>();
-        if (freshness) {
-            notes.add("优先补充最新版本、活动、公告类证据。");
-        }
-        if (highLevel) {
-            notes.add("问题更偏策略或对比，后续适合接入高层检索。");
-        }
-        return List.copyOf(notes);
-    }
-
-    private String resolveQueryIntent(boolean freshness, boolean strategy, boolean compare, boolean recommendation) {
-        if (recommendation) {
-            return "recommendation";
-        }
-        if (compare) {
-            return "comparison";
-        }
-        if (strategy) {
-            return "strategy";
-        }
-        if (freshness) {
-            return "freshness";
-        }
-        return "factual";
     }
 
     private boolean isGreeting(String normalized) {
@@ -312,5 +406,43 @@ public class MainAgentService {
             return "";
         }
         return userMessage.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String defaultText(String value, String fallback) {
+        return StringUtils.hasText(value) ? value : fallback;
+    }
+
+    private List<String> safeList(List<String> values) {
+        return values == null ? List.of() : List.copyOf(values);
+    }
+
+    private record MainAgentPlanPayload(
+            String taskType,
+            String intentType,
+            String responseMode,
+            boolean needMemory,
+            boolean needSearch,
+            boolean needVerification,
+            boolean needSkill,
+            List<String> memoryTypes,
+            RetrievalDirective retrieval,
+            List<String> notes
+    ) {
+    }
+
+    private record RetrievalDirective(
+            String queryIntent,
+            boolean freshnessRequired,
+            boolean needLocalKnowledge,
+            boolean needWebSearch,
+            boolean needLowLevelRetrieval,
+            boolean needHighLevelRetrieval,
+            int topK,
+            boolean rerankEnabled,
+            List<String> notes
+    ) {
+        private RetrievalDirective() {
+            this("factual", false, true, false, true, false, 5, true, List.of());
+        }
     }
 }

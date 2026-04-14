@@ -19,10 +19,17 @@ management:
 xiaolanhe:
   agent:
     mode: single-orchestrator
+    verification:
+      enabled: false
     memory:
       enabled: true
       recent-window-size: 8
       summary-trigger-message-count: 12
+    models:
+      main-agent-planning: qwen3.5-flash
+      memory-summary: qwen3.5-flash
+      search-agent-planning: qwen3.5-plus
+      synthesis: qwen3.5-plus
   messaging:
     topics:
       chat-audit: xiaolanhe_chat_audit

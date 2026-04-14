@@ -1,5 +1,6 @@
 package com.xiaolanhe.search.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xiaolanhe.domain.knowledge.model.KnowledgeSnippet;
 import com.xiaolanhe.domain.search.model.WebSearchResult;
 import com.xiaolanhe.rag.service.KnowledgeDocumentService;
@@ -12,21 +13,32 @@ import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 public class DefaultSearchAgentService implements SearchAgentService {
 
+    private static final Logger log = LoggerFactory.getLogger(DefaultSearchAgentService.class);
     private static final int DEFAULT_TOP_K = 5;
 
     private final KnowledgeDocumentService knowledgeDocumentService;
     private final WebSearchService webSearchService;
+    private final ChatClient searchAgentPlanningChatClient;
+    private final ObjectMapper objectMapper;
 
     public DefaultSearchAgentService(KnowledgeDocumentService knowledgeDocumentService,
-                                     WebSearchService webSearchService) {
+                                     WebSearchService webSearchService,
+                                     @Qualifier("searchAgentPlanningChatClient") ChatClient searchAgentPlanningChatClient,
+                                     ObjectMapper objectMapper) {
         this.knowledgeDocumentService = knowledgeDocumentService;
         this.webSearchService = webSearchService;
+        this.searchAgentPlanningChatClient = searchAgentPlanningChatClient;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -34,7 +46,9 @@ public class DefaultSearchAgentService implements SearchAgentService {
         int topK = normalizeTopK(request.topK());
         List<EvidenceItem> rawItems = new ArrayList<>();
         List<String> notes = new ArrayList<>();
-        List<String> effectiveQueries = effectiveQueries(request);
+        SearchDecomposition decomposition = decomposeQueries(request);
+        List<String> effectiveQueries = decomposition.subQueries();
+        notes.addAll(decomposition.notes());
 
         if (request.needLocalKnowledge()) {
             int totalSnippets = 0;
@@ -159,5 +173,94 @@ public class DefaultSearchAgentService implements SearchAgentService {
                     .forEach(queries::add);
         }
         return List.copyOf(queries);
+    }
+
+    private SearchDecomposition decomposeQueries(SearchAgentRequest request) {
+        try {
+            String raw = searchAgentPlanningChatClient.prompt()
+                    .user(buildPlanningInput(request))
+                    .call()
+                    .content();
+            SearchPlanningPayload payload = objectMapper.readValue(extractJson(raw), SearchPlanningPayload.class);
+            List<String> queries = normalizedQueries(payload.subQueries(), request);
+            return new SearchDecomposition(
+                    queries.isEmpty() ? effectiveQueries(request) : queries,
+                    payload.notes() == null ? List.of() : List.copyOf(payload.notes())
+            );
+        } catch (Exception ex) {
+            log.warn("Search decomposition fallback triggered for query={}", request.query(), ex);
+            return new SearchDecomposition(effectiveQueries(request), List.of("SearchAgent 使用规则兜底查询。"));
+        }
+    }
+
+    private String buildPlanningInput(SearchAgentRequest request) {
+        return """
+                【用户问题】
+                %s
+
+                【检索意图】
+                %s
+
+                【是否时效问题】
+                %s
+
+                【是否偏低层检索】
+                %s
+
+                【是否偏高层检索】
+                %s
+                """.formatted(
+                defaultText(request.query(), "无"),
+                defaultText(request.queryIntent(), "factual"),
+                request.freshnessRequired(),
+                request.needLowLevelRetrieval(),
+                request.needHighLevelRetrieval()
+        ).trim();
+    }
+
+    private List<String> normalizedQueries(List<String> generatedQueries, SearchAgentRequest request) {
+        LinkedHashSet<String> queries = new LinkedHashSet<>();
+        if (StringUtils.hasText(request.query())) {
+            queries.add(request.query().trim());
+        }
+        if (generatedQueries != null) {
+            generatedQueries.stream()
+                    .filter(StringUtils::hasText)
+                    .map(String::trim)
+                    .forEach(queries::add);
+        }
+        return List.copyOf(queries);
+    }
+
+    private String extractJson(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return "{}";
+        }
+        String trimmed = raw.trim();
+        if (trimmed.startsWith("```")) {
+            int firstBrace = trimmed.indexOf('{');
+            int lastBrace = trimmed.lastIndexOf('}');
+            if (firstBrace >= 0 && lastBrace > firstBrace) {
+                return trimmed.substring(firstBrace, lastBrace + 1);
+            }
+        }
+        return trimmed;
+    }
+
+    private String defaultText(String value, String fallback) {
+        return StringUtils.hasText(value) ? value : fallback;
+    }
+
+    private record SearchPlanningPayload(
+            List<String> querySteps,
+            List<String> subQueries,
+            List<String> notes
+    ) {
+    }
+
+    private record SearchDecomposition(
+            List<String> subQueries,
+            List<String> notes
+    ) {
     }
 }
