@@ -6,6 +6,8 @@ public record SearchAgentRequest(
         String query,
         String normalizedQuery,
         String queryIntent,
+        String taskType,
+        String responseMode,
         boolean needLocalKnowledge,
         boolean needWebSearch,
         boolean freshnessRequired,
@@ -13,6 +15,7 @@ public record SearchAgentRequest(
         boolean needHighLevelRetrieval,
         List<String> querySteps,
         List<String> subQueries,
+        List<String> taskNotes,
         int topK,
         boolean rerankEnabled
 ) {

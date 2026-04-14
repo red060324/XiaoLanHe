@@ -161,6 +161,8 @@ public class ChatService {
                 retrievalPlan.originalQuery(),
                 retrievalPlan.normalizedQuery(),
                 retrievalPlan.queryIntent(),
+                taskPlan.taskType().name(),
+                taskPlan.responseMode().code(),
                 retrievalPlan.needLocalKnowledge(),
                 retrievalPlan.needWebSearch(),
                 retrievalPlan.freshnessRequired(),
@@ -168,6 +170,7 @@ public class ChatService {
                 retrievalPlan.needHighLevelRetrieval(),
                 retrievalPlan.querySteps(),
                 retrievalPlan.subQueries(),
+                taskPlan.notes(),
                 retrievalPlan.topK(),
                 retrievalPlan.rerankEnabled()
         ));

@@ -49,6 +49,12 @@ public class DefaultSearchAgentService implements SearchAgentService {
         SearchDecomposition decomposition = decomposeQueries(request);
         List<String> effectiveQueries = decomposition.subQueries();
         notes.addAll(decomposition.notes());
+        if (!decomposition.querySteps().isEmpty()) {
+            notes.add("SearchAgent querySteps: " + String.join(" | ", decomposition.querySteps()));
+        }
+        if (!effectiveQueries.isEmpty()) {
+            notes.add("SearchAgent subQueries: " + String.join(" || ", effectiveQueries));
+        }
 
         if (request.needLocalKnowledge()) {
             int totalSnippets = 0;
@@ -172,7 +178,7 @@ public class DefaultSearchAgentService implements SearchAgentService {
                     .map(String::trim)
                     .forEach(queries::add);
         }
-        return List.copyOf(queries);
+        return queries.stream().limit(6).toList();
     }
 
     private SearchDecomposition decomposeQueries(SearchAgentRequest request) {
@@ -185,11 +191,16 @@ public class DefaultSearchAgentService implements SearchAgentService {
             List<String> queries = normalizedQueries(payload.subQueries(), request);
             return new SearchDecomposition(
                     queries.isEmpty() ? effectiveQueries(request) : queries,
+                    payload.querySteps() == null ? List.of() : List.copyOf(payload.querySteps()),
                     payload.notes() == null ? List.of() : List.copyOf(payload.notes())
             );
         } catch (Exception ex) {
             log.warn("Search decomposition fallback triggered for query={}", request.query(), ex);
-            return new SearchDecomposition(effectiveQueries(request), List.of("SearchAgent 使用规则兜底查询。"));
+            return new SearchDecomposition(
+                    fallbackQueries(request),
+                    fallbackSteps(request),
+                    List.of("模型查询分解失败，回退到规则兜底查询。")
+            );
         }
     }
 
@@ -201,6 +212,12 @@ public class DefaultSearchAgentService implements SearchAgentService {
                 【检索意图】
                 %s
 
+                【任务类型】
+                %s
+
+                【输出模式】
+                %s
+
                 【是否时效问题】
                 %s
 
@@ -209,12 +226,18 @@ public class DefaultSearchAgentService implements SearchAgentService {
 
                 【是否偏高层检索】
                 %s
+
+                【主控备注】
+                %s
                 """.formatted(
                 defaultText(request.query(), "无"),
                 defaultText(request.queryIntent(), "factual"),
+                defaultText(request.taskType(), "SIMPLE_QA"),
+                defaultText(request.responseMode(), "qa"),
                 request.freshnessRequired(),
                 request.needLowLevelRetrieval(),
-                request.needHighLevelRetrieval()
+                request.needHighLevelRetrieval(),
+                formatNotes(request.taskNotes())
         ).trim();
     }
 
@@ -226,10 +249,11 @@ public class DefaultSearchAgentService implements SearchAgentService {
         if (generatedQueries != null) {
             generatedQueries.stream()
                     .filter(StringUtils::hasText)
-                    .map(String::trim)
+                    .map(this::sanitizeQuery)
+                    .filter(StringUtils::hasText)
                     .forEach(queries::add);
         }
-        return List.copyOf(queries);
+        return queries.stream().limit(6).toList();
     }
 
     private String extractJson(String raw) {
@@ -251,6 +275,67 @@ public class DefaultSearchAgentService implements SearchAgentService {
         return StringUtils.hasText(value) ? value : fallback;
     }
 
+    private String sanitizeQuery(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        return value.replace("？", "")
+                .replace("?", "")
+                .replace("，", " ")
+                .replace(",", " ")
+                .replace("。", " ")
+                .trim();
+    }
+
+    private String formatNotes(List<String> notes) {
+        if (notes == null || notes.isEmpty()) {
+            return "无";
+        }
+        return String.join(" | ", notes);
+    }
+
+    private List<String> fallbackQueries(SearchAgentRequest request) {
+        LinkedHashSet<String> queries = new LinkedHashSet<>();
+        if (StringUtils.hasText(request.query())) {
+            queries.add(request.query().trim());
+        }
+        if ("recommendation".equals(request.queryIntent()) || "recommendation".equalsIgnoreCase(request.responseMode())) {
+            queries.add(sanitizeQuery(request.query() + " 值不值得"));
+            queries.add(sanitizeQuery(request.query() + " 适合谁"));
+        }
+        if ("comparison".equals(request.queryIntent()) || "compare".equalsIgnoreCase(request.responseMode())) {
+            queries.add(sanitizeQuery(request.query() + " 对比"));
+            queries.add(sanitizeQuery(request.query() + " 区别"));
+        }
+        if ("strategy".equals(request.queryIntent()) || "guide".equalsIgnoreCase(request.responseMode())) {
+            queries.add(sanitizeQuery(request.query() + " 攻略"));
+            queries.add(sanitizeQuery(request.query() + " 玩法思路"));
+        }
+        if (request.freshnessRequired()) {
+            queries.add(sanitizeQuery(request.query() + " 最新"));
+            queries.add(sanitizeQuery(request.query() + " 官方公告"));
+        }
+        return queries.stream().filter(StringUtils::hasText).limit(6).toList();
+    }
+
+    private List<String> fallbackSteps(SearchAgentRequest request) {
+        List<String> steps = new ArrayList<>();
+        steps.add("规则兜底：保留原问题作为基础查询");
+        if (request.freshnessRequired()) {
+            steps.add("规则兜底：补充时效信息查询");
+        }
+        if ("recommendation".equals(request.queryIntent()) || "recommendation".equalsIgnoreCase(request.responseMode())) {
+            steps.add("规则兜底：补充推荐维度查询");
+        }
+        if ("comparison".equals(request.queryIntent()) || "compare".equalsIgnoreCase(request.responseMode())) {
+            steps.add("规则兜底：补充对比维度查询");
+        }
+        if ("strategy".equals(request.queryIntent()) || "guide".equalsIgnoreCase(request.responseMode())) {
+            steps.add("规则兜底：补充攻略维度查询");
+        }
+        return List.copyOf(steps);
+    }
+
     private record SearchPlanningPayload(
             List<String> querySteps,
             List<String> subQueries,
@@ -260,6 +345,7 @@ public class DefaultSearchAgentService implements SearchAgentService {
 
     private record SearchDecomposition(
             List<String> subQueries,
+            List<String> querySteps,
             List<String> notes
     ) {
     }

@@ -80,3 +80,104 @@
 - 如果不确定，仍然要输出最合理的结构化结果
 - 不要凭空编造游戏 code、区服 code、数据库字段
 - 只做语义层规划，不做内部实现细节推断
+
+## 示例
+
+### 示例 1：时效问答
+
+输入：
+
+原神新角色是谁
+
+输出示意：
+
+```json
+{
+  "taskType": "FACTUAL_FRESH",
+  "intentType": "FRESHNESS_LOOKUP",
+  "responseMode": "qa",
+  "needMemory": false,
+  "needSearch": true,
+  "needVerification": true,
+  "needSkill": false,
+  "memoryTypes": [],
+  "retrieval": {
+    "queryIntent": "freshness",
+    "freshnessRequired": true,
+    "needLocalKnowledge": true,
+    "needWebSearch": true,
+    "needLowLevelRetrieval": true,
+    "needHighLevelRetrieval": false,
+    "topK": 6,
+    "rerankEnabled": true,
+    "notes": ["当前问题带有明显时效性，应优先联网检索最新信息。"]
+  },
+  "notes": ["当前问题更适合隔离旧上下文，避免被历史话题污染。"]
+}
+```
+
+### 示例 2：攻略问题
+
+输入：
+
+Apex 怎么上大师
+
+输出示意：
+
+```json
+{
+  "taskType": "STRATEGY",
+  "intentType": "STRATEGY_GUIDE",
+  "responseMode": "guide",
+  "needMemory": true,
+  "needSearch": true,
+  "needVerification": true,
+  "needSkill": false,
+  "memoryTypes": ["RECENT_SESSION", "SESSION_SUMMARY"],
+  "retrieval": {
+    "queryIntent": "strategy",
+    "freshnessRequired": false,
+    "needLocalKnowledge": true,
+    "needWebSearch": false,
+    "needLowLevelRetrieval": true,
+    "needHighLevelRetrieval": true,
+    "topK": 6,
+    "rerankEnabled": true,
+    "notes": ["当前问题偏攻略，需要玩法、阵容和误区信息。"]
+  },
+  "notes": ["攻略类问题适合保留当前会话上下文。"]
+}
+```
+
+### 示例 3：推荐问题
+
+输入：
+
+这个角色值不值得抽
+
+输出示意：
+
+```json
+{
+  "taskType": "RECOMMENDATION",
+  "intentType": "PERSONALIZED_RECOMMENDATION",
+  "responseMode": "recommendation",
+  "needMemory": true,
+  "needSearch": true,
+  "needVerification": true,
+  "needSkill": false,
+  "memoryTypes": ["RECENT_SESSION", "SESSION_SUMMARY", "RESOURCE_CONSTRAINTS"],
+  "retrieval": {
+    "queryIntent": "recommendation",
+    "freshnessRequired": false,
+    "needLocalKnowledge": true,
+    "needWebSearch": false,
+    "needLowLevelRetrieval": true,
+    "needHighLevelRetrieval": true,
+    "topK": 6,
+    "rerankEnabled": true,
+    "notes": ["推荐类问题需要关注适合谁、投入成本和优缺点。"]
+  },
+  "notes": ["推荐问题更依赖上下文和用户约束。"]
+}
+```
