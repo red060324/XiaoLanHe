@@ -2,7 +2,7 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/xiaolanhe
     username: xlh
-    password: xlh123456
+    password: ${POSTGRES_PASSWORD:}
   data:
     redis:
       host: localhost
@@ -32,9 +32,17 @@ xiaolanhe:
     enabled: true
     provider: searxng
     endpoint: ${SEARXNG_BASE_URL:http://127.0.0.1:8080}
+    lightrag:
+      enabled: false
+      base-url: ${LIGHTRAG_BASE_URL:http://127.0.0.1:9621}
+      api-key: ${XLH_LIGHTRAG_API_KEY:}
+      query-mode: mix
+      include-references: true
+      include-chunk-content: true
+      timeout: 20s
   storage:
     minio:
       endpoint: http://127.0.0.1:9000
-      access-key: xlhminio
-      secret-key: xlhminio123456
+      access-key: ${MINIO_ACCESS_KEY:}
+      secret-key: ${MINIO_SECRET_KEY:}
       bucket: xlh-dev

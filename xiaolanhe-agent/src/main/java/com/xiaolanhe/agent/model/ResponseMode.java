@@ -5,7 +5,8 @@ public enum ResponseMode {
     QA("qa"),
     GUIDE("guide"),
     COMPARE("compare"),
-    RECOMMENDATION("recommendation");
+    RECOMMENDATION("recommendation"),
+    CLARIFY("clarify");
 
     private final String code;
 

@@ -7,6 +7,7 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.core.io.Resource;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 
 @Configuration
 public class ChatClientConfiguration {
@@ -22,6 +23,21 @@ public class ChatClientConfiguration {
 
         return chatClientBuilder
                 .defaultSystem(planningPrompt)
+                .defaultOptions(defaultOptions)
+                .build();
+    }
+
+    @Bean("mainAgentDirectChatClient")
+    public ChatClient mainAgentDirectChatClient(ChatClient.Builder chatClientBuilder,
+                                                AgentProperties agentProperties,
+                                                @Value("classpath:/prompts/main-agent-direct.md") Resource directPrompt) {
+        OpenAiChatOptions defaultOptions = new OpenAiChatOptions();
+        defaultOptions.setModel(resolveModel(agentProperties, "qwen3.5-flash", AgentProperties.Models::mainAgentPlanning));
+        defaultOptions.setTemperature(0.4);
+        defaultOptions.setExtraBody(Map.of("enable_thinking", false));
+
+        return chatClientBuilder
+                .defaultSystem(directPrompt)
                 .defaultOptions(defaultOptions)
                 .build();
     }

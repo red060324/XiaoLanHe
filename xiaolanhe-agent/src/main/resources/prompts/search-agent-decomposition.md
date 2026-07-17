@@ -212,3 +212,60 @@
   ]
 }
 ```
+
+### 示例 4：对比问题
+
+输入特征：
+
+- 用户问题：Steam Deck 和 Switch 哪个更适合玩独立游戏
+- queryIntent：comparison
+- taskType：COMPARE
+- responseMode：compare
+
+输出示意：
+
+```json
+{
+  "querySteps": [
+    "识别为平台选择类对比问题",
+    "补充便携性、性能、游戏生态和独立游戏适配维度"
+  ],
+  "subQueries": [
+    "Steam Deck Switch 对比",
+    "Steam Deck Switch 独立游戏",
+    "Steam Deck Switch 便携性",
+    "Steam Deck Switch 游戏生态"
+  ],
+  "notes": [
+    "对比类问题不能只查单个平台介绍"
+  ]
+}
+```
+
+### 示例 5：定义 / 身份问题
+
+输入特征：
+
+- 用户问题：Apex 狗子是谁
+- queryIntent：factual
+- taskType：SIMPLE_QA
+- responseMode：qa
+
+输出示意：
+
+```json
+{
+  "querySteps": [
+    "识别为角色昵称解释问题",
+    "补充身份、称呼来源和角色基础信息维度"
+  ],
+  "subQueries": [
+    "Apex 狗子 是谁",
+    "Apex 狗子 介绍",
+    "Apex 狗子 称呼来源"
+  ],
+  "notes": [
+    "身份类问题要优先补角色别名和称呼来源"
+  ]
+}
+```

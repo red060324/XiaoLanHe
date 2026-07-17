@@ -9,6 +9,17 @@ public record SearchProperties(
         String provider,
         String endpoint,
         String apiKey,
-        Duration cacheTtl
+        Duration cacheTtl,
+        LightRag lightrag
 ) {
+    public record LightRag(
+            boolean enabled,
+            String baseUrl,
+            String apiKey,
+            String queryMode,
+            boolean includeReferences,
+            boolean includeChunkContent,
+            Duration timeout
+    ) {
+    }
 }

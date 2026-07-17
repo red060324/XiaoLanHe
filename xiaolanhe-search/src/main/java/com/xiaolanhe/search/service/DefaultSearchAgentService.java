@@ -27,15 +27,18 @@ public class DefaultSearchAgentService implements SearchAgentService {
     private static final int DEFAULT_TOP_K = 5;
 
     private final KnowledgeDocumentService knowledgeDocumentService;
+    private final LightRagSearchService lightRagSearchService;
     private final WebSearchService webSearchService;
     private final ChatClient searchAgentPlanningChatClient;
     private final ObjectMapper objectMapper;
 
     public DefaultSearchAgentService(KnowledgeDocumentService knowledgeDocumentService,
+                                     LightRagSearchService lightRagSearchService,
                                      WebSearchService webSearchService,
                                      @Qualifier("searchAgentPlanningChatClient") ChatClient searchAgentPlanningChatClient,
                                      ObjectMapper objectMapper) {
         this.knowledgeDocumentService = knowledgeDocumentService;
+        this.lightRagSearchService = lightRagSearchService;
         this.webSearchService = webSearchService;
         this.searchAgentPlanningChatClient = searchAgentPlanningChatClient;
         this.objectMapper = objectMapper;
@@ -48,7 +51,15 @@ public class DefaultSearchAgentService implements SearchAgentService {
         List<String> notes = new ArrayList<>();
         SearchDecomposition decomposition = decomposeQueries(request);
         List<String> effectiveQueries = decomposition.subQueries();
+        log.info(
+                "SearchAgent decomposition complete. query={}, objective={}, subQueryCount={}, querySteps={}",
+                trim(request.query(), 80),
+                searchObjective(request),
+                effectiveQueries.size(),
+                decomposition.querySteps()
+        );
         notes.addAll(decomposition.notes());
+        notes.add("SearchAgent objective: " + searchObjective(request));
         if (!decomposition.querySteps().isEmpty()) {
             notes.add("SearchAgent querySteps: " + String.join(" | ", decomposition.querySteps()));
         }
@@ -59,20 +70,25 @@ public class DefaultSearchAgentService implements SearchAgentService {
         if (request.needLocalKnowledge()) {
             int totalSnippets = 0;
             for (String query : effectiveQueries) {
-                List<KnowledgeSnippet> snippets = knowledgeDocumentService.search(
+                LightRagSearchService.Result lightRagResult = lightRagSearchService.search(
                         query,
-                        null,
-                        null,
+                        request.needLowLevelRetrieval(),
+                        request.needHighLevelRetrieval(),
                         topK
                 );
+                if (lightRagResult.available()) {
+                    rawItems.addAll(lightRagResult.items());
+                    totalSnippets += lightRagResult.items().size();
+                    lightRagResult.notes().forEach(note -> notes.add("[LightRAG][" + query + "] " + note));
+                    continue;
+                }
+
+                notes.add("[LightRAG][" + query + "] " + String.join(" | ", lightRagResult.notes()));
+                List<KnowledgeSnippet> snippets = knowledgeDocumentService.search(query, null, null, topK);
                 totalSnippets += snippets.size();
-                rawItems.addAll(
-                        snippets.stream()
-                                .map(this::toKnowledgeEvidence)
-                                .toList()
-                );
+                rawItems.addAll(snippets.stream().map(this::toKnowledgeEvidence).toList());
             }
-            notes.add("Local knowledge search executed " + effectiveQueries.size() + " queries and returned " + totalSnippets + " snippets.");
+            notes.add("Local knowledge search executed " + effectiveQueries.size() + " queries and returned " + totalSnippets + " snippets/items.");
         }
 
         if (request.needWebSearch()) {
@@ -209,6 +225,9 @@ public class DefaultSearchAgentService implements SearchAgentService {
                 【用户问题】
                 %s
 
+                【归一化问题】
+                %s
+
                 【检索意图】
                 %s
 
@@ -227,16 +246,25 @@ public class DefaultSearchAgentService implements SearchAgentService {
                 【是否偏高层检索】
                 %s
 
+                【主控初步 querySteps】
+                %s
+
+                【主控初步 subQueries】
+                %s
+
                 【主控备注】
                 %s
                 """.formatted(
                 defaultText(request.query(), "无"),
+                defaultText(request.normalizedQuery(), "无"),
                 defaultText(request.queryIntent(), "factual"),
                 defaultText(request.taskType(), "SIMPLE_QA"),
                 defaultText(request.responseMode(), "qa"),
                 request.freshnessRequired(),
                 request.needLowLevelRetrieval(),
                 request.needHighLevelRetrieval(),
+                formatNotes(request.querySteps()),
+                formatNotes(request.subQueries()),
                 formatNotes(request.taskNotes())
         ).trim();
     }
@@ -245,6 +273,13 @@ public class DefaultSearchAgentService implements SearchAgentService {
         LinkedHashSet<String> queries = new LinkedHashSet<>();
         if (StringUtils.hasText(request.query())) {
             queries.add(request.query().trim());
+        }
+        if (request.subQueries() != null) {
+            request.subQueries().stream()
+                    .filter(StringUtils::hasText)
+                    .map(this::sanitizeQuery)
+                    .filter(StringUtils::hasText)
+                    .forEach(queries::add);
         }
         if (generatedQueries != null) {
             generatedQueries.stream()
@@ -275,6 +310,13 @@ public class DefaultSearchAgentService implements SearchAgentService {
         return StringUtils.hasText(value) ? value : fallback;
     }
 
+    private String trim(String value, int maxLength) {
+        if (!StringUtils.hasText(value) || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength) + "...";
+    }
+
     private String sanitizeQuery(String value) {
         if (!StringUtils.hasText(value)) {
             return "";
@@ -299,6 +341,13 @@ public class DefaultSearchAgentService implements SearchAgentService {
         if (StringUtils.hasText(request.query())) {
             queries.add(request.query().trim());
         }
+        if (request.subQueries() != null) {
+            request.subQueries().stream()
+                    .filter(StringUtils::hasText)
+                    .map(this::sanitizeQuery)
+                    .filter(StringUtils::hasText)
+                    .forEach(queries::add);
+        }
         if ("recommendation".equals(request.queryIntent()) || "recommendation".equalsIgnoreCase(request.responseMode())) {
             queries.add(sanitizeQuery(request.query() + " 值不值得"));
             queries.add(sanitizeQuery(request.query() + " 适合谁"));
@@ -321,6 +370,9 @@ public class DefaultSearchAgentService implements SearchAgentService {
     private List<String> fallbackSteps(SearchAgentRequest request) {
         List<String> steps = new ArrayList<>();
         steps.add("规则兜底：保留原问题作为基础查询");
+        if (request.querySteps() != null && !request.querySteps().isEmpty()) {
+            steps.add("规则兜底：继承主控提供的初步检索步骤");
+        }
         if (request.freshnessRequired()) {
             steps.add("规则兜底：补充时效信息查询");
         }
@@ -334,6 +386,25 @@ public class DefaultSearchAgentService implements SearchAgentService {
             steps.add("规则兜底：补充攻略维度查询");
         }
         return List.copyOf(steps);
+    }
+
+    private String searchObjective(SearchAgentRequest request) {
+        if (request.freshnessRequired()) {
+            return "freshness";
+        }
+        if ("recommendation".equals(request.queryIntent())) {
+            return "recommendation";
+        }
+        if ("comparison".equals(request.queryIntent())) {
+            return "comparison";
+        }
+        if ("strategy".equals(request.queryIntent())) {
+            return "strategy";
+        }
+        if (request.needHighLevelRetrieval()) {
+            return "high_level_reasoning";
+        }
+        return "factual_lookup";
     }
 
     private record SearchPlanningPayload(

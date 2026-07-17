@@ -53,18 +53,27 @@ public class KnowledgeDocumentRepository {
     }
 
     public void insertChunk(long documentId, int chunkNo, String chunkText) {
+        insertChunk(documentId, chunkNo, chunkText, null);
+    }
+
+    public void insertChunk(long documentId, int chunkNo, String chunkText, String embeddingLiteral) {
         jdbcTemplate.update(
                 """
-                insert into knowledge_chunk(document_id, chunk_no, chunk_text, metadata)
-                values (?, ?, ?, '{}'::jsonb)
+                insert into knowledge_chunk(document_id, chunk_no, chunk_text, embedding, metadata)
+                values (?, ?, ?, cast(? as vector), '{}'::jsonb)
                 """,
                 documentId,
                 chunkNo,
-                chunkText
+                chunkText,
+                embeddingLiteral
         );
     }
 
     public List<KnowledgeSnippet> search(String query, String gameCode, String regionCode, int limit) {
+        return searchByKeyword(query, gameCode, regionCode, limit);
+    }
+
+    public List<KnowledgeSnippet> searchByKeyword(String query, String gameCode, String regionCode, int limit) {
         StringBuilder sql = new StringBuilder("""
                 select kc.id as chunk_id,
                        kd.id as document_id,
@@ -100,6 +109,51 @@ public class KnowledgeDocumentRepository {
         }
 
         sql.append(" order by score desc, kc.id desc limit ?");
+        args.add(limit);
+
+        return jdbcTemplate.query(sql.toString(), args.toArray(), (rs, rowNum) -> new KnowledgeSnippet(
+                rs.getLong("chunk_id"),
+                rs.getLong("document_id"),
+                rs.getString("title"),
+                rs.getString("game_code"),
+                rs.getString("region_code"),
+                rs.getString("patch_version"),
+                rs.getString("source_url"),
+                rs.getString("chunk_text"),
+                rs.getInt("score")
+        ));
+    }
+
+    public List<KnowledgeSnippet> searchByVector(String embeddingLiteral, String gameCode, String regionCode, int limit) {
+        StringBuilder sql = new StringBuilder("""
+                select kc.id as chunk_id,
+                       kd.id as document_id,
+                       kd.title,
+                       kd.game_code,
+                       kd.region_code,
+                       kd.patch_version,
+                       kd.source_url,
+                       kc.chunk_text,
+                       cast(greatest(0, least(100, round((1 - (kc.embedding <=> cast(? as vector))) * 100))) as integer) as score
+                from knowledge_chunk kc
+                join knowledge_document kd on kd.id = kc.document_id
+                where kc.embedding is not null
+                """);
+
+        List<Object> args = new ArrayList<>();
+        args.add(embeddingLiteral);
+
+        if (StringUtils.hasText(gameCode)) {
+            sql.append(" and kd.game_code = ?");
+            args.add(gameCode);
+        }
+        if (StringUtils.hasText(regionCode)) {
+            sql.append(" and (kd.region_code = ? or kd.region_code is null)");
+            args.add(regionCode);
+        }
+
+        sql.append(" order by kc.embedding <=> cast(? as vector), kc.id desc limit ?");
+        args.add(embeddingLiteral);
         args.add(limit);
 
         return jdbcTemplate.query(sql.toString(), args.toArray(), (rs, rowNum) -> new KnowledgeSnippet(

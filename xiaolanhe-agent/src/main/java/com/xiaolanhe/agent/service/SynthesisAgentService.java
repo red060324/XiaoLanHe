@@ -53,10 +53,16 @@ public class SynthesisAgentService {
         String evidenceText = buildEvidenceSection(request.evidenceBundle());
 
         return """
+                【主路由】
+                %s
+
                 【输出模式】
                 %s
 
                 【用户问题】
+                %s
+
+                【规划备注】
                 %s
 
                 【上下文】
@@ -65,8 +71,10 @@ public class SynthesisAgentService {
                 【证据材料】
                 %s
                 """.formatted(
+                defaultText(request.routeType(), "EVIDENCE_ANSWER"),
                 defaultText(request.responseMode(), "chat"),
                 request.query(),
+                formatNotes(request.planningNotes()),
                 defaultText(contextText, "无"),
                 defaultText(evidenceText, "无")
         ).trim();
@@ -121,10 +129,16 @@ public class SynthesisAgentService {
         String evidenceText = buildEvidenceSection(request.evidenceBundle());
 
         return """
+                【主路由】
+                %s
+
                 【用户问题】
                 %s
 
                 【输出模式】
+                %s
+
+                【规划备注】
                 %s
 
                 【上下文】
@@ -136,8 +150,10 @@ public class SynthesisAgentService {
                 【候选答案】
                 %s
                 """.formatted(
+                defaultText(request.routeType(), "EVIDENCE_ANSWER"),
                 request.query(),
                 defaultText(request.responseMode(), "chat"),
+                formatNotes(request.planningNotes()),
                 defaultText(contextText, "无"),
                 defaultText(evidenceText, "无"),
                 answer
@@ -202,5 +218,12 @@ public class SynthesisAgentService {
 
     private String defaultText(String value, String fallback) {
         return StringUtils.hasText(value) ? value : fallback;
+    }
+
+    private String formatNotes(List<String> notes) {
+        if (notes == null || notes.isEmpty()) {
+            return "无";
+        }
+        return String.join(" | ", notes);
     }
 }

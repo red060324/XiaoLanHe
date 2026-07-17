@@ -6,5 +6,7 @@ public enum TaskType {
     FACTUAL_FRESH,
     STRATEGY,
     COMPARE,
-    RECOMMENDATION
+    RECOMMENDATION,
+    TOOL_LIKE,
+    CLARIFICATION
 }
