@@ -17,8 +17,6 @@ deploy/minio/data/
 deploy/rocketmq/logs/
 deploy/rocketmq/store/
 deploy/
-docs/
-
 ### IntelliJ IDEA ###
 .idea/
 .idea/modules.xml
