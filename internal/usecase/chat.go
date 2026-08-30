@@ -13,12 +13,15 @@ import (
 type ConversationStore interface {
 	FindOrCreateSession(context.Context, string) (int64, error)
 	SaveMessage(context.Context, int64, string, string, string) error
+	LoadContext(context.Context, int64, int) (string, error)
 }
 
 type Assistant interface {
-	Generate(context.Context, string) (Answer, error)
-	Stream(context.Context, string) (AnswerStream, error)
+	Generate(context.Context, AssistantInput) (Answer, error)
+	Stream(context.Context, AssistantInput) (AnswerStream, error)
 }
+
+type AssistantInput struct{ Message, Context string }
 
 type AnswerStream interface {
 	Recv() (string, error)
@@ -29,6 +32,7 @@ type AnswerStream interface {
 type Answer struct {
 	Text  string
 	Model string
+	Route string
 }
 
 type ChatInput struct {
@@ -40,11 +44,13 @@ type ChatResult struct {
 	SessionID string
 	Answer    string
 	CreatedAt time.Time
+	Route     string
 }
 
 type ChatStream struct {
 	SessionID string
 	Stream    AnswerStream
+	Route     string
 }
 
 type Chat struct {
@@ -59,33 +65,38 @@ func NewChat(store ConversationStore, assistant Assistant) *Chat {
 }
 
 func (c *Chat) Run(ctx context.Context, in ChatInput) (ChatResult, error) {
-	sessionID, sessionDBID, err := c.prepare(ctx, in)
+	sessionID, sessionDBID, contextText, err := c.prepare(ctx, in)
 	if err != nil {
 		return ChatResult{}, err
 	}
 
-	answer, err := c.assistant.Generate(ctx, in.Message)
+	answer, err := c.assistant.Generate(ctx, AssistantInput{Message: in.Message, Context: contextText})
 	if err != nil {
 		return ChatResult{}, fmt.Errorf("generate answer: %w", err)
 	}
 	if err := c.store.SaveMessage(ctx, sessionDBID, "assistant", answer.Text, answer.Model); err != nil {
 		return ChatResult{}, fmt.Errorf("save assistant message: %w", err)
 	}
-	return ChatResult{SessionID: sessionID, Answer: answer.Text, CreatedAt: c.now()}, nil
+	return ChatResult{SessionID: sessionID, Answer: answer.Text, CreatedAt: c.now(), Route: answer.Route}, nil
 }
 
 func (c *Chat) Stream(ctx context.Context, in ChatInput) (ChatStream, error) {
-	sessionID, sessionDBID, err := c.prepare(ctx, in)
+	sessionID, sessionDBID, contextText, err := c.prepare(ctx, in)
 	if err != nil {
 		return ChatStream{}, err
 	}
 
-	stream, err := c.assistant.Stream(ctx, in.Message)
+	stream, err := c.assistant.Stream(ctx, AssistantInput{Message: in.Message, Context: contextText})
 	if err != nil {
 		return ChatStream{}, fmt.Errorf("start answer stream: %w", err)
 	}
+	route := ""
+	if routed, ok := stream.(interface{ Route() string }); ok {
+		route = routed.Route()
+	}
 	return ChatStream{
 		SessionID: sessionID,
+		Route:     route,
 		Stream: &persistingStream{
 			AnswerStream: stream,
 			ctx:          ctx,
@@ -95,23 +106,27 @@ func (c *Chat) Stream(ctx context.Context, in ChatInput) (ChatStream, error) {
 	}, nil
 }
 
-func (c *Chat) prepare(ctx context.Context, in ChatInput) (string, int64, error) {
+func (c *Chat) prepare(ctx context.Context, in ChatInput) (string, int64, string, error) {
 	sessionID := in.SessionID
 	if strings.TrimSpace(sessionID) == "" {
 		var err error
 		sessionID, err = c.newID()
 		if err != nil {
-			return "", 0, fmt.Errorf("create session id: %w", err)
+			return "", 0, "", fmt.Errorf("create session id: %w", err)
 		}
 	}
 	sessionDBID, err := c.store.FindOrCreateSession(ctx, sessionID)
 	if err != nil {
-		return "", 0, fmt.Errorf("find or create session: %w", err)
+		return "", 0, "", fmt.Errorf("find or create session: %w", err)
 	}
 	if err := c.store.SaveMessage(ctx, sessionDBID, "user", in.Message, ""); err != nil {
-		return "", 0, fmt.Errorf("save user message: %w", err)
+		return "", 0, "", fmt.Errorf("save user message: %w", err)
 	}
-	return sessionID, sessionDBID, nil
+	contextText, err := c.store.LoadContext(ctx, sessionDBID, 8)
+	if err != nil {
+		return "", 0, "", fmt.Errorf("load conversation context: %w", err)
+	}
+	return sessionID, sessionDBID, contextText, nil
 }
 
 type persistingStream struct {

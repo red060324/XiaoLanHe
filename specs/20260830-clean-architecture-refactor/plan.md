@@ -5,7 +5,7 @@ Authoritative spec: ./spec.md
 
 ## Selected Approach
 
-选择 Go 渐进迁移，而不是保留 Java 原地重排或一次性重写。
+选择按公开能力逐段替换、最终只保留 Go，而不是保留 Java 双栈。
 
 - 原地 Java 重排风险最低，但无法达到用户希望的 Go 技术栈与 auto_msg 风格。
 - 一次性 Go 重写最终目录最干净，但没有测试基线，无法区分“重构”和“行为重写”。
@@ -110,7 +110,7 @@ Repository boundaries:
 6. Add SSE streaming and cancellation.
 7. Run contract comparison and document intentional differences.
 8. Add CI and local run docs.
-9. Cut over only after human review; remove Java later.
+9. 迁移公开 API、配置和 SQL 后删除 Java/Maven，默认入口只保留 Go。
 
 ## Dependency Decisions
 
@@ -126,7 +126,7 @@ Repository boundaries:
 - Startup fails if required DB/model config is missing.
 - Explicitly disabled providers become Noop capabilities with observable skipped status.
 - Provider timeouts propagate as typed dependency errors; fallback is allowed only where spec says so.
-- Rollback does not require data migration: restore Java process/route because schema remains compatible.
+- Rollback 通过 Git 分支/提交恢复；数据库 schema 保持兼容且无破坏性迁移。
 - No destructive SQL appears in the migration branch.
 
 ## Security
@@ -147,4 +147,4 @@ No userID/sessionID as metric labels.
 - Gate 1: approve spec/plan/test-plan.
 - Gate 2: approve Java characterization report and any intentional contract delta.
 - Gate 3: approve Go cutover after PRE_MERGE checks.
-- Gate 4: approve Java deletion after rollout evidence.
+- Gate 4: confirm repository contains Go runtime only.

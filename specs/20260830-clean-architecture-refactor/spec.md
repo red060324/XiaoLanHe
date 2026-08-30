@@ -12,12 +12,12 @@ Baseline: master@49004fd55807085939508220fe01e88846fdffd2
 
 ## Decision
 
-采用增量迁移，不做一次性整仓重写：
+采用可验证的纯 Go 迁移：
 
 1. 在同一仓库新增 Go 后端纵向切片。
 2. 先覆盖直接对话，再覆盖检索增强与流式响应。
-3. Java 与 Go 使用同一份 API 契约和数据库 schema 做并行验证。
-4. Go 达到验收标准后再切换默认启动入口；Java 删除另行评审。
+3. 迁移期间用同一份 API 契约和数据库 schema 做静态/自动化对比。
+4. 对外接口、配置、迁移脚本和测试完成 Go 等价实现后，在本分支删除 Java 模块与 Maven 构建。
 
 技术方向：
 
@@ -57,7 +57,7 @@ Baseline: master@49004fd55807085939508220fe01e88846fdffd2
 - 不在本次重构新增第四个 Agent、插件平台、MCP、复杂 Skills 市场或长期画像新产品能力。
 - 不改变前端 UI。
 - 不新增微服务、消息队列、缓存层或 Kubernetes 配置。
-- 不在 Go 达到并行验证标准前删除 Java。
+- 不迁移未接入公开主链路的 RocketMQ、Redis、MinIO 骨架。
 - 不为了“整洁”给每个 struct 建接口；只有跨层或外部世界边界使用窄接口。
 
 ## Acceptance Criteria
@@ -85,14 +85,16 @@ AC7. 本地知识不可用或 embedding 失败时保留关键词降级；Web Sea
 
 AC8. 并发有界：子查询最多 6 个，外部检索并发上限 4，所有下游调用使用 context timeout/cancel；不使用 time.Sleep 重试。
 
-AC9. PRE_MERGE 测试全部通过，并生成 Java/Go 契约对比报告；未完成项明确标记，不以“能编译”替代行为证明。
+AC9. PRE_MERGE 测试全部通过，并生成历史契约/Go 对比报告；未完成项明确标记，不以“能编译”替代行为证明。
 
 AC10. Go 服务具备 /healthz、结构化日志和请求/节点耗时；日志 label 不包含完整用户问题或高基数用户 ID。
+
+AC11. 合并候选中不存在 `.java`、`pom.xml` 或 Java 运行时入口；默认后端、数据库迁移和 CI 全部由 Go 所有。
 
 ## Assumptions and Clarify Round 1
 
 1. 默认保留现有前端与 API 契约；若允许前端同步升级，可单独设计更丰富的 SSE event schema。
-2. 默认 Java 仅在 Go 并行验证和切流成功后删除，不在第一阶段做大爆炸替换。
+2. 用户于 2026-08-30 明确要求最终只保留 Go、不保留 Java；删除动作以公开接口和数据兼容测试通过为前置条件。
 3. 默认 Skills、个性化 Planning Agent 和完整 Eval 平台属于 FOLLOW_UP，不夹带进结构重构。
 
 以上三项已于 2026-08-30 获得用户确认。
@@ -107,7 +109,7 @@ AC10. Go 服务具备 /healthz、结构化日志和请求/节点耗时；日志 
 - Serialization: HTTP JSON 属于 Presenter；数据库 JSONB 属于 PostgreSQL adapter；模型结构化输出 JSON 属于 Eino adapter。Domain 不直接依赖 wire codec。
 - Storage lifecycle: 本阶段不新增表或 key；复用现有 schema。新增 trace/eval 持久化需另开 spec，明确 retention。
 - Concurrency/backpressure: Eino Graph 只执行有界节点；检索 fan-out 上限 4；SSE 使用 request context 传播取消。
-- Rollout: Java/Go 并行启动，契约对比，通过后切默认入口；回滚为恢复 Java 启动入口和流量。
+- Rollout: 使用隔离数据库做契约回放；回滚为恢复迁移前 Git revision，不执行反向数据迁移。
 - Observability: 记录 route、node、provider、result、latency；禁止记录密钥、完整 prompt、完整用户消息。
 - Framework ownership: Eino/Hertz/pgx 都是 adapter 技术细节，不反向定义领域接口。
 - Touched debt: 本次只收敛聊天主链路；管理端知识写入、长期画像和未使用 tool_call_log 不顺手扩展。

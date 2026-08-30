@@ -102,6 +102,34 @@ func TestHTTPHealth(t *testing.T) {
 	}
 }
 
+func TestHTTPKnowledge(t *testing.T) {
+	store := &httpKnowledgeStore{items: []usecase.KnowledgeSnippet{{ChunkID: 1, DocumentID: 2, Title: "Guide", Text: "fact", Score: 30}}}
+	knowledge := usecase.NewKnowledge(store, einoDisabledEmbedder{})
+	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), knowledge, usecase.NewWebSearch(httpSearchClient{}), "single-orchestrator", "xlh-dev")
+
+	created := ut.PerformRequest(h.server.Engine, "POST", "/api/knowledge/documents", &ut.Body{Body: bytes.NewBufferString(`{"sourceType":"note","title":"Guide","contentText":"body"}`), Len: -1})
+	if created.Code != 200 || !strings.Contains(created.Body.String(), `"documentId":11`) || len(store.chunks) != 1 {
+		t.Fatalf("status=%d body=%s chunks=%v", created.Code, created.Body.String(), store.chunks)
+	}
+
+	searched := ut.PerformRequest(h.server.Engine, "GET", "/api/knowledge/search?query=guide&limit=5", nil)
+	if searched.Code != 200 || !strings.Contains(searched.Body.String(), `"snippet":"fact"`) {
+		t.Fatalf("status=%d body=%s", searched.Code, searched.Body.String())
+	}
+}
+
+func TestHTTPWebSearchAndPing(t *testing.T) {
+	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), nil, usecase.NewWebSearch(httpSearchClient{}), "single-orchestrator", "xlh-dev")
+	searched := ut.PerformRequest(h.server.Engine, "GET", "/api/search/web?query=guide", nil)
+	if searched.Code != 200 || !strings.Contains(searched.Body.String(), `"provider":"searxng"`) || !strings.Contains(searched.Body.String(), `"title":"A"`) {
+		t.Fatalf("status=%d body=%s", searched.Code, searched.Body.String())
+	}
+	ping := ut.PerformRequest(h.server.Engine, "GET", "/api/system/ping", nil)
+	if ping.Code != 200 || !strings.Contains(ping.Body.String(), `"agentMode":"single-orchestrator"`) || !strings.Contains(ping.Body.String(), `"minioBucket":"xlh-dev"`) {
+		t.Fatalf("status=%d body=%s", ping.Code, ping.Body.String())
+	}
+}
+
 type httpStore struct {
 	id    int64
 	roles []string
@@ -117,13 +145,14 @@ func (s *httpStore) SaveMessage(_ context.Context, _ int64, role, _, _ string) e
 	s.roles = append(s.roles, role)
 	return nil
 }
+func (*httpStore) LoadContext(context.Context, int64, int) (string, error) { return "", nil }
 
 type httpAssistant struct{ stream *httpStream }
 
-func (httpAssistant) Generate(context.Context, string) (usecase.Answer, error) {
+func (httpAssistant) Generate(context.Context, usecase.AssistantInput) (usecase.Answer, error) {
 	return usecase.Answer{Text: "hello", Model: "fake"}, nil
 }
-func (a httpAssistant) Stream(context.Context, string) (usecase.AnswerStream, error) {
+func (a httpAssistant) Stream(context.Context, usecase.AssistantInput) (usecase.AnswerStream, error) {
 	if a.stream == nil {
 		a.stream = &httpStream{chunks: []string{"first", "second"}}
 	}
@@ -146,6 +175,34 @@ func (s *httpStream) Recv() (string, error) {
 }
 func (s *httpStream) Close()      { s.closed = true }
 func (*httpStream) Model() string { return "fake" }
+
+type einoDisabledEmbedder struct{}
+
+func (einoDisabledEmbedder) Embed(context.Context, []string) ([][]float32, error) {
+	return nil, usecase.ErrEmbeddingUnavailable
+}
+
+type httpKnowledgeStore struct {
+	chunks []string
+	items  []usecase.KnowledgeSnippet
+}
+
+func (s *httpKnowledgeStore) CreateDocument(_ context.Context, _ usecase.KnowledgeDocument, chunks []string, _ [][]float32) (int64, error) {
+	s.chunks = chunks
+	return 11, nil
+}
+func (s *httpKnowledgeStore) SearchKeyword(context.Context, string, string, string, int) ([]usecase.KnowledgeSnippet, error) {
+	return s.items, nil
+}
+func (*httpKnowledgeStore) SearchVector(context.Context, []float32, string, string, int) ([]usecase.KnowledgeSnippet, error) {
+	return nil, nil
+}
+
+type httpSearchClient struct{}
+
+func (httpSearchClient) Search(_ context.Context, query string) (usecase.WebSearchResult, error) {
+	return usecase.WebSearchResult{Enabled: true, Provider: "searxng", Query: query, Items: []usecase.WebSearchItem{{Title: "A", URL: "https://a"}}, Note: "ok"}, nil
+}
 
 type captureWriter struct {
 	bytes.Buffer

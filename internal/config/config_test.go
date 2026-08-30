@@ -13,6 +13,9 @@ func TestLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("XLH_DIRECT_PROMPT_FILE", promptPath)
+	t.Setenv("XLH_PLANNING_PROMPT_FILE", promptPath)
+	t.Setenv("XLH_RESEARCH_PROMPT_FILE", promptPath)
+	t.Setenv("XLH_SYNTHESIS_PROMPT_FILE", promptPath)
 	t.Setenv("XLH_DATABASE_URL", "postgres://database")
 	t.Setenv("XLH_AI_API_KEY", "key")
 	t.Setenv("DASHSCOPE_API_KEY", "")

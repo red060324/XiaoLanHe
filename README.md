@@ -1,6 +1,6 @@
 # XiaoLanHe
 
-小蓝盒正在从 Java/Spring AI 增量迁移到 Go。当前分支包含可运行的直聊纵向切片，保留现有 React、REST/SSE 契约和 PostgreSQL 表；尚未切换默认后端。
+小蓝盒后端使用 Go 1.23、CloudWeGo Hertz/Eino 和 PostgreSQL/pgvector。保留现有 React、REST/SSE 契约与历史数据结构。
 
 ## 当前架构
 
@@ -8,23 +8,29 @@
 Hertz HTTP/SSE
   -> Presenter（协议校验与 DTO）
   -> Chat UseCase（会话、调用顺序、完整回答落库）
+  -> Orchestrator（路由与检索计划）
+  -> Research（有界并发检索与确定性融合）
+  -> Answer Node（直接回答或证据合成）
   -> consumer-owned ports
        -> Eino/OpenAI-compatible 模型
        -> pgx/PostgreSQL
 ```
 
-目标 Agent 只有需要自主决策的三个角色：Orchestrator 负责意图和任务控制，Research 负责查询分解和数据源选择，Planning 负责后续个性化决策。Answer、Memory、RRF、Verifier 是节点或领域能力，不包装成 Agent。当前批次只落地直聊 Answer 节点；Research/RAG 是下一批，Planning 属于独立 follow-up。
+Orchestrator Agent 负责意图与主路由，Research Agent 负责查询分解和数据源选择；检索执行器将本地 pgvector/关键词结果与 Web 结果做最多 4 路并发、最多 6 个查询的确定性融合。Answer、Embedding 和 RRF 是普通节点。个性化 Planning Agent 仍属于独立产品需求。
 
-## 运行 Go 直聊切片
+## 运行
 
-需要 Go 1.23、可访问现有 V1-V3 schema 的 PostgreSQL，以及 OpenAI-compatible 模型密钥。
+需要 Go 1.23、PostgreSQL + pgvector，以及 OpenAI-compatible 模型密钥。
 
 ```bash
 export XLH_DATABASE_URL='postgres://xlh:password@localhost:5432/xiaolanhe?sslmode=disable'
 export XLH_AI_API_KEY='...'
 export XLH_AI_BASE_URL='https://dashscope.aliyuncs.com/compatible-mode/v1'
 export XLH_AI_CHAT_MODEL='qwen3.5-flash'
+export XLH_AI_EMBEDDING_MODEL='text-embedding-v4'
 export XLH_AI_TIMEOUT='60s'
+export XLH_SEARCH_ENABLED='true'
+export SEARXNG_BASE_URL='http://127.0.0.1:8080'
 go run ./cmd/xiaolanhe
 ```
 
@@ -33,8 +39,12 @@ go run ./cmd/xiaolanhe
 - `GET /healthz`
 - `POST /api/chat/message`
 - `POST /api/chat/stream`
+- `POST /api/knowledge/documents`
+- `GET /api/knowledge/search`
+- `GET /api/search/web`
+- `GET /api/system/ping`
 
-从仓库根目录启动，或通过 `XLH_DIRECT_PROMPT_FILE` 指定直聊 prompt 文件。
+首次建库执行 `psql "$XLH_DATABASE_URL" -f migrations/001_initial_schema.sql`。从仓库根目录启动，prompt 和外部服务地址均可通过 `XLH_*` 环境变量覆盖。
 
 ## 验证
 

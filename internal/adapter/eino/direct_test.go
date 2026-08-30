@@ -8,6 +8,7 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"github.com/red060324/XiaoLanHe/internal/usecase"
 )
 
 func TestDirectAssistantGenerate(t *testing.T) {
@@ -18,7 +19,7 @@ func TestDirectAssistantGenerate(t *testing.T) {
 			}
 			return schema.AssistantMessage("hello", nil), nil
 		}}
-		answer, err := NewDirectAssistant(fake, "qwen", "prompt").Generate(context.Background(), "hi")
+		answer, err := NewDirectAssistant(fake, "qwen", "prompt").Generate(context.Background(), usecase.AssistantInput{Message: "hi"})
 		if err != nil || answer.Text != "hello" || answer.Model != "qwen" {
 			t.Fatalf("answer=%#v err=%v", answer, err)
 		}
@@ -28,7 +29,7 @@ func TestDirectAssistantGenerate(t *testing.T) {
 		fake := &fakeChatModel{generate: func([]*schema.Message) (*schema.Message, error) {
 			return schema.AssistantMessage("", nil), nil
 		}}
-		answer, err := NewDirectAssistant(fake, "qwen", "prompt").Generate(context.Background(), "hi")
+		answer, err := NewDirectAssistant(fake, "qwen", "prompt").Generate(context.Background(), usecase.AssistantInput{Message: "hi"})
 		if err != nil || answer.Text != emptyReply {
 			t.Fatalf("answer=%#v err=%v", answer, err)
 		}
@@ -37,7 +38,7 @@ func TestDirectAssistantGenerate(t *testing.T) {
 	t.Run("propagates model error", func(t *testing.T) {
 		modelErr := errors.New("provider failed")
 		fake := &fakeChatModel{generate: func([]*schema.Message) (*schema.Message, error) { return nil, modelErr }}
-		_, err := NewDirectAssistant(fake, "qwen", "prompt").Generate(context.Background(), "hi")
+		_, err := NewDirectAssistant(fake, "qwen", "prompt").Generate(context.Background(), usecase.AssistantInput{Message: "hi"})
 		if !errors.Is(err, modelErr) {
 			t.Fatalf("err = %v", err)
 		}
@@ -56,7 +57,7 @@ func TestDirectAssistantStream(t *testing.T) {
 				schema.AssistantMessage("好", nil),
 			}), nil
 		}}
-		stream, err := NewDirectAssistant(fake, "qwen", "prompt").Stream(context.Background(), "hi")
+		stream, err := NewDirectAssistant(fake, "qwen", "prompt").Stream(context.Background(), usecase.AssistantInput{Message: "hi"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,7 +81,7 @@ func TestDirectAssistantStream(t *testing.T) {
 		fake := &fakeChatModel{stream: func([]*schema.Message) (*schema.StreamReader[*schema.Message], error) {
 			return nil, modelErr
 		}}
-		_, err := NewDirectAssistant(fake, "qwen", "prompt").Stream(context.Background(), "hi")
+		_, err := NewDirectAssistant(fake, "qwen", "prompt").Stream(context.Background(), usecase.AssistantInput{Message: "hi"})
 		if !errors.Is(err, modelErr) {
 			t.Fatalf("err = %v", err)
 		}

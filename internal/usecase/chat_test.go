@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"regexp"
 	"slices"
@@ -26,7 +27,7 @@ func TestChatRun(t *testing.T) {
 		if result != (ChatResult{SessionID: "session", Answer: "hello", CreatedAt: now}) {
 			t.Fatalf("unexpected result: %#v", result)
 		}
-		want := []string{"find:session", "save:user:hi:", "generate:hi", "save:assistant:hello:model"}
+		want := []string{"find:session", "save:user:hi:", "context:8", "generate:hi:", "save:assistant:hello:model"}
 		if !slices.Equal(calls, want) {
 			t.Fatalf("calls = %v, want %v", calls, want)
 		}
@@ -181,6 +182,14 @@ type fakeStore struct {
 	findErr     error
 	saveUserErr error
 	saved       []savedMessage
+	contextText string
+}
+
+func (s *fakeStore) LoadContext(_ context.Context, _ int64, limit int) (string, error) {
+	if s.calls != nil {
+		*s.calls = append(*s.calls, fmt.Sprintf("context:%d", limit))
+	}
+	return s.contextText, nil
 }
 
 func (s *fakeStore) FindOrCreateSession(_ context.Context, key string) (int64, error) {
@@ -210,15 +219,15 @@ type fakeAssistant struct {
 	streamErr     error
 }
 
-func (a *fakeAssistant) Generate(_ context.Context, message string) (Answer, error) {
+func (a *fakeAssistant) Generate(_ context.Context, input AssistantInput) (Answer, error) {
 	a.generateCalls++
 	if a.calls != nil {
-		*a.calls = append(*a.calls, "generate:"+message)
+		*a.calls = append(*a.calls, "generate:"+input.Message+":"+input.Context)
 	}
 	return a.answer, a.generateErr
 }
 
-func (a *fakeAssistant) Stream(_ context.Context, _ string) (AnswerStream, error) {
+func (a *fakeAssistant) Stream(_ context.Context, _ AssistantInput) (AnswerStream, error) {
 	return a.stream, a.streamErr
 }
 

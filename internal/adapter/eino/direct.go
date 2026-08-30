@@ -21,8 +21,8 @@ func NewDirectAssistant(chatModel model.BaseChatModel, name, prompt string) *Dir
 	return &DirectAssistant{model: chatModel, name: name, prompt: prompt}
 }
 
-func (a *DirectAssistant) Generate(ctx context.Context, message string) (usecase.Answer, error) {
-	response, err := a.model.Generate(ctx, a.messages(message))
+func (a *DirectAssistant) Generate(ctx context.Context, input usecase.AssistantInput) (usecase.Answer, error) {
+	response, err := a.model.Generate(ctx, a.messages(input.Message))
 	if err != nil {
 		return usecase.Answer{}, err
 	}
@@ -30,11 +30,11 @@ func (a *DirectAssistant) Generate(ctx context.Context, message string) (usecase
 	if text == "" {
 		text = emptyReply
 	}
-	return usecase.Answer{Text: text, Model: a.name}, nil
+	return usecase.Answer{Text: text, Model: a.name, Route: string(usecase.RouteDirect)}, nil
 }
 
-func (a *DirectAssistant) Stream(ctx context.Context, message string) (usecase.AnswerStream, error) {
-	stream, err := a.model.Stream(ctx, a.messages(message))
+func (a *DirectAssistant) Stream(ctx context.Context, input usecase.AssistantInput) (usecase.AnswerStream, error) {
+	stream, err := a.model.Stream(ctx, a.messages(input.Message))
 	if err != nil {
 		return nil, err
 	}

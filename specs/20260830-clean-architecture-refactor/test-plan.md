@@ -25,9 +25,9 @@ Authoritative spec: ./spec.md
 
 ### Integration
 
-- PostgreSQL/pgvector service container uses the existing V1-V3 migrations.
+- PostgreSQL/pgvector service container uses `migrations/001_initial_schema.sql`.
 - Existing rows created by Java are readable by Go.
-- Go writes remain readable by Java during the parallel phase.
+- Go reads and writes preserve the historical table and column contract.
 - Keyword, vector and hybrid search cover empty, hit and dimension mismatch.
 - LightRAG and Web Search use local stub HTTP servers for success, timeout, malformed payload and non-2xx.
 - No new ORM/test framework is required; use Go testing, httptest and a CI PostgreSQL service.
@@ -64,7 +64,7 @@ Real-model smoke is ROLLOUT, not a merge gate, because output is nondeterministi
 - go test ./...
 - go test -race ./... for packages with workflow/stream concurrency.
 - Frontend npm build unchanged.
-- Java build remains green until Java removal is separately approved.
+- `rg --files -g '*.java' -g 'pom.xml'` returns no files after the parity gate.
 
 ### Observability
 
@@ -75,10 +75,10 @@ Real-model smoke is ROLLOUT, not a merge gate, because output is nondeterministi
 
 ## ROLLOUT
 
-- Run Java and Go against an isolated snapshot, not production data.
-- Replay approved contract cases and compare status, schema, persistence and fallback.
+- Run Go against an isolated snapshot, not production data.
+- Replay approved contract cases and compare status, schema, persistence and fallback with the recorded Java contract.
 - Measure first-token and total latency by route; record baseline and delta before cutover.
-- Verify rollback by switching traffic back to Java without schema changes.
+- Verify rollback by restoring the prior Git revision without schema changes.
 
 ## FOLLOW_UP
 
