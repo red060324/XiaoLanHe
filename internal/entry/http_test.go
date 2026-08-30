@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 
 	"github.com/red060324/XiaoLanHe/internal/usecase"
@@ -98,6 +101,26 @@ func TestHTTPHealth(t *testing.T) {
 	h := NewHTTP(":0", usecase.NewChat(&httpStore{}, httpAssistant{}))
 	response := ut.PerformRequest(h.server.Engine, "GET", "/healthz", nil)
 	if response.Code != 200 || response.Body.String() != `{"status":"ok"}` {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestHTTPServesWebAndSPAFallback(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<main>xiaolanhe</main>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := server.Default()
+	registerWeb(h, root)
+
+	for _, path := range []string{"/", "/chat/session"} {
+		response := ut.PerformRequest(h.Engine, "GET", path, nil)
+		if response.Code != 200 || response.Body.String() != "<main>xiaolanhe</main>" {
+			t.Fatalf("path=%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+	response := ut.PerformRequest(h.Engine, "GET", "/api/missing", nil)
+	if response.Code != 404 {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }

@@ -59,7 +59,7 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		Address:         env("XLH_ADDRESS", ":8088"),
+		Address:         listenAddress(),
 		DatabaseURL:     os.Getenv("XLH_DATABASE_URL"),
 		AIBaseURL:       normalizeAIBaseURL(env("XLH_AI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")),
 		AIAPIKey:        first(os.Getenv("XLH_AI_API_KEY"), os.Getenv("DASHSCOPE_API_KEY")),
@@ -84,6 +84,13 @@ func Load() (Config, error) {
 		return Config{}, errors.New("XLH_AI_API_KEY or DASHSCOPE_API_KEY is required")
 	}
 	return cfg, nil
+}
+
+func listenAddress() string {
+	if address := os.Getenv("XLH_ADDRESS"); address != "" {
+		return address
+	}
+	return ":" + env("PORT", "8088")
 }
 
 func env(key, fallback string) string {

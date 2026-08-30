@@ -21,12 +21,14 @@ func TestLoad(t *testing.T) {
 	t.Setenv("DASHSCOPE_API_KEY", "")
 	t.Setenv("XLH_AI_CHAT_MODEL", "model")
 	t.Setenv("XLH_AI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode")
+	t.Setenv("XLH_ADDRESS", "")
+	t.Setenv("PORT", "10000")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://database" || cfg.AIAPIKey != "key" || cfg.AIModel != "model" || cfg.AITimeout != 60*time.Second || cfg.DirectPrompt != "direct prompt" || cfg.AIBaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
+	if cfg.Address != ":10000" || cfg.DatabaseURL != "postgres://database" || cfg.AIAPIKey != "key" || cfg.AIModel != "model" || cfg.AITimeout != 60*time.Second || cfg.DirectPrompt != "direct prompt" || cfg.AIBaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
 		t.Fatalf("config = %#v", cfg)
 	}
 

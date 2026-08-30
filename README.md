@@ -46,6 +46,16 @@ go run ./cmd/xiaolanhe
 
 首次建库执行 `psql "$XLH_DATABASE_URL" -f migrations/001_initial_schema.sql`。从仓库根目录启动，prompt 和外部服务地址均可通过 `XLH_*` 环境变量覆盖。
 
+## Render 部署
+
+仓库根目录的 `render.yaml` 会创建一个 Go Web Service 和一个支持 pgvector 的 PostgreSQL。React 会在镜像构建时编译，并由同一个 Go 服务提供，因此页面和 API 共用一个 `https://<service>.onrender.com` 地址。
+
+1. 在 Render 选择 **New Blueprint** 并连接此仓库。
+2. 部署时填写 `XLH_AI_API_KEY`。
+3. 创建完成后直接打开 Render 分配的 `onrender.com` 地址。
+
+服务启动时会幂等执行 `migrations/001_initial_schema.sql`。默认关闭 Web 搜索；接入 SearXNG 后再设置 `XLH_SEARCH_ENABLED=true` 和 `SEARXNG_BASE_URL`。
+
 ## 验证
 
 ```bash

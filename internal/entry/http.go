@@ -6,7 +6,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -19,6 +22,7 @@ import (
 )
 
 const maxRequestBytes = presenter.MaxMessageLength + 1024
+const webRoot = "frontend/xiaolanhe-web/dist"
 
 type HTTP struct {
 	server                 *server.Hertz
@@ -45,7 +49,27 @@ func NewHTTPWithServices(address string, chat *usecase.Chat, knowledge *usecase.
 	if search != nil {
 		h.server.GET("/api/search/web", h.searchWeb)
 	}
+	registerWeb(h.server, webRoot)
 	return h
+}
+
+func registerWeb(h *server.Hertz, root string) {
+	index := filepath.Join(root, "index.html")
+	if _, err := os.Stat(index); err != nil {
+		return
+	}
+	h.StaticFS("/", &app.FS{
+		Root:       root,
+		IndexNames: []string{"index.html"},
+		PathNotFound: func(_ context.Context, c *app.RequestContext) {
+			path := string(c.Path())
+			if path == "/api" || strings.HasPrefix(path, "/api/") {
+				writeError(c, consts.StatusNotFound, "not found")
+				return
+			}
+			c.File(index)
+		},
+	})
 }
 
 func (h *HTTP) ping(_ context.Context, c *app.RequestContext) {

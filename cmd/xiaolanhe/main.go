@@ -36,6 +36,15 @@ func main() {
 		slog.Error("ping database", "error", err)
 		os.Exit(1)
 	}
+	schema, err := os.ReadFile("migrations/001_initial_schema.sql")
+	if err != nil {
+		slog.Error("read database schema", "error", err)
+		os.Exit(1)
+	}
+	if _, err := pool.Exec(ctx, string(schema)); err != nil {
+		slog.Error("initialize database", "error", err)
+		os.Exit(1)
+	}
 
 	temperature := float32(0.4)
 	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
