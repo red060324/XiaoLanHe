@@ -1,6 +1,6 @@
 # Test Plan
 
-Status: DRAFT
+Status: APPROVED (2026-08-30)
 Authoritative spec: ./spec.md
 
 ## PRE_MERGE

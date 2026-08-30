@@ -1,6 +1,6 @@
 # 小蓝盒整洁架构重构 Spec
 
-Status: DRAFT
+Status: APPROVED (2026-08-30)
 Owner: red060324
 Branch: codex/clean-architecture-refactor
 Source: codex://threads/01a0526f-1221-7b90-ba86-2931581c744c
@@ -21,7 +21,7 @@ Baseline: master@49004fd55807085939508220fe01e88846fdffd2
 
 技术方向：
 
-- Go 1.27。
+- Go 1.23（当前开发环境可复现构建的最低版本；后续升级独立验证）。
 - CloudWeGo Eino v0.9 稳定线：模型、Tool、Graph/Chain、streaming 与 callbacks。
 - CloudWeGo Hertz：HTTP、binding/validation、SSE。
 - pgx/v5 + pgvector-go：复用现有 PostgreSQL/pgvector。
@@ -73,11 +73,11 @@ AC3. POST /api/chat/stream 对现有前端保持 wire compatibility；token 顺�
 
 AC4. Go 代码不存在 Entry/Presenter 直连 PostgreSQL、模型、LightRAG 或 Web Search；UseCase 不依赖 Hertz/Eino/pgx DTO。
 
-AC5. 主流程仅保留三个有明确职责的 LLM 能力：
-- Orchestrator: 路由与检索计划
-- Research: 查询分解与证据获取
-- Answer: 证据化回答
-Memory、RRF、Verifier 为确定性节点或领域能力。
+AC5. 目标架构只把需要自主决策的能力建模为 Agent：
+- Orchestrator Agent: 意图、路由与任务控制
+- Research Agent: 查询分解与数据源选择
+- Planning Agent: 个性化决策；属于 FOLLOW_UP，不进入兼容重构首批
+Answer、Memory、RRF、Verifier 为模型节点、确定性节点或领域能力，不包装成 Agent。
 
 AC6. PostgreSQL schema 与历史数据可直接读取；迁移不删除、不重命名现有表或字段。
 
@@ -95,7 +95,7 @@ AC10. Go 服务具备 /healthz、结构化日志和请求/节点耗时；日志 
 2. 默认 Java 仅在 Go 并行验证和切流成功后删除，不在第一阶段做大爆炸替换。
 3. 默认 Skills、个性化 Planning Agent 和完整 Eval 平台属于 FOLLOW_UP，不夹带进结构重构。
 
-请审核以上三项；任一项不同会改变 tasks 和 test-plan。
+以上三项已于 2026-08-30 获得用户确认。
 
 ## Architecture Compliance
 

@@ -1,6 +1,6 @@
 # Technical Plan
 
-Status: DRAFT
+Status: APPROVED (2026-08-30)
 Authoritative spec: ./spec.md
 
 ## Selected Approach
@@ -54,12 +54,12 @@ start
   -> orchestrator route
   -> direct answer OR research
   -> research: decompose -> bounded parallel local/web retrieval -> RRF
-  -> answer synthesis
+  -> answer synthesis node
   -> optional verifier
   -> persist user/assistant messages
   -> result or stream
 
-Verifier 默认沿用当前 disabled 配置。Memory 是 context loader，不是 Agent。RRF 是确定性算法，不由 LLM 决定。
+Verifier 默认沿用当前 disabled 配置。Answer、Memory、Verifier 和 RRF 都不是 Agent。Planning Agent 在兼容重构完成后通过独立产品 spec 引入。
 
 ## Contracts
 
@@ -114,7 +114,7 @@ Repository boundaries:
 
 ## Dependency Decisions
 
-- Go 1.27: current stable toolchain.
+- Go 1.23: 当前开发环境可复现构建的最低版本；工具链升级不与架构迁移绑定。
 - Eino stable v0.9 line; do not adopt v0.10 alpha during migration.
 - Hertz for HTTP/SSE because it provides native binding, middleware and SSE support.
 - pgx/v5 because the service is PostgreSQL-only; pgvector-go for vector values.

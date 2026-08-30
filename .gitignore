@@ -9,6 +9,7 @@ target/
 .kotlin
 xiaolanhe-web-run.log
 *.log
+/xiaolanhe
 !**/src/main/resources/**/*.log
 deploy/postgres/data/
 deploy/redis/data/
