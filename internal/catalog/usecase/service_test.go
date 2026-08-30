@@ -39,6 +39,18 @@ func TestServiceGet(t *testing.T) {
 	}
 }
 
+func TestServiceGameExists(t *testing.T) {
+	dependencyErr := errors.New("catalog unavailable")
+	store := &catalogStore{exists: true, existsErr: dependencyErr}
+	service := NewService(store)
+	if exists, err := service.GameExists(context.Background(), 0); err != nil || exists || store.existsCalls != 0 {
+		t.Fatalf("exists=%v calls=%d err=%v", exists, store.existsCalls, err)
+	}
+	if exists, err := service.GameExists(context.Background(), 9); !errors.Is(err, dependencyErr) || !exists || store.existsCalls != 1 || store.existsID != 9 {
+		t.Fatalf("exists=%v id=%d calls=%d err=%v", exists, store.existsID, store.existsCalls, err)
+	}
+}
+
 func TestServiceCreate(t *testing.T) {
 	store := &catalogStore{game: entity.Game{ID: 5}}
 	service := NewService(store)
@@ -75,6 +87,10 @@ type catalogStore struct {
 	viewerID, id int64
 	draft        entity.Draft
 	saved        bool
+	exists       bool
+	existsErr    error
+	existsCalls  int
+	existsID     int64
 }
 
 func (s *catalogStore) List(_ context.Context, filter ListFilter) ([]entity.Game, error) {
@@ -84,6 +100,11 @@ func (s *catalogStore) List(_ context.Context, filter ListFilter) ([]entity.Game
 func (s *catalogStore) FindBySlug(_ context.Context, slug string, pricing Pricing, viewerID int64) (entity.Game, error) {
 	s.slug, s.pricing, s.viewerID = slug, pricing, viewerID
 	return s.game, nil
+}
+func (s *catalogStore) Exists(_ context.Context, id int64) (bool, error) {
+	s.existsCalls++
+	s.existsID = id
+	return s.exists, s.existsErr
 }
 func (s *catalogStore) Save(_ context.Context, id int64, draft entity.Draft) (entity.Game, error) {
 	s.id, s.draft, s.saved = id, draft, true

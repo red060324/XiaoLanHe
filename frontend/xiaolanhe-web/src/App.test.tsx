@@ -9,7 +9,17 @@ const api = vi.hoisted(() => ({
   login: vi.fn(),
   logout: vi.fn(),
   register: vi.fn(),
-  streamChatMessage: vi.fn()
+  streamChatMessage: vi.fn(),
+  createCommunityComment: vi.fn(),
+  createCommunityPost: vi.fn(),
+  deleteCommunityComment: vi.fn(),
+  deleteCommunityPost: vi.fn(),
+  getCommunityPost: vi.fn(),
+  listCommunityComments: vi.fn(),
+  listCommunityPosts: vi.fn(),
+  setCommunityReaction: vi.fn(),
+  updateCommunityComment: vi.fn(),
+  updateCommunityPost: vi.fn()
 }));
 
 vi.mock('./lib/api', () => api);
@@ -18,6 +28,7 @@ beforeEach(() => {
   window.localStorage.clear();
   api.getMe.mockResolvedValue(null);
   api.listGames.mockResolvedValue([]);
+  api.listCommunityPosts.mockResolvedValue({ items: [] });
   api.streamChatMessage.mockResolvedValue(undefined);
 });
 
@@ -31,6 +42,14 @@ describe('App', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '游戏库' }));
     expect(await screen.findByText('没有找到游戏。')).toBeInTheDocument();
+  });
+
+  it('opens the community from the primary navigation', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /游戏社区/ }));
+
+    expect(await screen.findByText('攻略、体验和版本讨论。')).toBeInTheDocument();
+    expect(api.listCommunityPosts).toHaveBeenCalledWith('', '');
   });
 
   it('cancels the active stream before starting a new chat', async () => {

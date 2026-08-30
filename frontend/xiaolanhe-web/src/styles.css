@@ -25,7 +25,8 @@ body {
 
 button,
 textarea,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -644,6 +645,177 @@ button {
   margin: 0;
 }
 
+.community-stage {
+  width: 100%;
+}
+
+.community-heading,
+.community-filter,
+.community-form,
+.community-feed,
+.community-detail,
+.comment-section,
+.load-more {
+  width: min(880px, 100%);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.community-heading h1,
+.community-heading p,
+.community-form h2,
+.comment-section h2 {
+  margin-top: 0;
+}
+
+.community-heading p,
+.community-meta,
+.community-stats {
+  color: #6b7280;
+}
+
+.community-filter {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.community-filter select,
+.community-form input,
+.community-form select,
+.community-form textarea,
+.comment-form input,
+.comment-edit input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.community-filter button,
+.community-form > button,
+.comment-form button,
+.comment-edit button,
+.load-more {
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: #111827;
+  color: #fff;
+}
+
+.community-form,
+.community-detail,
+.comment-section {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding: 22px;
+  border: 1px solid #e5e7eb;
+  border-radius: 20px;
+  background: #fff;
+}
+
+.community-form label {
+  display: grid;
+  gap: 7px;
+  color: #374151;
+  font-weight: 600;
+}
+
+.community-form textarea {
+  resize: vertical;
+}
+
+.community-feed {
+  display: grid;
+  gap: 14px;
+}
+
+.community-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.community-card > button {
+  width: 100%;
+  padding: 20px;
+  text-align: left;
+}
+
+.community-card h2,
+.community-card p {
+  margin: 8px 0 0;
+}
+
+.community-card p,
+.community-content,
+.comment-card p {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.community-stats {
+  display: flex;
+  gap: 18px;
+  padding: 0 20px 16px;
+  font-size: 14px;
+}
+
+.reaction-row,
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reaction-row button,
+.row-actions button {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.reaction-row button.active {
+  border-color: #4f46e5;
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+.comment-form {
+  display: grid;
+  gap: 8px;
+}
+
+.comment-form > div,
+.comment-edit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.comment-edit {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.comment-card {
+  padding-top: 14px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.empty-state.compact {
+  margin: 20px auto;
+}
+
+.load-more {
+  display: block;
+  margin-top: 18px;
+}
+
 @media (max-width: 960px) {
   .gpt-shell,
   .gpt-shell.sidebar-collapsed {
@@ -664,6 +836,15 @@ button {
 
   .page-stage {
     padding: 20px 16px;
+  }
+
+  .community-filter {
+    grid-template-columns: 1fr;
+  }
+
+  .comment-form > div,
+  .comment-edit {
+    grid-template-columns: 1fr;
   }
 
   .message-list::after {

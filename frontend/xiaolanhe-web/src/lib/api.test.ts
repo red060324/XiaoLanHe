@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getMe, listGames, logout } from './api';
+import { createCommunityPost, getMe, listCommunityPosts, logout, setCommunityReaction, listGames } from './api';
 
 const fetchMock = vi.fn();
 
@@ -31,5 +31,32 @@ describe('catalog API', () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ items: [{ id: '1', slug: 'demo', name: 'Demo', summary: '', owned: false }] }), { status: 200 }));
     await expect(listGames(' demo game ')).resolves.toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledWith('/api/games?query=demo+game', expect.objectContaining({ credentials: 'include' }));
+  });
+});
+
+describe('community API', () => {
+  it('encodes feed filters and returns a cursor page', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ items: [], nextCursor: 'next' }), { status: 200 }));
+
+    await expect(listCommunityPosts('42', 'next page')).resolves.toEqual({ items: [], nextCursor: 'next' });
+    expect(fetchMock).toHaveBeenCalledWith('/api/community/posts?gameId=42&cursor=next+page', expect.objectContaining({ credentials: 'include' }));
+  });
+
+  it('creates a post with JSON and returns the post payload', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ post: { id: '9', title: 'Guide' } }), { status: 201 }));
+
+    await expect(createCommunityPost({ gameId: '42', title: 'Guide', content: 'Route' })).resolves.toMatchObject({ id: '9', title: 'Guide' });
+    expect(fetchMock).toHaveBeenCalledWith('/api/community/posts', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ gameId: '42', title: 'Guide', content: 'Route' }),
+      credentials: 'include'
+    }));
+  });
+
+  it('uses the requested reaction operation', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ reactionCounts: { like: 1, helpful: 0, funny: 0 }, viewerReactions: ['like'] }), { status: 200 }));
+
+    await setCommunityReaction('9', 'like', true);
+    expect(fetchMock).toHaveBeenCalledWith('/api/community/posts/9/reactions/like', expect.objectContaining({ method: 'PUT', credentials: 'include' }));
   });
 });

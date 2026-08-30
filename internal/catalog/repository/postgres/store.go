@@ -16,6 +16,12 @@ type Store struct{ pool *pgxpool.Pool }
 
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
+func (s *Store) Exists(ctx context.Context, id int64) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `select exists(select 1 from game where id=$1 and status='active')`, id).Scan(&exists)
+	return exists, err
+}
+
 func (s *Store) List(ctx context.Context, filter catalog.ListFilter) ([]entity.Game, error) {
 	rows, err := s.pool.Query(ctx, `
 		select g.id,g.slug,g.name,g.summary,g.cover_url,g.release_date,

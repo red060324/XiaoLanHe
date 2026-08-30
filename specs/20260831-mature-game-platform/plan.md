@@ -81,7 +81,9 @@ include credential/session fields.
 Create posts, comments, and reactions scoped to optional game IDs. Use keyset
 pagination `(created_at,id)`, ownership checks in UseCases, soft deletion, and
 admin hidden status. Public feeds exclude non-published rows. Cross-module game
-validation uses a narrow Catalog capability.
+validation uses a narrow Catalog capability. Exact request, response,
+moderation, reaction, and pagination behavior is defined in
+`contracts/phase2-http.md`.
 
 ## Phase 3: Promotion And Commerce
 

@@ -31,6 +31,7 @@ var (
 type Store interface {
 	List(context.Context, ListFilter) ([]entity.Game, error)
 	FindBySlug(context.Context, string, Pricing, int64) (entity.Game, error)
+	Exists(context.Context, int64) (bool, error)
 	Save(context.Context, int64, entity.Draft) (entity.Game, error)
 }
 
@@ -58,6 +59,13 @@ type ListResult struct {
 type Service struct{ store Store }
 
 func NewService(store Store) *Service { return &Service{store: store} }
+
+func (s *Service) GameExists(ctx context.Context, id int64) (bool, error) {
+	if id <= 0 {
+		return false, nil
+	}
+	return s.store.Exists(ctx, id)
+}
 
 func (s *Service) List(ctx context.Context, in ListInput) (ListResult, error) {
 	query := strings.TrimSpace(in.Query)

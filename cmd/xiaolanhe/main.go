@@ -19,6 +19,9 @@ import (
 	catalogentry "github.com/red060324/XiaoLanHe/internal/catalog/entry"
 	catalogpg "github.com/red060324/XiaoLanHe/internal/catalog/repository/postgres"
 	catalog "github.com/red060324/XiaoLanHe/internal/catalog/usecase"
+	communityentry "github.com/red060324/XiaoLanHe/internal/community/entry"
+	communitypg "github.com/red060324/XiaoLanHe/internal/community/repository/postgres"
+	community "github.com/red060324/XiaoLanHe/internal/community/usecase"
 	"github.com/red060324/XiaoLanHe/internal/config"
 	"github.com/red060324/XiaoLanHe/internal/entry"
 	"github.com/red060324/XiaoLanHe/internal/platform/auth"
@@ -71,9 +74,11 @@ func main() {
 	agentModel := einoadapter.NewAgentModel(chatModel, cfg.AIModel, cfg.PlanningPrompt, cfg.ResearchPrompt, cfg.DirectPrompt, cfg.SynthesisPrompt)
 	agent := usecase.NewAgent(agentModel, usecase.NewResearch(agentModel, knowledge, search), agentModel)
 	accountService := account.NewService(accountpg.NewStore(pool), password.Bcrypt{}, 7*24*time.Hour)
+	catalogService := catalog.NewService(catalogpg.NewStore(pool))
 	server := entry.NewHTTPWithServices(cfg.Address, usecase.NewChat(store, agent), knowledge, search, httpauth.RequireOrigin(cfg.PublicOrigin), httpauth.RequireRole(accountService, auth.RoleAdmin))
 	accountentry.NewHTTP(accountService, cfg.CookieSecure, cfg.PublicOrigin).Register(server.Router())
-	catalogentry.NewHTTP(catalog.NewService(catalogpg.NewStore(pool)), accountService, cfg.PublicOrigin).Register(server.Router())
+	catalogentry.NewHTTP(catalogService, accountService, cfg.PublicOrigin).Register(server.Router())
+	communityentry.NewHTTP(community.NewService(communitypg.NewStore(pool), catalogService), accountService, cfg.PublicOrigin).Register(server.Router())
 	server.RegisterReadiness(pool.Ping)
 	slog.Info("xiaolanhe started", "address", cfg.Address, "model", cfg.AIModel)
 	server.Spin()

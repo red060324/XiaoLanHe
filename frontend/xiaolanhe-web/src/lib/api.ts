@@ -38,6 +38,38 @@ export type Game = {
   editions?: Array<{ id: string; code: string; name: string; description?: string; price?: Price }>;
 };
 
+export type CommunityAuthor = {
+  id: string;
+  username: string;
+  displayName: string;
+};
+
+export type CommunityPost = {
+  id: string;
+  title: string;
+  content: string;
+  status: 'published' | 'hidden';
+  author: CommunityAuthor;
+  game?: { id: string; slug: string; name: string };
+  commentCount: number;
+  reactionCounts: Record<'like' | 'helpful' | 'funny', number>;
+  viewerReactions: Array<'like' | 'helpful' | 'funny'>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunityComment = {
+  id: string;
+  postId: string;
+  content: string;
+  status: 'published' | 'hidden';
+  author: CommunityAuthor;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Page<T> = { items: T[]; nextCursor?: string };
+
 function resolveApiBaseUrl(): string {
   const configured = import.meta.env.VITE_API_BASE_URL;
   return configured && configured.trim().length > 0 ? configured : DEFAULT_API_BASE_URL;
@@ -105,6 +137,72 @@ export async function listGames(query = ''): Promise<Game[]> {
 export async function getGame(slug: string): Promise<Game> {
   const result = await requestJSON<{ game: Game }>(`/api/games/${encodeURIComponent(slug)}`);
   return result.game;
+}
+
+export async function listCommunityPosts(gameId = '', cursor = ''): Promise<Page<CommunityPost>> {
+  const params = new URLSearchParams();
+  if (gameId) params.set('gameId', gameId);
+  if (cursor) params.set('cursor', cursor);
+  return requestJSON<Page<CommunityPost>>(`/api/community/posts?${params}`);
+}
+
+export async function getCommunityPost(id: string): Promise<CommunityPost> {
+  const result = await requestJSON<{ post: CommunityPost }>(`/api/community/posts/${encodeURIComponent(id)}`);
+  return result.post;
+}
+
+export async function createCommunityPost(input: { gameId?: string; title: string; content: string }): Promise<CommunityPost> {
+  const result = await requestJSON<{ post: CommunityPost }>('/api/community/posts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input)
+  });
+  return result.post;
+}
+
+export async function updateCommunityPost(id: string, input: { gameId?: string; title: string; content: string }): Promise<CommunityPost> {
+  const result = await requestJSON<{ post: CommunityPost }>(`/api/community/posts/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input)
+  });
+  return result.post;
+}
+
+export async function deleteCommunityPost(id: string): Promise<void> {
+  await request(`/api/community/posts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function listCommunityComments(postId: string, cursor = ''): Promise<Page<CommunityComment>> {
+  const params = new URLSearchParams();
+  if (cursor) params.set('cursor', cursor);
+  return requestJSON<Page<CommunityComment>>(`/api/community/posts/${encodeURIComponent(postId)}/comments?${params}`);
+}
+
+export async function createCommunityComment(postId: string, content: string): Promise<CommunityComment> {
+  const result = await requestJSON<{ comment: CommunityComment }>(`/api/community/posts/${encodeURIComponent(postId)}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content })
+  });
+  return result.comment;
+}
+
+export async function updateCommunityComment(id: string, content: string): Promise<CommunityComment> {
+  const result = await requestJSON<{ comment: CommunityComment }>(`/api/community/comments/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content })
+  });
+  return result.comment;
+}
+
+export async function deleteCommunityComment(id: string): Promise<void> {
+  await request(`/api/community/comments/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function setCommunityReaction(postId: string, type: 'like' | 'helpful' | 'funny', active: boolean): Promise<Pick<CommunityPost, 'reactionCounts' | 'viewerReactions'>> {
+  return requestJSON<Pick<CommunityPost, 'reactionCounts' | 'viewerReactions'>>(`/api/community/posts/${encodeURIComponent(postId)}/reactions/${type}`, { method: active ? 'PUT' : 'DELETE' });
 }
 
 export async function sendChatMessage(payload: ChatMessageRequest): Promise<ChatMessageResponse> {
