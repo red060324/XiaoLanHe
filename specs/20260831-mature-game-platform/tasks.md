@@ -1,6 +1,6 @@
 # Tasks
 
-- Status: `IMPLEMENTING`
+- Status: `PHASE_1_COMPLETE`
 - Authoritative spec: `./spec.md`
 
 | ID | Class | Status | Task | Acceptance criteria | Evidence |
@@ -8,9 +8,9 @@
 | T0 | PRE_MERGE | DONE | Human approves spec, plan, data model, phase order, and test plan | all | approved 2026-08-31 |
 | T1 | PRE_MERGE | DONE | Audit current capabilities and defects | AC10 | `research.md` |
 | T2 | PRE_MERGE | DONE | Install AI Coding harness and canonical CI gates | AC1, AC10 | `make ci` |
-| T3 | PRE_MERGE | IN_PROGRESS | Add ordered migration runner and foundation lifecycle fixes | AC8, AC9 | runner/readiness/CI PASS; isolated PostgreSQL evidence pending |
-| T4 | PRE_MERGE | IN_PROGRESS | Implement Account register/login/logout/me and authorization | AC2 | unit + HTTP PASS; PostgreSQL evidence pending |
-| T5 | PRE_MERGE | IN_PROGRESS | Implement Catalog read/admin APIs and demo seed command | AC3 | unit + HTTP PASS; PostgreSQL evidence pending |
+| T3 | PRE_MERGE | DONE | Add ordered migration runner and foundation lifecycle fixes | AC8, AC9 | fresh/repeat/concurrent/checksum PostgreSQL CI PASS |
+| T4 | PRE_MERGE | DONE | Implement Account register/login/logout/me and authorization | AC2 | unit + HTTP + PostgreSQL session CI PASS |
+| T5 | PRE_MERGE | DONE | Implement Catalog read/admin APIs and demo seed command | AC3 | unit + HTTP + PostgreSQL price/ownership/seed CI PASS |
 | T6 | PRE_MERGE | DONE | Add frontend auth/catalog navigation and tests | AC2, AC3 | 6 Vitest PASS + production build PASS |
 | T7 | PRE_MERGE | DONE | Fix anonymous knowledge write, Web Search failure semantics, dead config, and cancellable chat UI | AC2, AC8 | Go/HTTP/frontend regression PASS |
 | T8 | PRE_MERGE | TODO | Implement Community posts/comments/reactions/feed | AC4 | unit + HTTP + PostgreSQL tests |
