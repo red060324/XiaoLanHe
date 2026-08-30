@@ -24,8 +24,8 @@ type Config struct {
 	SearchProvider  string
 	SearchEndpoint  string
 	SearchTimeout   time.Duration
-	AgentMode       string
-	MinioBucket     string
+	CookieSecure    bool
+	PublicOrigin    string
 }
 
 func Load() (Config, error) {
@@ -74,8 +74,8 @@ func Load() (Config, error) {
 		SearchProvider:  env("XLH_SEARCH_PROVIDER", "searxng"),
 		SearchEndpoint:  env("SEARXNG_BASE_URL", "http://127.0.0.1:8080"),
 		SearchTimeout:   searchTimeout,
-		AgentMode:       env("XLH_AGENT_MODE", "single-orchestrator"),
-		MinioBucket:     env("XLH_MINIO_BUCKET", "xlh-dev"),
+		CookieSecure:    !strings.EqualFold(env("XLH_COOKIE_SECURE", "true"), "false"),
+		PublicOrigin:    strings.TrimRight(os.Getenv("XLH_PUBLIC_ORIGIN"), "/"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("XLH_DATABASE_URL is required")

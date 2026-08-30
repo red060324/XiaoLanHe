@@ -2,7 +2,6 @@ package entry
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -17,33 +16,39 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/cloudwego/hertz/pkg/protocol/sse"
 
+	"github.com/red060324/XiaoLanHe/internal/platform/httpx"
 	"github.com/red060324/XiaoLanHe/internal/presenter"
 	"github.com/red060324/XiaoLanHe/internal/usecase"
 )
 
 const maxRequestBytes = presenter.MaxMessageLength + 1024
+const maxKnowledgeBody = 1 << 20
 const webRoot = "frontend/xiaolanhe-web/dist"
 
 type HTTP struct {
-	server                 *server.Hertz
-	chat                   *usecase.Chat
-	knowledge              *usecase.Knowledge
-	search                 *usecase.WebSearch
-	agentMode, minioBucket string
+	server    *server.Hertz
+	chat      *usecase.Chat
+	knowledge *usecase.Knowledge
+	search    *usecase.WebSearch
 }
 
 func NewHTTP(address string, chat *usecase.Chat) *HTTP {
-	return NewHTTPWithServices(address, chat, nil, nil, "single-orchestrator", "xlh-dev")
+	return NewHTTPWithServices(address, chat, nil, nil, nil)
 }
 
-func NewHTTPWithServices(address string, chat *usecase.Chat, knowledge *usecase.Knowledge, search *usecase.WebSearch, agentMode, minioBucket string) *HTTP {
-	h := &HTTP{server: server.Default(server.WithHostPorts(address)), chat: chat, knowledge: knowledge, search: search, agentMode: agentMode, minioBucket: minioBucket}
+func NewHTTPWithServices(address string, chat *usecase.Chat, knowledge *usecase.Knowledge, search *usecase.WebSearch, knowledgeWriteMiddleware ...app.HandlerFunc) *HTTP {
+	h := &HTTP{server: server.Default(server.WithHostPorts(address)), chat: chat, knowledge: knowledge, search: search}
+	h.server.Use(httpx.RequestIDMiddleware)
 	h.server.GET("/healthz", h.health)
 	h.server.GET("/api/system/ping", h.ping)
 	h.server.POST("/api/chat/message", h.message)
 	h.server.POST("/api/chat/stream", h.stream)
 	if knowledge != nil {
-		h.server.POST("/api/knowledge/documents", h.createKnowledge)
+		if len(knowledgeWriteMiddleware) == 0 {
+			h.server.POST("/api/knowledge/documents", h.createKnowledge)
+		} else {
+			h.server.POST("/api/knowledge/documents", append(knowledgeWriteMiddleware, h.createKnowledge)...)
+		}
 		h.server.GET("/api/knowledge/search", h.searchKnowledge)
 	}
 	if search != nil {
@@ -51,6 +56,20 @@ func NewHTTPWithServices(address string, chat *usecase.Chat, knowledge *usecase.
 	}
 	registerWeb(h.server, webRoot)
 	return h
+}
+
+func (h *HTTP) Router() *server.Hertz { return h.server }
+
+func (h *HTTP) RegisterReadiness(check func(context.Context) error) {
+	h.server.GET("/readyz", func(ctx context.Context, c *app.RequestContext) {
+		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if err := check(checkCtx); err != nil {
+			httpx.WriteError(c, consts.StatusServiceUnavailable, "dependency_unavailable", "service is not ready", nil)
+			return
+		}
+		c.JSON(consts.StatusOK, map[string]string{"status": "ready"})
+	})
 }
 
 func registerWeb(h *server.Hertz, root string) {
@@ -73,12 +92,12 @@ func registerWeb(h *server.Hertz, root string) {
 }
 
 func (h *HTTP) ping(_ context.Context, c *app.RequestContext) {
-	c.JSON(consts.StatusOK, map[string]any{"name": "xiaolanhe", "status": "ok", "agentMode": h.agentMode, "minioBucket": h.minioBucket})
+	c.JSON(consts.StatusOK, map[string]string{"name": "xiaolanhe", "status": "ok"})
 }
 
 func (h *HTTP) createKnowledge(ctx context.Context, c *app.RequestContext) {
 	var request presenter.KnowledgeDocumentRequest
-	if err := json.Unmarshal(c.Request.Body(), &request); err != nil {
+	if err := httpx.DecodeJSON(c.Request.Body(), maxKnowledgeBody, &request); err != nil {
 		writeError(c, consts.StatusBadRequest, "invalid JSON body")
 		return
 	}
@@ -124,7 +143,7 @@ func (h *HTTP) searchWeb(ctx context.Context, c *app.RequestContext) {
 	result, err := h.search.Run(ctx, query)
 	if err != nil {
 		slog.ErrorContext(ctx, "web search", "error", err)
-		writeError(c, consts.StatusBadGateway, "web search failed")
+		writeError(c, consts.StatusServiceUnavailable, "web search failed")
 		return
 	}
 	c.JSON(consts.StatusOK, presenter.PresentWebSearch(result))
@@ -212,7 +231,7 @@ func bind(c *app.RequestContext) (usecase.ChatInput, bool) {
 		return usecase.ChatInput{}, false
 	}
 	var request presenter.ChatRequest
-	if err := json.Unmarshal(c.Request.Body(), &request); err != nil {
+	if err := httpx.DecodeJSON(c.Request.Body(), maxRequestBytes, &request); err != nil {
 		writeError(c, consts.StatusBadRequest, "invalid JSON body")
 		return usecase.ChatInput{}, false
 	}
@@ -225,5 +244,14 @@ func bind(c *app.RequestContext) (usecase.ChatInput, bool) {
 }
 
 func writeError(c *app.RequestContext, status int, message string) {
-	c.JSON(status, map[string]string{"error": message})
+	code := "internal_error"
+	switch status {
+	case consts.StatusBadRequest, consts.StatusRequestEntityTooLarge:
+		code = "invalid_request"
+	case consts.StatusNotFound:
+		code = "not_found"
+	case consts.StatusServiceUnavailable:
+		code = "dependency_unavailable"
+	}
+	httpx.WriteError(c, status, code, message, nil)
 }

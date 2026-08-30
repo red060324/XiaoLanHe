@@ -9,12 +9,22 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	accountentry "github.com/red060324/XiaoLanHe/internal/account/entry"
+	"github.com/red060324/XiaoLanHe/internal/account/repository/password"
+	accountpg "github.com/red060324/XiaoLanHe/internal/account/repository/postgres"
+	account "github.com/red060324/XiaoLanHe/internal/account/usecase"
 	einoadapter "github.com/red060324/XiaoLanHe/internal/adapter/eino"
 	"github.com/red060324/XiaoLanHe/internal/adapter/postgres"
 	"github.com/red060324/XiaoLanHe/internal/adapter/websearch"
+	catalogentry "github.com/red060324/XiaoLanHe/internal/catalog/entry"
+	catalogpg "github.com/red060324/XiaoLanHe/internal/catalog/repository/postgres"
+	catalog "github.com/red060324/XiaoLanHe/internal/catalog/usecase"
 	"github.com/red060324/XiaoLanHe/internal/config"
 	"github.com/red060324/XiaoLanHe/internal/entry"
+	"github.com/red060324/XiaoLanHe/internal/platform/auth"
+	"github.com/red060324/XiaoLanHe/internal/platform/httpauth"
 	"github.com/red060324/XiaoLanHe/internal/usecase"
+	"github.com/red060324/XiaoLanHe/migrations"
 )
 
 func main() {
@@ -36,12 +46,7 @@ func main() {
 		slog.Error("ping database", "error", err)
 		os.Exit(1)
 	}
-	schema, err := os.ReadFile("migrations/001_initial_schema.sql")
-	if err != nil {
-		slog.Error("read database schema", "error", err)
-		os.Exit(1)
-	}
-	if _, err := pool.Exec(ctx, string(schema)); err != nil {
+	if err := postgres.Migrate(ctx, pool, migrations.Files); err != nil {
 		slog.Error("initialize database", "error", err)
 		os.Exit(1)
 	}
@@ -65,7 +70,11 @@ func main() {
 	search := usecase.NewWebSearch(websearch.NewSearXNG(cfg.SearchEnabled, cfg.SearchProvider, cfg.SearchEndpoint, cfg.SearchTimeout))
 	agentModel := einoadapter.NewAgentModel(chatModel, cfg.AIModel, cfg.PlanningPrompt, cfg.ResearchPrompt, cfg.DirectPrompt, cfg.SynthesisPrompt)
 	agent := usecase.NewAgent(agentModel, usecase.NewResearch(agentModel, knowledge, search), agentModel)
-	server := entry.NewHTTPWithServices(cfg.Address, usecase.NewChat(store, agent), knowledge, search, cfg.AgentMode, cfg.MinioBucket)
+	accountService := account.NewService(accountpg.NewStore(pool), password.Bcrypt{}, 7*24*time.Hour)
+	server := entry.NewHTTPWithServices(cfg.Address, usecase.NewChat(store, agent), knowledge, search, httpauth.RequireOrigin(cfg.PublicOrigin), httpauth.RequireRole(accountService, auth.RoleAdmin))
+	accountentry.NewHTTP(accountService, cfg.CookieSecure, cfg.PublicOrigin).Register(server.Router())
+	catalogentry.NewHTTP(catalog.NewService(catalogpg.NewStore(pool)), accountService, cfg.PublicOrigin).Register(server.Router())
+	server.RegisterReadiness(pool.Ping)
 	slog.Info("xiaolanhe started", "address", cfg.Address, "model", cfg.AIModel)
 	server.Spin()
 }

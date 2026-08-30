@@ -1,19 +1,34 @@
-name: Go
+name: CI
 
 on:
   pull_request:
   push:
     branches:
+      - master
       - codex/clean-architecture-refactor
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test ./...
-      - run: go vet ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/xiaolanhe-web/package-lock.json
+      - run: npm --prefix frontend/xiaolanhe-web ci
+      - name: Repository gates
+        env:
+          BASE_REF: origin/${{ github.base_ref || 'master' }}
+        run: make ci BASE_REF="$BASE_REF"

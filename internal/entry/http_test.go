@@ -15,6 +15,8 @@ import (
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 
+	"github.com/red060324/XiaoLanHe/internal/platform/auth"
+	"github.com/red060324/XiaoLanHe/internal/platform/httpauth"
 	"github.com/red060324/XiaoLanHe/internal/usecase"
 )
 
@@ -128,9 +130,13 @@ func TestHTTPServesWebAndSPAFallback(t *testing.T) {
 func TestHTTPKnowledge(t *testing.T) {
 	store := &httpKnowledgeStore{items: []usecase.KnowledgeSnippet{{ChunkID: 1, DocumentID: 2, Title: "Guide", Text: "fact", Score: 30}}}
 	knowledge := usecase.NewKnowledge(store, einoDisabledEmbedder{})
-	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), knowledge, usecase.NewWebSearch(httpSearchClient{}), "single-orchestrator", "xlh-dev")
+	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), knowledge, usecase.NewWebSearch(httpSearchClient{}), httpauth.RequireRole(httpAuthenticator{}, auth.RoleAdmin))
 
-	created := ut.PerformRequest(h.server.Engine, "POST", "/api/knowledge/documents", &ut.Body{Body: bytes.NewBufferString(`{"sourceType":"note","title":"Guide","contentText":"body"}`), Len: -1})
+	anonymous := ut.PerformRequest(h.server.Engine, "POST", "/api/knowledge/documents", &ut.Body{Body: bytes.NewBufferString(`{"sourceType":"note","title":"Guide","contentText":"body"}`), Len: -1})
+	if anonymous.Code != 401 {
+		t.Fatalf("anonymous status=%d body=%s", anonymous.Code, anonymous.Body.String())
+	}
+	created := ut.PerformRequest(h.server.Engine, "POST", "/api/knowledge/documents", &ut.Body{Body: bytes.NewBufferString(`{"sourceType":"note","title":"Guide","contentText":"body"}`), Len: -1}, ut.Header{Key: "Cookie", Value: httpauth.CookieName + "=admin"})
 	if created.Code != 200 || !strings.Contains(created.Body.String(), `"documentId":11`) || len(store.chunks) != 1 {
 		t.Fatalf("status=%d body=%s chunks=%v", created.Code, created.Body.String(), store.chunks)
 	}
@@ -141,14 +147,23 @@ func TestHTTPKnowledge(t *testing.T) {
 	}
 }
 
+type httpAuthenticator struct{}
+
+func (httpAuthenticator) Authenticate(_ context.Context, token string) (auth.Principal, error) {
+	if token != "admin" {
+		return auth.Principal{}, auth.ErrUnauthenticated
+	}
+	return auth.Principal{UserID: 1, Role: auth.RoleAdmin}, nil
+}
+
 func TestHTTPWebSearchAndPing(t *testing.T) {
-	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), nil, usecase.NewWebSearch(httpSearchClient{}), "single-orchestrator", "xlh-dev")
+	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), nil, usecase.NewWebSearch(httpSearchClient{}))
 	searched := ut.PerformRequest(h.server.Engine, "GET", "/api/search/web?query=guide", nil)
 	if searched.Code != 200 || !strings.Contains(searched.Body.String(), `"provider":"searxng"`) || !strings.Contains(searched.Body.String(), `"title":"A"`) {
 		t.Fatalf("status=%d body=%s", searched.Code, searched.Body.String())
 	}
 	ping := ut.PerformRequest(h.server.Engine, "GET", "/api/system/ping", nil)
-	if ping.Code != 200 || !strings.Contains(ping.Body.String(), `"agentMode":"single-orchestrator"`) || !strings.Contains(ping.Body.String(), `"minioBucket":"xlh-dev"`) {
+	if ping.Code != 200 || ping.Body.String() != `{"name":"xiaolanhe","status":"ok"}` {
 		t.Fatalf("status=%d body=%s", ping.Code, ping.Body.String())
 	}
 }

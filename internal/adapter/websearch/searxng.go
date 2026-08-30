@@ -36,17 +36,17 @@ func (s *SearXNG) Search(ctx context.Context, query string) (usecase.WebSearchRe
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return usecase.WebSearchResult{Enabled: true, Provider: s.provider, Query: query, Note: "SearXNG request failed."}, nil
+		return usecase.WebSearchResult{}, fmt.Errorf("search with %s: %w", s.provider, err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return usecase.WebSearchResult{Enabled: true, Provider: s.provider, Query: query, Note: fmt.Sprintf("SearXNG returned HTTP %d", resp.StatusCode)}, nil
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return usecase.WebSearchResult{}, fmt.Errorf("search with %s: HTTP %d", s.provider, resp.StatusCode)
 	}
 	var payload struct {
 		Results []struct{ Title, URL, Content, Engine string } `json:"results"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return usecase.WebSearchResult{Enabled: true, Provider: s.provider, Query: query, Note: "SearXNG response was invalid."}, nil
+		return usecase.WebSearchResult{}, fmt.Errorf("decode %s response: %w", s.provider, err)
 	}
 	items := make([]usecase.WebSearchItem, 0, 5)
 	for _, item := range payload.Results {

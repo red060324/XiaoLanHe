@@ -1,0 +1,16 @@
+{
+  "name": "xiaolanhe",
+  "version": "1.0.0",
+  "description": "Repository-owned workflow for XiaoLanHe feature and Agent delivery",
+  "author": {
+    "name": "XiaoLanHe contributors"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "XiaoLanHe",
+    "shortDescription": "Spec-driven feature and Agent delivery",
+    "developerName": "XiaoLanHe contributors",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write"]
+  }
+}

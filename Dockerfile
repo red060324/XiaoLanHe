@@ -16,7 +16,6 @@ FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=build /xiaolanhe ./xiaolanhe
 COPY --from=build /src/prompts ./prompts
-COPY --from=build /src/migrations ./migrations
 COPY --from=web /src/frontend/xiaolanhe-web/dist ./frontend/xiaolanhe-web/dist
 EXPOSE 10000
 ENTRYPOINT ["./xiaolanhe"]

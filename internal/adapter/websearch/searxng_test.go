@@ -2,9 +2,9 @@ package websearch
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -30,12 +30,40 @@ func TestSearXNGSearch(t *testing.T) {
 			t.Fatalf("result=%#v err=%v", result, err)
 		}
 	})
-	t.Run("provider failure is represented in response", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }))
+	t.Run("empty result is successful", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		}))
 		defer server.Close()
 		result, err := NewSearXNG(true, "searxng", server.URL, time.Second).Search(context.Background(), "q")
-		if err != nil || !result.Enabled || !strings.Contains(result.Note, "HTTP 500") {
+		if err != nil || !result.Enabled || len(result.Items) != 0 {
 			t.Fatalf("result=%#v err=%v", result, err)
+		}
+	})
+	t.Run("cancelled request returns error", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := NewSearXNG(true, "searxng", "http://127.0.0.1", time.Second).Search(ctx, "q")
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err=%v, want context.Canceled", err)
+		}
+	})
+	t.Run("non success response returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }))
+		defer server.Close()
+		_, err := NewSearXNG(true, "searxng", server.URL, time.Second).Search(context.Background(), "q")
+		if err == nil {
+			t.Fatal("expected provider error")
+		}
+	})
+	t.Run("invalid response returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`not-json`))
+		}))
+		defer server.Close()
+		_, err := NewSearXNG(true, "searxng", server.URL, time.Second).Search(context.Background(), "q")
+		if err == nil {
+			t.Fatal("expected decode error")
 		}
 	})
 }
