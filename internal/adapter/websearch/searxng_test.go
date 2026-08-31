@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -64,6 +65,15 @@ func TestSearXNGSearch(t *testing.T) {
 		_, err := NewSearXNG(true, server.URL, time.Second).Search(context.Background(), "q")
 		if err == nil {
 			t.Fatal("expected decode error")
+		}
+	})
+	t.Run("oversized response returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"results":[{"title":"A","url":"https://a","content":"` + strings.Repeat("x", 1<<20) + `"}]}`))
+		}))
+		defer server.Close()
+		if _, err := NewSearXNG(true, server.URL, time.Second).Search(context.Background(), "q"); err == nil {
+			t.Fatal("expected oversized response error")
 		}
 	})
 }

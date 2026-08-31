@@ -38,7 +38,8 @@ mutation-like names such as `create_order`, `claim_coupon`, `pay_order`, or
 `create_post` are not registered and cannot reach an ordinary service.
 The current Web adapter is SearXNG, so its provider identity is fixed to
 `searxng`. The HTTP response does not expose cache metadata because no cache is
-implemented.
+implemented. Provider response bodies are capped at 1 MiB; oversized payloads
+are provider failures rather than evidence.
 
 Every tool returns a typed observation with `ok`, `no_result`, `invalid`, or
 `failed` status. Provider failures are observations that the Agent may refine;

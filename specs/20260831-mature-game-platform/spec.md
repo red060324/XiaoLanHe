@@ -198,4 +198,6 @@ and skipped external checks are reported rather than treated as success.
 ## Clarify Decisions
 
 The user approved the seven assumptions, phase ordering, plan, data model, and
-test plan on 2026-08-31. Phase-one production implementation may proceed.
+test plan on 2026-08-31. On 2026-09-01, the user confirmed that real payment,
+refund, tax, and transactional Agent tools are permanent project non-goals,
+not follow-up backlog.

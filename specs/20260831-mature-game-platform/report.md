@@ -37,7 +37,7 @@ Redis, background Agent, or Java runtime was introduced.
 
 | Gate | Evidence | Result |
 |---|---|---|
-| Latest local full command | T67-T68 `XLH_TEST_DATABASE_URL=<isolated PostgreSQL 17 database URL> make ci BASE_REF=origin/master`: Go vet/tests/race against PostgreSQL 17 + pgvector, 50 frontend tests/build, hooks, architecture and spec drift | PASS |
+| Latest local full command | T69 `XLH_TEST_DATABASE_URL=<isolated PostgreSQL 17 database URL> make ci BASE_REF=origin/master`: Go vet/tests/race against PostgreSQL 17 + pgvector, 50 frontend tests/build, hooks, architecture and spec drift | PASS |
 | Go vet and all tests | latest local `make ci`; full GitHub Actions `33378359262` at `c2ba3fd` | PASS |
 | Go race | latest local full repository race; GitHub Actions `33378359262` | PASS |
 | Frontend | 4 files, 50 Vitest tests and Vite production build; real-contract catalog-summary purchase hydration, latest-request authentication/catalog/feed/detail/comment-page/reaction/Commerce/chat-stream state, abandoned game-detail/post-create/post-edit/post-delete navigation, cross-view and Commerce-tab error cleanup, abandoned order-history failure isolation, stale-reaction failure isolation, cross-post comment submission/edit/deletion isolation, duplicate-comment prevention, coupon-claim restoration/reservation, post-claim game-filter and mid-checkout coupon-selection preservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
@@ -54,6 +54,7 @@ Redis, background Agent, or Java runtime was introduced.
 | Knowledge cancellation | embedding cancellation/deadline is propagated after keyword retrieval and prevents vector search; ordinary embedding failures still degrade to keyword evidence | PASS |
 | Account login work factor | missing-account, stored-account, and disabled-account generic failures execute the expected bcrypt comparison; dummy and production hashes both use cost 12 | PASS |
 | Web Search contract | SearXNG identity is fixed to the actual adapter; nonexistent cache/provider-selection surfaces are absent | PASS |
+| Web Search response boundary | SearXNG response bodies are capped at 1 MiB and oversized payloads fail before JSON allocation | PASS |
 | Public-only scan | no private domains/platform names; dependencies resolve from public modules | PASS |
 | Java absence | no Java/Maven/Gradle source or build files | PASS |
 | Isolated migration and full product smoke | rollout T16, `scripts/smoke-product.sh`, GitHub Actions `33378359262` | PASS |
@@ -65,7 +66,7 @@ Redis, background Agent, or Java runtime was introduced.
 |---|---|---|
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
-| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T68 pass |
+| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T69 pass |
 | Final documentation and latest code-bearing clean-checkout CI | VERIFYING | T39; local full gate passes, latest GitHub Actions requires the new revision |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |
@@ -97,7 +98,7 @@ editing applied migrations. Use a reviewed forward migration for schema fixes.
 | Public API abuse and provider-cost admission control are not implemented | governed by draft `../20260831-public-rollout-hardening/`; rollout remains blocked pending approval and delivery |
 | Checked-in Render free database expires after 30 days and has no managed backups | demo only; choose durable PostgreSQL and tested backups before persistent rollout |
 | Streamdown keeps the initial Vite chunk near 1 MB | accepted for demo; split only when measured load time matters |
-| Sandbox payment is not a financial integration | explicit product label; real provider requires a separate spec |
+| Sandbox payment is not a financial integration | explicit product boundary; no real provider, refund, or tax implementation is planned |
 
 ## Decision
 

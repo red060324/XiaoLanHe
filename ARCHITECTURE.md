@@ -92,9 +92,9 @@ placeholder Agents or mutation capabilities.
 - Record route, Agent step, tool, result, latency and fallback reason without
   logging full prompts, user messages, or secrets.
 
-Future transactional Agent tools must call the existing Promotion or Order
-UseCases and require a separate reviewed spec covering authorization, explicit
-user confirmation, idempotency, price revalidation and audit logging.
+The Assistant remains read-only in this project and cannot call Promotion or
+Order mutation UseCases. Coupon claims, orders, and sandbox payments remain
+explicit user actions through ordinary authenticated HTTP flows.
 
 ## Deployment
 

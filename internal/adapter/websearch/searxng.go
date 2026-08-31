@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,6 +20,7 @@ type SearXNG struct {
 }
 
 const providerName = "searxng"
+const maxResponseBytes = 1 << 20
 
 func NewSearXNG(enabled bool, endpoint string, timeout time.Duration) *SearXNG {
 	return &SearXNG{enabled: enabled, endpoint: strings.TrimRight(endpoint, "/"), client: &http.Client{Timeout: timeout}}
@@ -47,7 +49,14 @@ func (s *SearXNG) Search(ctx context.Context, query string) (usecase.WebSearchRe
 	var payload struct {
 		Results []struct{ Title, URL, Content, Engine string } `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return usecase.WebSearchResult{}, fmt.Errorf("read %s response: %w", providerName, err)
+	}
+	if len(body) > maxResponseBytes {
+		return usecase.WebSearchResult{}, fmt.Errorf("%s response exceeds %d bytes", providerName, maxResponseBytes)
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return usecase.WebSearchResult{}, fmt.Errorf("decode %s response: %w", providerName, err)
 	}
 	items := make([]usecase.WebSearchItem, 0, 5)

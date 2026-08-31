@@ -138,6 +138,8 @@ truth.
   return 400 without downstream work.
 - Web Search identifies its actual SearXNG adapter and does not expose a cache
   hit field or provider selector until those capabilities exist.
+- SearXNG responses larger than 1 MiB fail as provider errors without being
+  fully buffered or represented as successful evidence.
 - Answer direct/evidence/degraded/clarify/stream cases with citations; an empty
   model stream emits a fallback reply before EOF.
 - Chat context excludes the current message while user-before-model and

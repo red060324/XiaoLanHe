@@ -23,8 +23,6 @@
 | T15 | PRE_MERGE | DONE | Complete docs, API contracts, readiness report, and full CI | AC10 | public deployment guide + local `make ci` + GitHub Actions `33357654243` PASS |
 | T16 | ROLLOUT | DONE | Run isolated PostgreSQL migrations and product smoke | AC9, AC10 | repeat seed + full account/admin catalog/community/coupon/order/payment/entitlement container smoke; GitHub Actions `33378359262` PASS |
 | T17 | ROLLOUT | TODO | Run approved real-model/Web smoke and inspect safe traces | AC7, AC8 | rollout report |
-| T18 | FOLLOW_UP | TODO | Add real payment provider, refund, and tax | excluded | abuse protection moved to `../20260831-public-rollout-hardening/`; payment stays a separate spec |
-| T19 | FOLLOW_UP | TODO | Add transactional Agent tools after ordinary commerce is proven | excluded | separate approval/idempotency spec |
 | T20 | PRE_MERGE | DONE | Correct chat log correlation to use the validated request ID | AC10 | failing-then-passing REST/SSE regression tests |
 | T21 | PRE_MERGE | DONE | Enforce one bounded query contract across HTTP and Research tools | AC7, AC8 | failing-then-passing UseCase/HTTP tests + GitHub Actions `33360429384` PASS |
 | T22 | PRE_MERGE | DONE | Classify deterministic Research tool-input errors separately from provider failures | AC7, AC8 | failing-then-passing Agent adapter test + GitHub Actions `33361284676` PASS |
@@ -74,6 +72,7 @@
 | T66 | PRE_MERGE | DONE | Preserve password work on disabled-account login failures | AC2, AC10 | failing-then-passing Account Login regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 | T67 | PRE_MERGE | DONE | Treat retrieved evidence as untrusted Answer Node data | AC7, AC10 | failing-then-passing Answer Node prompt-boundary regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 | T68 | PRE_MERGE | DONE | Bound Research Agent tool evidence content | AC7, AC10 | failing-then-passing shared tool-runner regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
+| T69 | PRE_MERGE | DONE | Bound SearXNG provider response bodies | AC7, AC8, AC10 | failing-then-passing Web Search adapter regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent
