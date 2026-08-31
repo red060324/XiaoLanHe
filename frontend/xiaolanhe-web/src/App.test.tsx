@@ -102,6 +102,32 @@ describe('App', () => {
     expect(signal?.aborted).toBe(true);
   });
 
+  it('keeps a newer stream cancellable after an earlier stream finishes', async () => {
+    let rejectFirst!: (reason?: unknown) => void;
+    let secondSignal: AbortSignal | undefined;
+    api.streamChatMessage
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectFirst = reject; }))
+      .mockImplementationOnce((_payload, _onChunk, requestSignal: AbortSignal) => {
+        secondSignal = requestSignal;
+        return new Promise<void>((_resolve, reject) => requestSignal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+      });
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText('问攻略、版本或社区内容'), { target: { value: '第一个问题' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(api.streamChatMessage).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '游戏助手' }));
+    fireEvent.change(screen.getByPlaceholderText('问攻略、版本或社区内容'), { target: { value: '第二个问题' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(api.streamChatMessage).toHaveBeenCalledTimes(2));
+
+    await act(async () => rejectFirst(new DOMException('aborted', 'AbortError')));
+
+    fireEvent.click(screen.getByRole('button', { name: '停止' }));
+    expect(secondSignal?.aborted).toBe(true);
+    expect(await screen.findByText('已停止生成。')).toBeInTheDocument();
+  });
+
   it('shows a failure message when the stream fails before replying', async () => {
     api.streamChatMessage.mockRejectedValue(new Error('assistant unavailable'));
     render(<App />);

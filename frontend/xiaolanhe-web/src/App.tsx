@@ -290,8 +290,10 @@ export default function App() {
         )
       );
     } finally {
-		abortRef.current = null;
-      setLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setLoading(false);
+      }
     }
   }
 
