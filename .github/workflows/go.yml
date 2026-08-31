@@ -64,14 +64,14 @@ jobs:
             -e XLH_DATABASE_URL="$XLH_DATABASE_URL" \
             -e XLH_AI_API_KEY=ci-placeholder \
             -e XLH_SEARCH_ENABLED=false \
+            -e XLH_COOKIE_SECURE=false \
+            -e XLH_PUBLIC_ORIGIN=http://127.0.0.1:18088 \
             xiaolanhe:ci)
           trap 'docker logs "$container_id"; docker rm -f "$container_id"' EXIT
           for _ in $(seq 1 30); do
             curl --fail --silent http://127.0.0.1:18088/healthz && break
             sleep 1
           done
-          curl --fail --silent http://127.0.0.1:18088/readyz
-          curl --fail --silent http://127.0.0.1:18088/api/games
-          curl --fail --silent http://127.0.0.1:18088/api/community/posts
-          curl --fail --silent http://127.0.0.1:18088/api/deals
-          curl --fail --silent http://127.0.0.1:18088/
+          XLH_SMOKE_ADMIN_PASSWORD=integration-password \
+            XLH_SMOKE_RUN_ID="${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}" \
+            bash scripts/smoke-product.sh

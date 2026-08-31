@@ -107,5 +107,19 @@ curl --fail https://<service>/api/community/posts
 curl --fail https://<service>/api/deals
 ```
 
+For an isolated environment where creating demo data is acceptable, run the
+full authenticated product smoke after seeding:
+
+```bash
+XLH_SMOKE_BASE_URL=https://<service> \
+XLH_SMOKE_ADMIN_PASSWORD='<seeded-admin-password>' \
+bash scripts/smoke-product.sh
+```
+
+The script creates a temporary user, community content, one coupon claim, one
+sandbox-paid order, and an entitlement. Omit `XLH_SMOKE_ADMIN_PASSWORD` to skip
+the admin catalog-write case. Do not run it against an environment where this
+demo data is unwanted.
+
 Authenticated/admin product smoke and real model/Web smoke remain explicit
 rollout actions because they use credentials and may create data or incur cost.
