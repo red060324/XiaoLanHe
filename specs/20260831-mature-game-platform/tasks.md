@@ -1,6 +1,6 @@
 # Tasks
 
-- Status: `IMPLEMENTING`
+- Status: `PRE_MERGE_COMPLETE`
 - Authoritative spec: `./spec.md`
 
 | ID | Class | Status | Task | Acceptance criteria | Evidence |
@@ -34,7 +34,7 @@
 | T26 | PRE_MERGE | DONE | Keep the current chat message out of historical conversation context | AC7, AC8 | failing-then-passing Chat UseCase test + local `make ci` + GitHub Actions `33365566954` PASS |
 | T27 | PRE_MERGE | DONE | Deactivate prices omitted from a complete Catalog aggregate update | AC3, AC9 | GitHub Actions `33366323928` failed before fix; local `make ci` and `33366575106` PASS after fix |
 | T28 | PRE_MERGE | DONE | Replace an empty assistant placeholder when a non-abort chat stream fails | AC8 | failing-then-passing frontend regression + local `make ci` + GitHub Actions `33367744541` PASS |
-| T29 | PRE_MERGE | IN_PROGRESS | Preserve edition-level ownership in Catalog and Commerce | AC3, AC6 | failing-then-passing frontend, HTTP, and PostgreSQL regressions + final CI |
+| T29 | PRE_MERGE | DONE | Preserve edition-level ownership in Catalog and Commerce | AC3, AC6 | failing-then-passing frontend regression + HTTP/PostgreSQL coverage + local `make ci` + GitHub Actions `33369003504` PASS |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent
