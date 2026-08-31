@@ -149,6 +149,8 @@ truth.
   assistant persistence occurs on failure.
 - A non-abort stream failure replaces an empty provisional assistant message
   with an explicit failure state while retaining any partial response.
+- REST and SSE Assistant failures extract the shared server error message and
+  never expose the raw JSON error envelope as user-facing text.
 - After a stopped chat is replaced by a new request, completion cleanup from
   the older stream cannot clear the newer stream's loading or cancellation state.
 - Logs/traces exclude full messages, prompts, tokens, cookies, and passwords.

@@ -74,6 +74,7 @@
 | T68 | PRE_MERGE | DONE | Bound Research Agent tool evidence content | AC7, AC10 | failing-then-passing shared tool-runner regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 | T69 | PRE_MERGE | DONE | Bound SearXNG provider response bodies | AC7, AC8, AC10 | failing-then-passing Web Search adapter regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 | T70 | PRE_MERGE | DONE | Bound Embedding provider response bodies per requested input | AC7, AC8, AC10 | failing-then-passing Embedding adapter regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
+| T71 | PRE_MERGE | DONE | Present shared REST/SSE Assistant error messages instead of raw JSON | AC8, AC10 | failing-then-passing frontend API regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 51 Vitest tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent

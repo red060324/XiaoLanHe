@@ -11,7 +11,9 @@ import {
   listOrders,
   logout,
   payOrder,
-  setCommunityReaction
+  sendChatMessage,
+  setCommunityReaction,
+  streamChatMessage
 } from './api';
 
 const fetchMock = vi.fn();
@@ -44,6 +46,17 @@ describe('catalog API', () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ items: [{ id: '1', slug: 'demo', name: 'Demo', summary: '', owned: false }] }), { status: 200 }));
     await expect(listGames(' demo game ')).resolves.toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledWith('/api/games?query=demo+game', expect.objectContaining({ credentials: 'include' }));
+  });
+});
+
+describe('assistant API', () => {
+  it('surfaces the shared server error message for REST and SSE', async () => {
+    const body = JSON.stringify({ error: { message: 'assistant unavailable' } });
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 503 }));
+    await expect(sendChatMessage({ message: 'help' })).rejects.toMatchObject({ message: 'assistant unavailable' });
+
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 503 }));
+    await expect(streamChatMessage({ message: 'help' }, vi.fn())).rejects.toMatchObject({ message: 'assistant unavailable' });
   });
 });
 

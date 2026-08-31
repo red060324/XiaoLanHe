@@ -37,11 +37,11 @@ Redis, background Agent, or Java runtime was introduced.
 
 | Gate | Evidence | Result |
 |---|---|---|
-| Latest local full command | T70 `XLH_TEST_DATABASE_URL=<isolated PostgreSQL 17 database URL> make ci BASE_REF=origin/master`: Go vet/tests/race against PostgreSQL 17 + pgvector, 50 frontend tests/build, hooks, architecture and spec drift | PASS |
+| Latest local full command | T71 `XLH_TEST_DATABASE_URL=<isolated PostgreSQL 17 database URL> make ci BASE_REF=origin/master`: Go vet/tests/race against PostgreSQL 17 + pgvector, 51 frontend tests/build, hooks, architecture and spec drift | PASS |
 | Latest clean-clone command | committed `1b95c02`; local no-hardlink clone, lockfile `npm ci`, fresh PostgreSQL 17 + pgvector, then the same full `make ci BASE_REF=origin/master` | PASS |
 | Go vet and all tests | latest local `make ci`; full GitHub Actions `33378359262` at `c2ba3fd` | PASS |
 | Go race | latest local full repository race; GitHub Actions `33378359262` | PASS |
-| Frontend | 4 files, 50 Vitest tests and Vite production build; real-contract catalog-summary purchase hydration, latest-request authentication/catalog/feed/detail/comment-page/reaction/Commerce/chat-stream state, abandoned game-detail/post-create/post-edit/post-delete navigation, cross-view and Commerce-tab error cleanup, abandoned order-history failure isolation, stale-reaction failure isolation, cross-post comment submission/edit/deletion isolation, duplicate-comment prevention, coupon-claim restoration/reservation, post-claim game-filter and mid-checkout coupon-selection preservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
+| Frontend | 4 files, 51 Vitest tests and Vite production build; shared REST/SSE Assistant errors, real-contract catalog-summary purchase hydration, latest-request authentication/catalog/feed/detail/comment-page/reaction/Commerce/chat-stream state, abandoned game-detail/post-create/post-edit/post-delete navigation, cross-view and Commerce-tab error cleanup, abandoned order-history failure isolation, stale-reaction failure isolation, cross-post comment submission/edit/deletion isolation, duplicate-comment prevention, coupon-claim restoration/reservation, post-claim game-filter and mid-checkout coupon-selection preservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
 | Architecture/spec/docs | hooks, architecture, spec drift and link checks | PASS |
 | PostgreSQL | Isolated local PostgreSQL 17 + pgvector 0.8.6 and GitHub Actions `33377050477` passed migrations plus identity, literal Catalog/knowledge search, forum, hidden-post final comment/reaction rejection, promotion, available-coupon reservation, final campaign/price order revalidation, and entitlement integration | PASS |
 | Stale-campaign order regression | `XLH_TEST_DATABASE_URL=<isolated PostgreSQL 17 database URL> go test -run '^TestProductPostgres$' -count=1 -v ./internal/adapter/postgres` | PASS; paused campaign rejected at final order transaction |
@@ -57,6 +57,7 @@ Redis, background Agent, or Java runtime was introduced.
 | Web Search contract | SearXNG identity is fixed to the actual adapter; nonexistent cache/provider-selection surfaces are absent | PASS |
 | Web Search response boundary | SearXNG response bodies are capped at 1 MiB and oversized payloads fail before JSON allocation | PASS |
 | Embedding response boundary | provider response bodies are capped at 64 KiB per requested input and oversized payloads fail before JSON/vector allocation | PASS |
+| Assistant error presentation | REST and SSE extract the shared server message; raw JSON envelopes are not shown to users | PASS |
 | Public-only scan | no private domains/platform names; dependencies resolve from public modules | PASS |
 | Java absence | no Java/Maven/Gradle source or build files | PASS |
 | Isolated migration and full product smoke | rollout T16, `scripts/smoke-product.sh`, GitHub Actions `33378359262` | PASS |

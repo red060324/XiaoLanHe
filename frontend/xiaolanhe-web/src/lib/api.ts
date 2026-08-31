@@ -142,10 +142,20 @@ class APIError extends Error {
 async function request(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(`${resolveApiBaseUrl()}${path}`, { credentials: 'include', ...init });
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
-    throw new APIError(response.status, body?.error?.message ?? `请求失败（${response.status}）`);
+    throw new APIError(response.status, await responseErrorMessage(response, `请求失败（${response.status}）`));
   }
   return response;
+}
+
+async function responseErrorMessage(response: Response, fallback: string): Promise<string> {
+  const text = await response.text();
+  if (!text) return fallback;
+  try {
+    const body = JSON.parse(text) as { error?: { message?: string } } | null;
+    return body?.error?.message ?? fallback;
+  } catch {
+    return text;
+  }
 }
 
 export async function getMe(): Promise<User | null> {
@@ -310,8 +320,7 @@ export async function sendChatMessage(payload: ChatMessageRequest): Promise<Chat
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Request failed with status ${response.status}`);
+    throw new Error(await responseErrorMessage(response, `Request failed with status ${response.status}`));
   }
 
   return response.json() as Promise<ChatMessageResponse>;
@@ -334,8 +343,7 @@ export async function streamChatMessage(
   });
 
   if (!response.ok || !response.body) {
-    const text = await response.text();
-    throw new Error(text || `Stream request failed with status ${response.status}`);
+    throw new Error(await responseErrorMessage(response, `Stream request failed with status ${response.status}`));
   }
 
   const reader = response.body.getReader();
