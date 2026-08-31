@@ -129,6 +129,31 @@ describe('CommunityPage', () => {
     expect(screen.getByRole('heading', { name: 'Second Guide', level: 1 })).toBeInTheDocument();
   });
 
+  it('does not decrement a newer post when an earlier comment deletion finishes', async () => {
+    const firstPost = { ...post, commentCount: 1 };
+    const secondPost = { ...post, id: '10', title: 'Second Guide', commentCount: 4 };
+    const firstComment = { id: '11', postId: post.id, content: 'Delete me', status: 'published' as const, author: user, createdAt: post.createdAt, updatedAt: post.updatedAt };
+    let resolveDelete!: () => void;
+    api.listCommunityPosts.mockResolvedValue({ items: [firstPost, secondPost] });
+    api.getCommunityPost.mockResolvedValueOnce(firstPost).mockResolvedValueOnce(secondPost);
+    api.listCommunityComments.mockResolvedValueOnce({ items: [firstComment] }).mockResolvedValueOnce({ items: [] });
+    api.deleteCommunityComment.mockReturnValue(new Promise<void>((resolve) => { resolveDelete = resolve; }));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    expect(await screen.findByText(firstComment.content)).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: '删除' })[1]);
+    await waitFor(() => expect(api.deleteCommunityComment).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '← 返回社区' }));
+    fireEvent.click(screen.getByRole('button', { name: /Second Guide/ }));
+    expect(await screen.findByRole('heading', { name: '评论 4', level: 2 })).toBeInTheDocument();
+
+    await act(async () => resolveDelete());
+
+    expect(screen.getByRole('heading', { name: '评论 4', level: 2 })).toBeInTheDocument();
+  });
+
   it('sends a guest to login when they choose to publish', async () => {
     const onRequireLogin = vi.fn();
     api.listCommunityPosts.mockResolvedValue({ items: [] });

@@ -208,12 +208,16 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
 
   async function removeComment(id: string) {
     if (!window.confirm('确定删除这条评论吗？')) return;
+    const postId = selectedPostId.current;
+    if (!postId) return;
     try {
       await deleteCommunityComment(id);
+      setPosts((current) => current.map((item) => item.id === postId ? { ...item, commentCount: Math.max(0, item.commentCount - 1) } : item));
+      if (selectedPostId.current !== postId) return;
       setComments((current) => current.filter((item) => item.id !== id));
       setSelectedPost((current) => current ? { ...current, commentCount: Math.max(0, current.commentCount - 1) } : current);
     } catch (requestError) {
-      setError(messageOf(requestError, '评论删除失败'));
+      if (selectedPostId.current === postId) setError(messageOf(requestError, '评论删除失败'));
     }
   }
 

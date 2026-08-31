@@ -47,6 +47,8 @@ truth.
   cursor after another post opens.
 - A completed comment submission from a prior post cannot append to or change
   the comment count of a later selected post.
+- A completed comment deletion updates its original feed item, but cannot
+  remove comments from or decrement a later selected post.
 - A reaction response may refresh its post in the feed, but cannot reopen a
   closed detail or replace a different selected post.
 - A completed post edit may refresh its feed item, but cannot reopen a detail
