@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 
@@ -117,5 +117,22 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
     await waitFor(() => expect(api.streamChatMessage).toHaveBeenCalledTimes(2));
     expect(api.streamChatMessage.mock.calls[1][0].sessionId).not.toBe(aliceSessionId);
+  });
+
+  it('keeps a completed login when the initial identity lookup finishes later', async () => {
+    let resolveMe!: (value: null) => void;
+    api.getMe.mockReturnValue(new Promise<null>((resolve) => { resolveMe = resolve; }));
+    api.login.mockResolvedValue({ id: '2', username: 'bob', displayName: 'Bob', role: 'user' });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: '登录 / 注册' }));
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'bob' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password123' } });
+    fireEvent.submit(screen.getByLabelText('用户名').closest('form')!);
+    expect(await screen.findByRole('button', { name: 'Bob' })).toBeInTheDocument();
+
+    await act(async () => resolveMe(null));
+
+    expect(screen.getByRole('button', { name: 'Bob' })).toBeInTheDocument();
   });
 });

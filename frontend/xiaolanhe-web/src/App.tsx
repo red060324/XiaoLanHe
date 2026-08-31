@@ -86,6 +86,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const conversationStageRef = useRef<HTMLElement | null>(null);
 	const abortRef = useRef<AbortController | null>(null);
+	const authStateVersionRef = useRef(0);
 
   const activeConversation = useMemo(() => {
     return conversations.find((item) => item.id === activeConversationId) ?? conversations[0];
@@ -99,10 +100,16 @@ export default function App() {
   }, [conversations, user?.id]);
 
 	useEffect(() => {
+		const authStateVersion = authStateVersionRef.current;
 		void getMe().then((nextUser) => {
+			if (authStateVersion !== authStateVersionRef.current) return;
 			setUser(nextUser);
 			switchConversationOwner(nextUser?.id);
-		}).catch((requestError) => setError(requestError instanceof Error ? requestError.message : '账号状态加载失败'));
+		}).catch((requestError) => {
+			if (authStateVersion === authStateVersionRef.current) {
+				setError(requestError instanceof Error ? requestError.message : '账号状态加载失败');
+			}
+		});
 		void loadCatalog('');
 		return () => abortRef.current?.abort();
 	}, []);
@@ -292,6 +299,7 @@ export default function App() {
 		setError(null);
 		try {
 			const nextUser = authMode === 'login' ? await login(username, password) : await register(username, displayName, password);
+			authStateVersionRef.current += 1;
 			setUser(nextUser);
 			switchConversationOwner(nextUser.id);
 			setPassword('');
@@ -304,6 +312,7 @@ export default function App() {
 	async function signOut() {
 		try {
 			await logout();
+			authStateVersionRef.current += 1;
 			setUser(null);
 			switchConversationOwner();
 			setView('assistant');
