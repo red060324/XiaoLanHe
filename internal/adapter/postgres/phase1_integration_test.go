@@ -367,6 +367,34 @@ func TestProductPostgres(t *testing.T) {
 		t.Fatalf("paid catalog=%+v err=%v", owned, err)
 	}
 
+	secondGame := saveGame(t, ctx, catalogStore, "order-game-two", 2999)
+	secondOrder, err := orderService.Create(ctx, otherPrincipal, order.CreateInput{EditionID: secondGame.Editions[0].ID, IdempotencyKey: "order-create.02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update purchase_order set created_at='2026-08-31T00:00:00Z' where id=$1`, createdOrder.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update purchase_order set created_at='2026-08-31T00:00:01Z' where id=$1`, secondOrder.Order.ID); err != nil {
+		t.Fatal(err)
+	}
+	orderPage, err := orderService.List(ctx, otherPrincipal, order.ListInput{Limit: 1})
+	if err != nil || len(orderPage.Items) != 1 || orderPage.Items[0].ID != secondOrder.Order.ID || orderPage.NextCursor == "" {
+		t.Fatalf("first order page=%+v err=%v", orderPage, err)
+	}
+	thirdGame := saveGame(t, ctx, catalogStore, "order-game-three", 3999)
+	thirdOrder, err := orderService.Create(ctx, otherPrincipal, order.CreateInput{EditionID: thirdGame.Editions[0].ID, IdempotencyKey: "order-create.03"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update purchase_order set created_at='2026-08-31T00:00:02Z' where id=$1`, thirdOrder.Order.ID); err != nil {
+		t.Fatal(err)
+	}
+	nextOrderPage, err := orderService.List(ctx, otherPrincipal, order.ListInput{Cursor: orderPage.NextCursor, Limit: 1})
+	if err != nil || len(nextOrderPage.Items) != 1 || nextOrderPage.Items[0].ID != createdOrder.ID {
+		t.Fatalf("next order page=%+v err=%v", nextOrderPage, err)
+	}
+
 	singleEntitlementGame := saveGame(t, ctx, catalogStore, "order-single-entitlement", 2499)
 	firstPending, err := orderService.Create(ctx, otherPrincipal, order.CreateInput{EditionID: singleEntitlementGame.Editions[0].ID, IdempotencyKey: "order-single.01"})
 	if err != nil {
@@ -406,34 +434,6 @@ func TestProductPostgres(t *testing.T) {
 	}
 	if duplicatePaid != 1 || duplicateOwned != 1 || duplicatePayments != 1 || duplicateEntitlements != 1 || duplicatePending != 1 {
 		t.Fatalf("duplicate edition paid=%d owned=%d payments=%d entitlements=%d pending=%d", duplicatePaid, duplicateOwned, duplicatePayments, duplicateEntitlements, duplicatePending)
-	}
-
-	secondGame := saveGame(t, ctx, catalogStore, "order-game-two", 2999)
-	secondOrder, err := orderService.Create(ctx, otherPrincipal, order.CreateInput{EditionID: secondGame.Editions[0].ID, IdempotencyKey: "order-create.02"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `update purchase_order set created_at='2026-08-31T00:00:00Z' where id=$1`, createdOrder.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `update purchase_order set created_at='2026-08-31T00:00:01Z' where id=$1`, secondOrder.Order.ID); err != nil {
-		t.Fatal(err)
-	}
-	orderPage, err := orderService.List(ctx, otherPrincipal, order.ListInput{Limit: 1})
-	if err != nil || len(orderPage.Items) != 1 || orderPage.Items[0].ID != secondOrder.Order.ID || orderPage.NextCursor == "" {
-		t.Fatalf("first order page=%+v err=%v", orderPage, err)
-	}
-	thirdGame := saveGame(t, ctx, catalogStore, "order-game-three", 3999)
-	thirdOrder, err := orderService.Create(ctx, otherPrincipal, order.CreateInput{EditionID: thirdGame.Editions[0].ID, IdempotencyKey: "order-create.03"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `update purchase_order set created_at='2026-08-31T00:00:02Z' where id=$1`, thirdOrder.Order.ID); err != nil {
-		t.Fatal(err)
-	}
-	nextOrderPage, err := orderService.List(ctx, otherPrincipal, order.ListInput{Cursor: orderPage.NextCursor, Limit: 1})
-	if err != nil || len(nextOrderPage.Items) != 1 || nextOrderPage.Items[0].ID != createdOrder.ID {
-		t.Fatalf("next order page=%+v err=%v", nextOrderPage, err)
 	}
 }
 
