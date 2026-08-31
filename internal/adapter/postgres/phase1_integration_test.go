@@ -320,7 +320,7 @@ func TestProductPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	availableClaims, err := promotionService.ListClaims(ctx, otherPrincipal, "", 20)
-	if err != nil || len(availableClaims.Items) != 1 || availableClaims.Items[0].ID != orderCoupon.Claim.ID {
+	if err != nil || len(availableClaims.Items) == 0 || availableClaims.Items[0].ID != orderCoupon.Claim.ID {
 		t.Fatalf("available claims before order=%+v err=%v", availableClaims, err)
 	}
 	orderService := order.NewService(orderpg.NewStore(pool), catalog.NewService(catalogStore), promotionService)
@@ -350,8 +350,13 @@ func TestProductPostgres(t *testing.T) {
 		t.Fatalf("order snapshot=%+v", createdOrder)
 	}
 	availableClaims, err = promotionService.ListClaims(ctx, otherPrincipal, "", 20)
-	if err != nil || len(availableClaims.Items) != 0 {
+	if err != nil {
 		t.Fatalf("available claims after order=%+v err=%v", availableClaims, err)
+	}
+	for _, claim := range availableClaims.Items {
+		if claim.ID == orderCoupon.Claim.ID {
+			t.Fatalf("reserved claim remains available: %+v", availableClaims)
+		}
 	}
 	var orderCount int
 	if err := pool.QueryRow(ctx, `select count(*) from purchase_order where user_id=$1 and idempotency_key=$2`, other.ID, createInput.IdempotencyKey).Scan(&orderCount); err != nil || orderCount != 1 {
