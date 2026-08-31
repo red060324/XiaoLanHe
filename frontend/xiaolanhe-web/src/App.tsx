@@ -89,6 +89,14 @@ export default function App() {
 	const authStateVersionRef = useRef(0);
 	const catalogRequestRef = useRef(0);
 
+  function navigate(nextView: View) {
+    if (view === 'discover' && nextView !== 'discover') {
+      catalogRequestRef.current += 1;
+      setCatalogLoading(false);
+    }
+    setView(nextView);
+  }
+
   const activeConversation = useMemo(() => {
     return conversations.find((item) => item.id === activeConversationId) ?? conversations[0];
   }, [activeConversationId, conversations]);
@@ -144,7 +152,7 @@ export default function App() {
 
   function handleNewChat() {
 		abortRef.current?.abort();
-		setView('assistant');
+		navigate('assistant');
     const next = createConversation();
     setConversations((current) => [next, ...current]);
     setActiveConversationId(next.id);
@@ -290,13 +298,18 @@ export default function App() {
 	}
 
 	async function openGame(slug: string) {
+		const request = ++catalogRequestRef.current;
 		setCatalogLoading(true);
 		try {
-			setSelectedGame(await getGame(slug));
+			const game = await getGame(slug);
+			if (request !== catalogRequestRef.current) return;
+			setSelectedGame(game);
 		} catch (requestError) {
-			setError(requestError instanceof Error ? requestError.message : '游戏详情加载失败');
+			if (request === catalogRequestRef.current) {
+				setError(requestError instanceof Error ? requestError.message : '游戏详情加载失败');
+			}
 		} finally {
-			setCatalogLoading(false);
+			if (request === catalogRequestRef.current) setCatalogLoading(false);
 		}
 	}
 
@@ -309,7 +322,7 @@ export default function App() {
 			setUser(nextUser);
 			switchConversationOwner(nextUser.id);
 			setPassword('');
-			setView('assistant');
+			navigate('assistant');
 		} catch (requestError) {
 			setError(requestError instanceof Error ? requestError.message : '认证失败');
 		}
@@ -321,7 +334,7 @@ export default function App() {
 			authStateVersionRef.current += 1;
 			setUser(null);
 			switchConversationOwner();
-			setView('assistant');
+			navigate('assistant');
 		} catch (requestError) {
 			setError(requestError instanceof Error ? requestError.message : '退出登录失败');
 		}
@@ -349,13 +362,13 @@ export default function App() {
               <SidebarToggleIcon collapsed={sidebarCollapsed} />
             </button>
           </div>
-          <button className={`nav-item ${view === 'discover' ? 'active' : ''}`} type="button" onClick={() => setView('discover')}>
+          <button className={`nav-item ${view === 'discover' ? 'active' : ''}`} type="button" onClick={() => navigate('discover')}>
             <span className="nav-icon">⌕</span>{!sidebarCollapsed ? <span>发现游戏</span> : null}
           </button>
-          <button className={`nav-item ${view === 'community' ? 'active' : ''}`} type="button" onClick={() => setView('community')}>
+          <button className={`nav-item ${view === 'community' ? 'active' : ''}`} type="button" onClick={() => navigate('community')}>
             <span className="nav-icon">◎</span>{!sidebarCollapsed ? <span>游戏社区</span> : null}
           </button>
-          <button className={`nav-item ${view === 'commerce' ? 'active' : ''}`} type="button" onClick={() => setView('commerce')}>
+          <button className={`nav-item ${view === 'commerce' ? 'active' : ''}`} type="button" onClick={() => navigate('commerce')}>
             <span className="nav-icon">%</span>{!sidebarCollapsed ? <span>优惠商店</span> : null}
           </button>
           <button className={`nav-item primary ${view === 'assistant' ? 'active' : ''}`} type="button" onClick={handleNewChat}>
@@ -379,7 +392,7 @@ export default function App() {
             <div className="login-card">
               <p className="login-title">{user ? user.displayName : '游客模式'}</p>
               <p className="login-copy">{user ? `@${user.username} · ${user.role}` : '登录后可以领取优惠、购买游戏并查看已拥有内容。'}</p>
-              <button className="login-primary" type="button" onClick={() => user ? void signOut() : setView('account')}>{user ? '退出登录' : '登录 / 注册'}</button>
+              <button className="login-primary" type="button" onClick={() => user ? void signOut() : navigate('account')}>{user ? '退出登录' : '登录 / 注册'}</button>
             </div>
           </div>
         ) : null}
@@ -389,8 +402,8 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-title">{view === 'discover' ? '发现游戏' : view === 'community' ? '游戏社区' : view === 'commerce' ? '优惠商店' : view === 'account' ? '账号' : '游戏助手'}</div>
           <div className="topbar-actions">
-            <button className="outline-button" type="button" onClick={() => setView('discover')}>游戏库</button>
-            <button className="ghost-button" type="button" onClick={() => setView('account')}>{user?.displayName ?? '登录'}</button>
+            <button className="outline-button" type="button" onClick={() => navigate('discover')}>游戏库</button>
+            <button className="ghost-button" type="button" onClick={() => navigate('account')}>{user?.displayName ?? '登录'}</button>
           </div>
         </header>
 
@@ -401,7 +414,7 @@ export default function App() {
             </section>
             <section className="composer-shell">
               <form className="composer-card" onSubmit={handleSubmit}>
-                <button className="composer-add" type="button" aria-label="打开游戏目录" onClick={() => setView('discover')}>+</button>
+                <button className="composer-add" type="button" aria-label="打开游戏目录" onClick={() => navigate('discover')}>+</button>
                 <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="问攻略、版本或社区内容" rows={1} />
                 {loading ? <button className="composer-send" type="button" onClick={() => abortRef.current?.abort()}>停止</button> : <button className="composer-send" type="submit" disabled={!canSubmit}>发送</button>}
               </form>
@@ -430,9 +443,9 @@ export default function App() {
           </section>
         ) : null}
 
-        {view === 'community' ? <CommunityPage user={user} games={games} onRequireLogin={() => setView('account')} /> : null}
+        {view === 'community' ? <CommunityPage user={user} games={games} onRequireLogin={() => navigate('account')} /> : null}
 
-        {view === 'commerce' ? <CommercePage user={user} games={games} onRequireLogin={() => setView('account')} onOwned={() => void loadCatalog(catalogQuery)} /> : null}
+        {view === 'commerce' ? <CommercePage user={user} games={games} onRequireLogin={() => navigate('account')} onOwned={() => void loadCatalog(catalogQuery)} /> : null}
 
         {view === 'account' ? (
           <section className="page-stage auth-stage">

@@ -156,4 +156,21 @@ describe('App', () => {
     expect(screen.getByText('New Game')).toBeInTheDocument();
     expect(screen.queryByText('Old Game')).not.toBeInTheDocument();
   });
+
+  it('does not restore an abandoned game detail after returning to the catalog', async () => {
+    const game = { id: '1', slug: 'old', name: 'Old Game', summary: 'Old summary', owned: false };
+    let resolveGame!: (value: unknown) => void;
+    api.listGames.mockResolvedValue([game]);
+    api.getGame.mockReturnValue(new Promise((resolve) => { resolveGame = resolve; }));
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: '游戏库' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Old Game/ }));
+    fireEvent.click(screen.getByRole('button', { name: '游戏助手' }));
+    await act(async () => resolveGame({ ...game, description: 'Loaded detail' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '游戏库' }));
+    expect(await screen.findByRole('button', { name: /Old Game/ })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Old Game', level: 1 })).not.toBeInTheDocument();
+  });
 });
