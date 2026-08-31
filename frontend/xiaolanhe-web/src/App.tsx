@@ -95,11 +95,14 @@ export default function App() {
   const canSubmit = useMemo(() => input.trim().length > 0 && !loading, [input, loading]);
 
   useEffect(() => {
-    saveConversations(conversations);
-  }, [conversations]);
+    saveConversations(conversations, user?.id);
+  }, [conversations, user?.id]);
 
 	useEffect(() => {
-		void getMe().then(setUser).catch((requestError) => setError(requestError instanceof Error ? requestError.message : '账号状态加载失败'));
+		void getMe().then((nextUser) => {
+			setUser(nextUser);
+			switchConversationOwner(nextUser?.id);
+		}).catch((requestError) => setError(requestError instanceof Error ? requestError.message : '账号状态加载失败'));
 		void loadCatalog('');
 		return () => abortRef.current?.abort();
 	}, []);
@@ -137,6 +140,17 @@ export default function App() {
     const next = createConversation();
     setConversations((current) => [next, ...current]);
     setActiveConversationId(next.id);
+    setInput('');
+    setError(null);
+    setLoading(false);
+  }
+
+  function switchConversationOwner(userId?: string) {
+		abortRef.current?.abort();
+    const existing = loadConversations(userId);
+    const next = existing.length > 0 ? existing : [createConversation()];
+    setConversations(next);
+    setActiveConversationId(next[0].id);
     setInput('');
     setError(null);
     setLoading(false);
@@ -279,6 +293,7 @@ export default function App() {
 		try {
 			const nextUser = authMode === 'login' ? await login(username, password) : await register(username, displayName, password);
 			setUser(nextUser);
+			switchConversationOwner(nextUser.id);
 			setPassword('');
 			setView('assistant');
 		} catch (requestError) {
@@ -290,6 +305,7 @@ export default function App() {
 		try {
 			await logout();
 			setUser(null);
+			switchConversationOwner();
 			setView('assistant');
 		} catch (requestError) {
 			setError(requestError instanceof Error ? requestError.message : '退出登录失败');

@@ -91,4 +91,31 @@ describe('App', () => {
     expect(await screen.findByText('生成失败，请重试。')).toBeInTheDocument();
     expect(screen.getByText('请求失败：assistant unavailable')).toBeInTheDocument();
   });
+
+  it('isolates local conversations when another account signs in', async () => {
+    api.getMe.mockResolvedValue({ id: '1', username: 'alice', displayName: 'Alice', role: 'user' });
+    api.login.mockResolvedValue({ id: '2', username: 'bob', displayName: 'Bob', role: 'user' });
+    api.logout.mockResolvedValue(undefined);
+    render(<App />);
+
+    expect(await screen.findByRole('button', { name: 'Alice' })).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('问攻略、版本或社区内容'), { target: { value: 'Alice 的私人攻略' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(api.streamChatMessage).toHaveBeenCalledOnce());
+    const aliceSessionId = api.streamChatMessage.mock.calls[0][0].sessionId;
+
+    fireEvent.click(screen.getByRole('button', { name: '退出登录' }));
+    await waitFor(() => expect(api.logout).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '登录 / 注册' }));
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'bob' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password123' } });
+    fireEvent.submit(screen.getByLabelText('用户名').closest('form')!);
+    expect(await screen.findByRole('button', { name: 'Bob' })).toBeInTheDocument();
+
+    expect(screen.queryAllByText('Alice 的私人攻略')).toHaveLength(0);
+    fireEvent.change(screen.getByPlaceholderText('问攻略、版本或社区内容'), { target: { value: 'Bob 的问题' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(api.streamChatMessage).toHaveBeenCalledTimes(2));
+    expect(api.streamChatMessage.mock.calls[1][0].sessionId).not.toBe(aliceSessionId);
+  });
 });

@@ -15,9 +15,13 @@ export type ConversationRecord = {
 
 const STORAGE_KEY = 'xiaolanhe_local_conversations';
 
-export function loadConversations(): ConversationRecord[] {
+function storageKey(userId?: string): string {
+  return `${STORAGE_KEY}:${userId ? `user:${userId}` : 'guest'}`;
+}
+
+export function loadConversations(userId?: string): ConversationRecord[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey(userId));
     if (!raw) {
       return [];
     }
@@ -28,8 +32,8 @@ export function loadConversations(): ConversationRecord[] {
   }
 }
 
-export function saveConversations(records: ConversationRecord[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+export function saveConversations(records: ConversationRecord[], userId?: string): void {
+  localStorage.setItem(storageKey(userId), JSON.stringify(records));
 }
 
 export function createConversation(): ConversationRecord {

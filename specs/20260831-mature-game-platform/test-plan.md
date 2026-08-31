@@ -55,6 +55,9 @@ truth.
 
 ## Phase 4: Assistant
 
+- Browser conversation history is partitioned by guest or trusted user ID;
+  changing accounts hides the prior account's messages and cannot reuse its
+  bound session ID.
 - Client-supplied conversation IDs must be UUIDv4 values. Authenticated
   conversations bind to the trusted user ID; a guest conversation may be
   claimed on login, while another user or an anonymous request cannot reuse a
