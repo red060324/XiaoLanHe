@@ -21,6 +21,7 @@ type Edition struct {
 	Code        string
 	Name        string
 	Description string
+	Owned       bool
 	Prices      []Price
 }
 

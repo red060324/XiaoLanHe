@@ -16,7 +16,7 @@ vi.mock('../lib/api', () => api);
 const user: User = { id: '7', username: 'player', displayName: 'Player', role: 'user' };
 const games: Game[] = [{
   id: '3', slug: 'demo', name: 'Demo', summary: '', owned: false,
-  editions: [{ id: '12', code: 'standard', name: 'Standard', price: { amountMinor: 1999, currency: 'USD', region: 'GLOBAL' } }]
+  editions: [{ id: '12', code: 'standard', name: 'Standard', owned: false, price: { amountMinor: 1999, currency: 'USD', region: 'GLOBAL' } }]
 }];
 const deal: Deal = {
   id: '4', code: 'WELCOME20', name: 'Welcome', discountType: 'percentage', percentageBps: 2000,
@@ -76,6 +76,22 @@ describe('CommercePage', () => {
     fireEvent.click(screen.getByRole('button', { name: '购买' }));
     await waitFor(() => expect(api.createOrder).toHaveBeenCalledTimes(2));
     expect(api.createOrder.mock.calls[1][1]).toBe(api.createOrder.mock.calls[0][1]);
+  });
+
+  it('keeps unowned editions purchasable after owning another edition', async () => {
+    const mixedOwnershipGames = [{
+      ...games[0],
+      owned: true,
+      editions: [
+        { ...games[0].editions![0], owned: true },
+        { id: '13', code: 'deluxe', name: 'Deluxe', owned: false, price: { amountMinor: 2999, currency: 'USD', region: 'GLOBAL' } }
+      ]
+    }] as Game[];
+
+    render(<CommercePage user={user} games={mixedOwnershipGames} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    expect(await screen.findByRole('button', { name: '购买' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '已拥有' })).toBeDisabled();
   });
 
   it('keeps a completed payment when an older history request finishes later', async () => {

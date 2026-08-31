@@ -17,7 +17,7 @@ import (
 )
 
 func TestHTTP(t *testing.T) {
-	store := &httpStore{game: entity.Game{ID: 10, Slug: "example-game", Name: "Example Game", Summary: "Summary", Editions: []entity.Edition{{ID: 20, Code: "standard", Name: "Standard", Prices: []entity.Price{{AmountMinor: 5999, Currency: "USD", Region: "GLOBAL"}}}}}}
+	store := &httpStore{game: entity.Game{ID: 10, Slug: "example-game", Name: "Example Game", Summary: "Summary", Owned: true, Editions: []entity.Edition{{ID: 20, Code: "standard", Name: "Standard", Owned: true, Prices: []entity.Price{{AmountMinor: 5999, Currency: "USD", Region: "GLOBAL"}}}}}}
 	router := server.Default()
 	router.Use(httpx.RequestIDMiddleware)
 	NewHTTP(catalog.NewService(store), httpAuthenticator{}, "https://play.example").Register(router)
@@ -27,7 +27,7 @@ func TestHTTP(t *testing.T) {
 		t.Fatalf("status=%d body=%s", list.Code, list.Body.String())
 	}
 	detail := ut.PerformRequest(router.Engine, "GET", "/api/games/example-game", nil)
-	if detail.Code != 200 || !strings.Contains(detail.Body.String(), `"amountMinor":5999`) {
+	if detail.Code != 200 || !strings.Contains(detail.Body.String(), `"editions":[{"id":"20","code":"standard","name":"Standard","owned":true,"price":{"amountMinor":5999`) {
 		t.Fatalf("status=%d body=%s", detail.Code, detail.Body.String())
 	}
 

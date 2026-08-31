@@ -69,6 +69,7 @@ type editionResponse struct {
 	Code        string         `json:"code"`
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
+	Owned       bool           `json:"owned"`
 	Price       *priceResponse `json:"price,omitempty"`
 }
 
@@ -199,7 +200,7 @@ func presentGame(game entity.Game, detail bool) gameResponse {
 	}
 	result.Editions = make([]editionResponse, len(game.Editions))
 	for i, edition := range game.Editions {
-		item := editionResponse{ID: strconv.FormatInt(edition.ID, 10), Code: edition.Code, Name: edition.Name, Description: edition.Description}
+		item := editionResponse{ID: strconv.FormatInt(edition.ID, 10), Code: edition.Code, Name: edition.Name, Description: edition.Description, Owned: edition.Owned}
 		if len(edition.Prices) > 0 {
 			price := edition.Prices[0]
 			item.Price = &priceResponse{AmountMinor: price.AmountMinor, Currency: price.Currency, Region: price.Region}

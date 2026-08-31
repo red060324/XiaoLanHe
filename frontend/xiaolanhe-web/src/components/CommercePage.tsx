@@ -183,8 +183,8 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
         <div className="purchase-list">
           {games.flatMap((game) => (game.editions ?? []).map((edition) => <article key={edition.id}>
             <div><h2>{game.name}</h2><p>{edition.name} · {edition.price ? money(edition.price.amountMinor, edition.price.currency) : '暂未定价'}</p></div>
-            <button type="button" disabled={busy !== '' || game.owned || !edition.price} onClick={() => void checkout(game, edition)}>
-              {game.owned ? '已拥有' : busy === `order:${edition.id}` ? '创建订单中…' : '购买'}
+            <button type="button" disabled={busy !== '' || edition.owned || !edition.price} onClick={() => void checkout(game, edition)}>
+              {edition.owned ? '已拥有' : busy === `order:${edition.id}` ? '创建订单中…' : '购买'}
             </button>
           </article>))}
         </div>

@@ -77,7 +77,7 @@ func (s *Store) FindBySlug(ctx context.Context, slug string, pricing catalog.Pri
 	if err != nil {
 		return entity.Game{}, err
 	}
-	game.Editions, err = s.loadEditions(ctx, game.ID, pricing)
+	game.Editions, err = s.loadEditions(ctx, game.ID, pricing, viewerID)
 	return game, err
 }
 
@@ -149,13 +149,15 @@ func (s *Store) findByID(ctx context.Context, id int64) (entity.Game, error) {
 	if err != nil {
 		return entity.Game{}, err
 	}
-	game.Editions, err = s.loadEditions(ctx, id, catalog.Pricing{Region: "GLOBAL", Currency: "USD"})
+	game.Editions, err = s.loadEditions(ctx, id, catalog.Pricing{Region: "GLOBAL", Currency: "USD"}, 0)
 	return game, err
 }
 
-func (s *Store) loadEditions(ctx context.Context, gameID int64, pricing catalog.Pricing) ([]entity.Edition, error) {
+func (s *Store) loadEditions(ctx context.Context, gameID int64, pricing catalog.Pricing, viewerID int64) ([]entity.Edition, error) {
 	rows, err := s.pool.Query(ctx, `
-		select e.id,e.code,e.name,e.description,p.amount_minor,p.currency,p.region_code
+		select e.id,e.code,e.name,e.description,
+			exists(select 1 from game_entitlement ge where ge.user_id=$4 and ge.edition_id=e.id and ge.status='active'),
+			p.amount_minor,p.currency,p.region_code
 		from game_edition e
 		left join lateral (
 			select amount_minor,currency,region_code from game_price
@@ -163,7 +165,7 @@ func (s *Store) loadEditions(ctx context.Context, gameID int64, pricing catalog.
 				and active_from<=now() and (active_until is null or active_until>now())
 			order by case when region_code=$3 then 0 else 1 end,active_from desc limit 1
 		) p on true
-		where e.game_id=$1 and e.status='active' order by e.id`, gameID, pricing.Currency, pricing.Region)
+		where e.game_id=$1 and e.status='active' order by e.id`, gameID, pricing.Currency, pricing.Region, viewerID)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +175,7 @@ func (s *Store) loadEditions(ctx context.Context, gameID int64, pricing catalog.
 		var edition entity.Edition
 		var amount *int64
 		var currency, region *string
-		if err := rows.Scan(&edition.ID, &edition.Code, &edition.Name, &edition.Description, &amount, &currency, &region); err != nil {
+		if err := rows.Scan(&edition.ID, &edition.Code, &edition.Name, &edition.Description, &edition.Owned, &amount, &currency, &region); err != nil {
 			return nil, err
 		}
 		if amount != nil {

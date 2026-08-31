@@ -35,7 +35,7 @@ export type Game = {
   releaseDate?: string;
   coverUrl?: string;
   owned: boolean;
-  editions?: Array<{ id: string; code: string; name: string; description?: string; price?: Price }>;
+  editions?: Array<{ id: string; code: string; name: string; description?: string; owned: boolean; price?: Price }>;
 };
 
 export type Deal = {

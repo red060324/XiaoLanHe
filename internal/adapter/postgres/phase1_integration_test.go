@@ -121,10 +121,13 @@ func TestProductPostgres(t *testing.T) {
 	catalogStore := catalogpg.NewStore(pool)
 	game, err := catalogStore.Save(ctx, 0, entity.Draft{
 		Slug: "phase-game", Name: "Phase Game",
-		Editions: []entity.EditionDraft{{Code: "standard", Name: "Standard", Prices: []entity.Price{
-			{Region: "GLOBAL", Currency: "USD", AmountMinor: 1999},
-			{Region: "CN", Currency: "CNY", AmountMinor: 9900},
-		}}},
+		Editions: []entity.EditionDraft{
+			{Code: "standard", Name: "Standard", Prices: []entity.Price{
+				{Region: "GLOBAL", Currency: "USD", AmountMinor: 1999},
+				{Region: "CN", Currency: "CNY", AmountMinor: 9900},
+			}},
+			{Code: "deluxe", Name: "Deluxe", Prices: []entity.Price{{Region: "GLOBAL", Currency: "USD", AmountMinor: 2999}}},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +139,7 @@ func TestProductPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found.Owned || len(found.Editions) != 1 || len(found.Editions[0].Prices) != 1 || found.Editions[0].Prices[0].AmountMinor != 9900 {
+	if !found.Owned || len(found.Editions) != 2 || !found.Editions[0].Owned || found.Editions[1].Owned || len(found.Editions[0].Prices) != 1 || found.Editions[0].Prices[0].AmountMinor != 9900 {
 		t.Fatalf("catalog result=%+v", found)
 	}
 	if _, err := catalogStore.Save(ctx, game.ID, entity.Draft{

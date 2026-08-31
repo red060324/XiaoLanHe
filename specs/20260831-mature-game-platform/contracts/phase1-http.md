@@ -112,7 +112,9 @@ Public game shape:
 }
 ```
 
-`owned` is computed for an authenticated principal and is false for guests.
+Game-level `owned` is true when the authenticated principal owns any active
+edition and is false for guests. Detail responses also expose edition-level
+`owned`; clients must use that field for edition purchase availability.
 Inactive games/editions/prices are absent from public responses.
 
 ### `GET /api/games`
@@ -153,7 +155,7 @@ Returns the game shape plus active editions and the selected regional price:
     "releaseDate":"2026-08-31",
     "coverUrl":"https://example.invalid/cover.jpg",
     "owned":false,
-    "editions":[{"id":"200","code":"standard","name":"Standard","price":{"amountMinor":5999,"currency":"USD","region":"GLOBAL"}}]
+    "editions":[{"id":"200","code":"standard","name":"Standard","owned":false,"price":{"amountMinor":5999,"currency":"USD","region":"GLOBAL"}}]
   }
 }
 ```
