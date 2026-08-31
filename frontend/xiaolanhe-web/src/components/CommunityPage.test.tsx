@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import CommunityPage from './CommunityPage';
 
@@ -96,5 +96,26 @@ describe('CommunityPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '登录后发布' }));
 
     expect(onRequireLogin).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the latest game filter when the initial feed load finishes later', async () => {
+    let resolveInitial!: (value: unknown) => void;
+    let resolveFiltered!: (value: unknown) => void;
+    api.listCommunityPosts
+      .mockReturnValueOnce(new Promise((resolve) => { resolveInitial = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveFiltered = resolve; }));
+    render(<CommunityPage user={user} games={[{ id: '3', slug: 'demo', name: 'Demo', summary: '', owned: false }]} onRequireLogin={vi.fn()} />);
+
+    await waitFor(() => expect(api.listCommunityPosts).toHaveBeenCalledWith('', ''));
+    fireEvent.change(screen.getByLabelText('筛选游戏'), { target: { value: '3' } });
+    fireEvent.click(screen.getByRole('button', { name: '筛选' }));
+    await waitFor(() => expect(api.listCommunityPosts).toHaveBeenCalledWith('3', ''));
+
+    await act(async () => resolveFiltered({ items: [{ ...post, id: '10', title: 'Filtered Guide' }] }));
+    expect(await screen.findByText('Filtered Guide')).toBeInTheDocument();
+
+    await act(async () => resolveInitial({ items: [{ ...post, title: 'Old Feed' }] }));
+    expect(screen.getByText('Filtered Guide')).toBeInTheDocument();
+    expect(screen.queryByText('Old Feed')).not.toBeInTheDocument();
   });
 });

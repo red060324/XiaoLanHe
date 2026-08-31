@@ -87,6 +87,7 @@ export default function App() {
   const conversationStageRef = useRef<HTMLElement | null>(null);
 	const abortRef = useRef<AbortController | null>(null);
 	const authStateVersionRef = useRef(0);
+	const catalogRequestRef = useRef(0);
 
   const activeConversation = useMemo(() => {
     return conversations.find((item) => item.id === activeConversationId) ?? conversations[0];
@@ -272,14 +273,19 @@ export default function App() {
   }
 
 	async function loadCatalog(query: string) {
+		const request = ++catalogRequestRef.current;
 		setCatalogLoading(true);
 		setError(null);
 		try {
-			setGames(await listGames(query));
+			const nextGames = await listGames(query);
+			if (request !== catalogRequestRef.current) return;
+			setGames(nextGames);
 		} catch (requestError) {
-			setError(requestError instanceof Error ? requestError.message : '游戏目录加载失败');
+			if (request === catalogRequestRef.current) {
+				setError(requestError instanceof Error ? requestError.message : '游戏目录加载失败');
+			}
 		} finally {
-			setCatalogLoading(false);
+			if (request === catalogRequestRef.current) setCatalogLoading(false);
 		}
 	}
 

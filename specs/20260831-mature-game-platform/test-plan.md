@@ -27,6 +27,7 @@ when introduced. Compilation or an empty test selection is not evidence.
 | V11 | PRE_MERGE | catalog/PostgreSQL | admin aggregate update omits a previously active regional price | omitted price is no longer returned or purchasable; submitted replacement remains active |
 | V12 | PRE_MERGE | catalog/commerce | user owns one of multiple editions | owned edition is marked unavailable; another edition remains purchasable |
 | V13 | PRE_MERGE | frontend | initial identity lookup finishes after a successful login or logout | the latest explicit authentication result remains authoritative |
+| V14 | PRE_MERGE | frontend | initial catalog read finishes after a later search | the latest search result and loading/error state remain authoritative |
 
 Phase-one HTTP assertions use `contracts/phase1-http.md` as the wire source of
 truth.
@@ -37,6 +38,8 @@ truth.
 - Feed/game-feed keyset pagination under concurrent inserts.
 - Reaction create/replay/delete and uniqueness under concurrency.
 - HTTP contracts and frontend create/feed/detail/error flows.
+- An older feed request finishing after a newer game filter cannot replace the
+  filtered posts, cursor, loading state, or error state.
 
 ## Phase 3: Promotion And Commerce
 

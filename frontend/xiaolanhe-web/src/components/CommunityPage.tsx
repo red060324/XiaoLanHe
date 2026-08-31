@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
   CommunityComment,
   CommunityPost,
@@ -44,22 +44,25 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
   const [editingCommentContent, setEditingCommentContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const postRequest = useRef(0);
 
   useEffect(() => {
     void loadPosts('', false);
   }, []);
 
   async function loadPosts(cursor: string, append: boolean) {
+    const request = ++postRequest.current;
     setLoading(true);
     setError(null);
     try {
       const page = await listCommunityPosts(gameId, cursor);
+      if (request !== postRequest.current) return;
       setPosts((current) => append ? [...current, ...page.items] : page.items);
       setNextCursor(page.nextCursor ?? '');
     } catch (requestError) {
-      setError(messageOf(requestError, '社区加载失败'));
+      if (request === postRequest.current) setError(messageOf(requestError, '社区加载失败'));
     } finally {
-      setLoading(false);
+      if (request === postRequest.current) setLoading(false);
     }
   }
 

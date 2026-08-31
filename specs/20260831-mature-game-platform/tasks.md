@@ -39,6 +39,7 @@
 | T31 | PRE_MERGE | DONE | Isolate browser conversation history when the authenticated account changes | AC2, AC8 | failing-then-passing account-switch regression + local `make ci` + GitHub Actions `33371992090` PASS |
 | T32 | PRE_MERGE | DONE | Prevent a stale initial identity lookup from overwriting a completed authentication action | AC2, AC8 | failing-then-passing auth-race regression + local `make ci` + GitHub Actions `33373433217` PASS |
 | T33 | PRE_MERGE | DONE | Restore a user's available coupon claims after navigation or refresh | AC5, AC6 | failing-then-passing frontend remount/API, UseCase/HTTP/PostgreSQL reservation tests; local `make ci`; GitHub Actions `33377050477` PASS |
+| T34 | PRE_MERGE | DONE | Prevent stale catalog and community reads from overwriting newer search/filter state | AC3, AC4, AC10 | failing-then-passing controlled-response frontend regressions; 29 Vitest tests + production build PASS |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent

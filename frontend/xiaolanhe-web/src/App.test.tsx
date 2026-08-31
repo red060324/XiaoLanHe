@@ -135,4 +135,25 @@ describe('App', () => {
 
     expect(screen.getByRole('button', { name: 'Bob' })).toBeInTheDocument();
   });
+
+  it('keeps the latest catalog search when the initial load finishes later', async () => {
+    let resolveInitial!: (value: unknown[]) => void;
+    let resolveSearch!: (value: unknown[]) => void;
+    api.listGames
+      .mockReturnValueOnce(new Promise((resolve) => { resolveInitial = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSearch = resolve; }));
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: '游戏库' }));
+    fireEvent.change(screen.getByLabelText('搜索游戏'), { target: { value: 'new' } });
+    fireEvent.click(screen.getByRole('button', { name: '搜索' }));
+    await waitFor(() => expect(api.listGames).toHaveBeenCalledTimes(2));
+
+    await act(async () => resolveSearch([{ id: '2', slug: 'new', name: 'New Game', summary: '', owned: false }]));
+    expect(await screen.findByText('New Game')).toBeInTheDocument();
+
+    await act(async () => resolveInitial([{ id: '1', slug: 'old', name: 'Old Game', summary: '', owned: false }]));
+    expect(screen.getByText('New Game')).toBeInTheDocument();
+    expect(screen.queryByText('Old Game')).not.toBeInTheDocument();
+  });
 });
