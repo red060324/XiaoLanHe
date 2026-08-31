@@ -23,7 +23,7 @@
 | T15 | PRE_MERGE | DONE | Complete docs, API contracts, readiness report, and full CI | AC10 | public deployment guide + local `make ci` + GitHub Actions `33357654243` PASS |
 | T16 | ROLLOUT | TODO | Run isolated PostgreSQL migrations and product smoke | AC9, AC10 | rollout report |
 | T17 | ROLLOUT | TODO | Run approved real-model/Web smoke and inspect safe traces | AC7, AC8 | rollout report |
-| T18 | FOLLOW_UP | TODO | Add real payment provider, refund, tax, and abuse controls | excluded | separate security/product spec |
+| T18 | FOLLOW_UP | TODO | Add real payment provider, refund, and tax | excluded | abuse protection moved to `../20260831-public-rollout-hardening/`; payment stays a separate spec |
 | T19 | FOLLOW_UP | TODO | Add transactional Agent tools after ordinary commerce is proven | excluded | separate approval/idempotency spec |
 | T20 | PRE_MERGE | DONE | Correct chat log correlation to use the validated request ID | AC10 | failing-then-passing REST/SSE regression tests |
 

@@ -82,7 +82,7 @@ editing applied migrations. Use a reviewed forward migration for schema fixes.
 |---|---|
 | Real model and optional Web output are nondeterministic/cost-bearing | T17 rollout smoke; inspect safe traces and citations |
 | No shared hosted environment has run authenticated/admin full-product smoke | T16 rollout task |
-| Login/claim rate limiting depends on deployment topology | rollout blocker before exposing an untrusted public audience |
+| Public API abuse and provider-cost admission control are not implemented | governed by draft `../20260831-public-rollout-hardening/`; rollout remains blocked pending approval and delivery |
 | Checked-in Render free database expires after 30 days and has no managed backups | demo only; choose durable PostgreSQL and tested backups before persistent rollout |
 | Streamdown keeps the initial Vite chunk near 1 MB | accepted for demo; split only when measured load time matters |
 | Sandbox payment is not a financial integration | explicit product label; real provider requires a separate spec |
