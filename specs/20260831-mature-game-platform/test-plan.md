@@ -100,6 +100,8 @@ truth.
   an error in the community feed or a different post.
 - An order transaction rejects a coupon quote when its campaign is paused or
   expires after quoting but before the order snapshot is written.
+- An order transaction rejects a quoted edition price when the active catalog
+  price changes or becomes unavailable before the order snapshot is written.
 
 ## Phase 4: Assistant
 

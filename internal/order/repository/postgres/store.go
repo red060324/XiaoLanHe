@@ -69,6 +69,30 @@ func (s *Store) Create(ctx context.Context, command order.CreateCommand) (result
 	if owned {
 		return order.CreateResult{}, order.ErrAlreadyOwned
 	}
+	var editionID int64
+	err = tx.QueryRow(ctx, `
+		select e.id from game_edition e join game g on g.id=e.game_id
+		where e.id=$1 and e.status='active' and g.status='active'
+		for share of g,e`, command.Offer.EditionID).Scan(&editionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return order.CreateResult{}, order.ErrPriceUnavailable
+	}
+	if err != nil {
+		return order.CreateResult{}, err
+	}
+	var currentAmount int64
+	err = tx.QueryRow(ctx, `
+		select amount_minor from game_price
+		where edition_id=$1 and currency=$2 and region_code in ($3,'GLOBAL')
+			and active_from<=$4 and (active_until is null or active_until>$4)
+		order by case when region_code=$3 then 0 else 1 end,active_from desc limit 1
+		for share`, editionID, command.Offer.Currency, command.Offer.Region, command.Now).Scan(&currentAmount)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && currentAmount != command.Offer.AmountMinor {
+		return order.CreateResult{}, order.ErrPriceUnavailable
+	}
+	if err != nil {
+		return order.CreateResult{}, err
+	}
 	if command.Quote.ClaimID > 0 {
 		var claimUserID int64
 		var status string

@@ -64,6 +64,7 @@
 | T56 | PRE_MERGE | DONE | Prevent an order-history error from leaking into the deals tab | AC5, AC6, AC10 | failing-then-passing Commerce tab regression; full local `make ci BASE_REF=origin/master` passed with 49 Vitest tests |
 | T57 | PRE_MERGE | DONE | Ignore an order-history failure completed after leaving the orders tab | AC5, AC6, AC10 | failing-then-passing controlled-rejection regression; full local `make ci BASE_REF=origin/master` passed with 50 Vitest tests |
 | T58 | PRE_MERGE | DONE | Revalidate public post status at final comment and reaction writes | AC4, AC10 | failing-then-passing PostgreSQL Store regressions; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
+| T59 | PRE_MERGE | DONE | Revalidate the active edition price at the final order transaction boundary | AC3, AC6, AC10 | failing-then-passing PostgreSQL Store regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent

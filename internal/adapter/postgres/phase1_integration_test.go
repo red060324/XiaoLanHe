@@ -361,6 +361,23 @@ func TestProductPostgres(t *testing.T) {
 	}); !errors.Is(err, order.ErrCouponIneligible) {
 		t.Fatalf("stale coupon order error=%v", err)
 	}
+	stalePriceGame := saveGame(t, ctx, catalogStore, "order-stale-price", 1999)
+	stalePriceOffer, err := catalog.NewService(catalogStore).PurchaseOffer(ctx, stalePriceGame.Editions[0].ID, "GLOBAL", "USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalogStore.Save(ctx, stalePriceGame.ID, entity.Draft{
+		Slug: "order-stale-price", Name: "order-stale-price",
+		Editions: []entity.EditionDraft{{Code: "standard", Name: "Standard", Prices: []entity.Price{{Region: "GLOBAL", Currency: "USD", AmountMinor: 2499}}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orderpg.NewStore(pool).Create(ctx, order.CreateCommand{
+		OrderNo: "ord_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", UserID: other.ID, IdempotencyKey: "order-stale.02",
+		Offer: stalePriceOffer, TotalMinor: stalePriceOffer.AmountMinor, Now: time.Now().UTC(),
+	}); !errors.Is(err, order.ErrPriceUnavailable) {
+		t.Fatalf("stale price order error=%v", err)
+	}
 	createInput := order.CreateInput{EditionID: game.Editions[0].ID, Region: "CN", Currency: "USD", CouponClaimID: orderCoupon.Claim.ID, IdempotencyKey: "order-create.01"}
 	orderResults := make(chan order.CreateResult, 8)
 	orderErrs := make(chan error, 8)
