@@ -47,6 +47,12 @@ per-tool deadline, model-iteration budget, and tool-call budget remain in force.
 Deterministic tool-input errors are `invalid`, not provider failures, and still
 consume one tool call from the bounded budget.
 
+Every successful tool result limits each evidence content field to 800 Unicode
+runes before it enters Agent state or is returned to the model. The Answer Node
+receives evidence as quoted, untrusted data under a fixed system rule and never
+treats instructions embedded in knowledge, forum, catalog, or Web text as
+executable instructions.
+
 ## Citations
 
 Evidence retains source, title, content, and URL through Research and Answer.

@@ -128,6 +128,11 @@ truth.
   observations without being counted as provider failures.
 - Registry contains only read-only knowledge/catalog/forum/optional Web tools;
   mutation-like or unknown tool request is rejected.
+- Retrieved knowledge, catalog, forum, and Web fields are quoted as untrusted
+  data under a fixed Answer Node system rule; instructions inside evidence do
+  not gain prompt authority.
+- Every successful Research tool result caps each evidence content field at 800
+  Unicode runes before it is stored in the run or returned to the model.
 - Knowledge/Web queries are trimmed and reject blank or over-100-rune input
   before storage, embedding, or provider calls; malformed knowledge limits
   return 400 without downstream work.

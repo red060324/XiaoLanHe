@@ -27,6 +27,8 @@ var (
 	errInvalidQuery  = errors.New("query is required")
 )
 
+const maxToolEvidenceRunes = 800
+
 type ResearchLimits struct {
 	TotalTimeout, ToolTimeout   time.Duration
 	MaxIterations, MaxToolCalls int
@@ -325,6 +327,11 @@ func (r *researchRun) runTool(ctx context.Context, provider string, fn func(cont
 		r.mu.Unlock()
 		logTool(ctx, provider, call, "failed", started)
 		return toolObservation{Status: "failed", Provider: provider, Note: "provider temporarily unavailable"}, nil
+	}
+	for i := range evidence {
+		if content := []rune(evidence[i].Content); len(content) > maxToolEvidenceRunes {
+			evidence[i].Content = string(content[:maxToolEvidenceRunes-1]) + "…"
+		}
 	}
 
 	r.mu.Lock()

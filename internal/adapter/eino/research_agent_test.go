@@ -217,6 +217,17 @@ func TestResearchRunRunTool(t *testing.T) {
 		}
 	})
 
+	t.Run("bounds evidence returned to the model", func(t *testing.T) {
+		state := &researchRun{maxTools: 1, toolTimeout: time.Second}
+		observation, err := state.runTool(context.Background(), "forum", func(context.Context) ([]usecase.Evidence, error) {
+			return []usecase.Evidence{{Source: "forum", Content: strings.Repeat("界", 801)}}, nil
+		})
+
+		if err != nil || len([]rune(observation.Evidence[0].Content)) != 800 || len([]rune(state.evidence[0].Content)) != 800 {
+			t.Fatalf("observation runes=%d stored runes=%d err=%v", len([]rune(observation.Evidence[0].Content)), len([]rune(state.evidence[0].Content)), err)
+		}
+	})
+
 	t.Run("classifies deterministic input errors as invalid", func(t *testing.T) {
 		for name, inputErr := range map[string]error{
 			"missing query":         errInvalidQuery,

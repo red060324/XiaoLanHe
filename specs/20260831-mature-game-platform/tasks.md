@@ -72,6 +72,8 @@
 | T64 | PRE_MERGE | DONE | Propagate request cancellation and deadlines from knowledge embedding | AC7, AC8, AC10 | failing-then-passing Knowledge UseCase regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 | T65 | PRE_MERGE | DONE | Equalize missing-account and real-account bcrypt work factors | AC2, AC10 | failing-then-passing Account Login regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 | T66 | PRE_MERGE | DONE | Preserve password work on disabled-account login failures | AC2, AC10 | failing-then-passing Account Login regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
+| T67 | PRE_MERGE | DONE | Treat retrieved evidence as untrusted Answer Node data | AC7, AC10 | failing-then-passing Answer Node prompt-boundary regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
+| T68 | PRE_MERGE | DONE | Bound Research Agent tool evidence content | AC7, AC10 | failing-then-passing shared tool-runner regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent
