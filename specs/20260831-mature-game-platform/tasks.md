@@ -19,7 +19,7 @@
 | T11 | PRE_MERGE | DONE | Implement order, sandbox payment, redemption, and entitlement | AC6 | local `make ci` + GitHub Actions `33354207598` PASS |
 | T12 | PRE_MERGE | DONE | Add Deals/checkout/orders/ownership UI | AC5, AC6 | 21 frontend tests + local `make ci` + GitHub Actions `33354854151` PASS |
 | T13 | PRE_MERGE | DONE | Implement Router/Answer Nodes and bounded Research Agent | AC7, AC8 | deterministic Agent-loop tests + local `make ci` + GitHub Actions `33356038295` PASS |
-| T14 | PRE_MERGE | TODO | Add knowledge/catalog/forum/Web read-only tools and citations | AC7 | tool/contract tests |
+| T14 | PRE_MERGE | DONE | Add knowledge/catalog/forum/Web read-only tools and citations | AC7 | tool/contract/PostgreSQL tests + local `make ci` + GitHub Actions `33356971706` PASS |
 | T15 | PRE_MERGE | TODO | Complete docs, API contracts, readiness report, and full CI | AC10 | report + `make ci` |
 | T16 | ROLLOUT | TODO | Run isolated PostgreSQL migrations and product smoke | AC9, AC10 | rollout report |
 | T17 | ROLLOUT | TODO | Run approved real-model/Web smoke and inspect safe traces | AC7, AC8 | rollout report |

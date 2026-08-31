@@ -4,13 +4,6 @@
 *.log
 /xiaolanhe
 
-deploy/postgres/data/
-deploy/redis/data/
-deploy/minio/data/
-deploy/rocketmq/logs/
-deploy/rocketmq/store/
-deploy/
-
 .idea/
 *.iws
 *.iml

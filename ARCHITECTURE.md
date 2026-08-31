@@ -58,6 +58,8 @@ Chat Entry
        RESEARCH
           -> Research Agent (bounded ReAct loop)
                -> search_knowledge
+               -> search_catalog
+               -> search_forum
                -> search_web when enabled
           -> Answer Node with Evidence
   -> persist conversation
@@ -75,8 +77,8 @@ Definitions:
 
 The outer request lifecycle remains deterministic. Eino ADK is an adapter for
 the Research Agent runtime; Eino types remain private to that boundary.
-Catalog and forum search join this same read-only allowlist when their tool
-adapters land; they are not placeholder Agents or mutation capabilities.
+Catalog and forum search use this same read-only allowlist. They are tools, not
+placeholder Agents or mutation capabilities.
 
 ## Agent Safety And Lifecycle
 

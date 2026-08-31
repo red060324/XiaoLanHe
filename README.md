@@ -11,7 +11,7 @@ Hertz HTTP/SSE
   -> Router Node（一次结构化路由）
        DIRECT/CLARIFY -> Answer Node
        EVIDENCE -> Research Agent（有界 ReAct 工具循环）
-                    -> 本地知识 / 可选公开 Web
+                    -> 本地知识 / 游戏目录 / 社区论坛 / 可选公开 Web
                   -> Answer Node（证据合成）
   -> consumer-owned ports
        -> Eino/OpenAI-compatible 模型
@@ -50,6 +50,10 @@ go run ./cmd/xiaolanhe
 - `GET /api/me`
 - `GET /api/games`、`GET /api/games/:slug`
 - `POST /api/admin/games`、`PUT /api/admin/games/:id`（admin）
+- `GET /api/community/posts`、帖子/评论/反应写接口
+- `GET /api/deals`、`POST /api/coupons/:code/claims`
+- `POST /api/orders`、`GET /api/orders`、`GET /api/orders/:orderNo`
+- `POST /api/orders/:orderNo/payments/sandbox`
 - `POST /api/chat/message`
 - `POST /api/chat/stream`
 - `POST /api/knowledge/documents`（admin）
@@ -75,6 +79,9 @@ go run ./cmd/seed
 3. 创建完成后直接打开 Render 分配的 `onrender.com` 地址。
 
 服务启动时会幂等执行有版本记录的迁移。默认关闭 Web 搜索；接入 SearXNG 后再设置 `XLH_SEARCH_ENABLED=true` 和 `SEARXNG_BASE_URL`。
+Render 会提供可直接访问的 `onrender.com` 子域名，不购买自定义域名也能使用。Docker
+自托管、环境变量、备份、回滚和 smoke 步骤见
+[`docs/guidance/public-deployment.md`](docs/guidance/public-deployment.md)。
 
 ## 验证
 
@@ -90,6 +97,7 @@ readiness → rollout”的流程。入口文档：
 - [`docs/guidance/development-lifecycle.md`](docs/guidance/development-lifecycle.md)
 - [`docs/guidance/spec-driven-development.md`](docs/guidance/spec-driven-development.md)
 - [`docs/guidance/local-verification.md`](docs/guidance/local-verification.md)
+- [`docs/guidance/public-deployment.md`](docs/guidance/public-deployment.md)
 
 历史迁移决策见 [`specs/20260830-clean-architecture-refactor/`](specs/20260830-clean-architecture-refactor/)，当前产品建设计划见
 [`specs/20260831-mature-game-platform/`](specs/20260831-mature-game-platform/)。

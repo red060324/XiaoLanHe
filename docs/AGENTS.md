@@ -8,6 +8,7 @@ Keep current rules here and feature history under `specs/`.
 | `guidance/development-lifecycle.md` | Requirement-to-rollout workflow |
 | `guidance/spec-driven-development.md` | Spec modes, contents and approval gates |
 | `guidance/local-verification.md` | Local/CI commands and evidence rules |
+| `guidance/public-deployment.md` | Public Docker/Render deployment, domain, backup and rollback |
 | `reference/readiness-checklist.md` | Review, merge and rollout checklist |
 | `reference/ai-coding-harness.md` | Public AI Coding execution chain |
 | `reference/spec-template.md` | Feature spec starter |
