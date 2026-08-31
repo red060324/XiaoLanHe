@@ -9,7 +9,7 @@ Keep current rules here and feature history under `specs/`.
 | `guidance/spec-driven-development.md` | Spec modes, contents and approval gates |
 | `guidance/local-verification.md` | Local/CI commands and evidence rules |
 | `reference/readiness-checklist.md` | Review, merge and rollout checklist |
-| `reference/ai-coding-harness.md` | AI Coding execution chain and auto_msg adaptation |
+| `reference/ai-coding-harness.md` | Public AI Coding execution chain |
 | `reference/spec-template.md` | Feature spec starter |
 | `reference/task-template.md` | Classified task starter |
 | `reference/test-plan-template.md` | Verification plan starter |

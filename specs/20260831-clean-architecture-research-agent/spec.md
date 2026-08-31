@@ -106,8 +106,8 @@ pass. Real-model smoke remains a ROLLOUT check.
 The repository provides a discoverable requirement-to-rollout lifecycle,
 spec rules, verification guide, readiness checklist, repo Skill, canonical Make
 commands, architecture/spec-drift hooks, CI gate and pull-request evidence
-template. The documented normal path is executable without ByteDance-internal
-infrastructure.
+template. The documented normal path is executable with public tooling and
+services.
 
 ## Assumptions Requiring Review
 

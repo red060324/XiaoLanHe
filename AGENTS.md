@@ -22,7 +22,7 @@ promotions, orders, and a read-only game assistant.
 | Spec format and review gates | `docs/guidance/spec-driven-development.md` |
 | Local and CI verification | `docs/guidance/local-verification.md` |
 | Review/merge/rollout decision | `docs/reference/readiness-checklist.md` |
-| AI Coding harness and auto_msg mapping | `docs/reference/ai-coding-harness.md` |
+| Public AI Coding harness | `docs/reference/ai-coding-harness.md` |
 
 Before feature, architecture, Agent, or non-trivial refactor work, sync the
 repo-owned Skill from the repository root:

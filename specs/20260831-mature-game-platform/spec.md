@@ -23,7 +23,7 @@ Build one deployable Go modular monolith that combines:
    needed for these capabilities to work as one credible product.
 
 The product should be runnable locally and on an open-source-friendly hosting
-stack without Java or ByteDance-only infrastructure.
+stack without Java or private organization infrastructure.
 
 ## Decisions
 

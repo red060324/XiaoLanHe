@@ -1,7 +1,7 @@
 # AI Coding Harness
 
-XiaoLanHe borrows auto_msg's closed-loop development flow while removing its
-ByteDance-only infrastructure.
+XiaoLanHe keeps its development workflow inside the repository so public
+contributors and coding agents can use the same documented process and checks.
 
 ## Execution Chain
 
@@ -15,34 +15,35 @@ AGENTS.md / ARCHITECTURE.md
   -> report + readiness review
 ```
 
-## auto_msg Sources And XiaoLanHe Adaptation
+## Repository Components
 
-| auto_msg source | Purpose | XiaoLanHe result |
-|---|---|---|
-| `AGENTS.md`, `ARCHITECTURE.md`, module `AGENTS.md` | Progressive repository context | Root map plus durable architecture; add module maps only when modules exist |
-| `docs/guidance/development-lifecycle.md` | Requirement-to-rollout states and human gates | Retained with open-source deployment language |
-| `docs/guidance/spec-driven-development.md` and reference templates | Reviewable intent, design, tasks, tests, evidence | Lite/full specs and four concise templates |
-| `skills/plugins/message-ads-service/` | Repo-owned repeatable workflow | `skills/plugins/xiaolanhe/` with one feature workflow |
-| `sync_repo_skills.py` | Keep checked-in Skill authoritative | Local-only safe sync with an owned lock file |
-| `.hooks/` and `.pre-commit-config.yaml` | Structural backpressure before review | Text, links, placeholders, architecture, and spec drift only |
-| `Makefile` | One command surface for people, agents, and CI | `make verify` and `make ci` |
-| `.codebase/pipelines/ci.yaml` | Clean environment repeats repository gates | `.github/workflows/go.yml` |
-| PR/readiness/report files | Delivery evidence and explicit residual risk | PR template, readiness checklist, report template |
+| Component | Purpose |
+|---|---|
+| `AGENTS.md`, `ARCHITECTURE.md` | Progressive repository context and stable boundaries |
+| `docs/guidance/development-lifecycle.md` | Requirement-to-rollout states and human gates |
+| `docs/guidance/spec-driven-development.md` and templates | Reviewable intent, design, tasks, tests and evidence |
+| `skills/plugins/xiaolanhe/` | One repository-owned repeatable feature workflow |
+| `sync_repo_skills.py` | Install the checked-in Skill into a local agent directory |
+| `.hooks/` and `.pre-commit-config.yaml` | Text, link, placeholder, architecture and spec-drift checks |
+| `Makefile` | One command surface for people, agents and CI |
+| `.github/workflows/go.yml` | Repeat repository gates in a clean public CI environment |
+| PR/readiness/report files | Delivery evidence and explicit residual risk |
 
-## Deliberately Not Copied
+## Public Repository Boundary
 
-- TP, RGO/Overpass, BITS, SCM, PPE, BAM, TCC, and ByteDance authentication.
-- Hooks for historical auto_msg debt or generated-code boundaries.
-- A large-file hook: the checked-in frontend bundle already contains large
-  assets; asset policy should be decided separately.
-- A blanket debug-print ban: frontend warnings and command-line output need a
-  project-specific logging rule before this can be low-noise.
-- More Skills, Agents, generators, or module maps before a repeated workflow
-  proves they are needed.
+- Documentation must stand alone without access to an employer, organization,
+  private document, private issue tracker or private command-line tool.
+- Runtime and CI may use only public open-source packages and public service
+  contracts. Optional hosted providers are configured through environment
+  variables and are replaceable by local implementations.
+- Examples use localhost, reserved example domains or public product URLs.
+- Secrets, credentials, private endpoints and organization-specific project
+  names never enter source control.
+- More Skills, Agents, generators or module maps are added only after a repeated
+  workflow proves they are needed.
 
 ## Adding Backpressure
 
 Use a document for contextual guidance, a test for behavior, a hook for a
 mechanical invariant, and a Skill only for a repeated multi-step workflow.
-Every local check must be runnable without private infrastructure and must also
-run in CI.
+Every local check must be runnable with public tools and must also run in CI.

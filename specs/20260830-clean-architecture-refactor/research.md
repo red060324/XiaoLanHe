@@ -17,7 +17,7 @@ Baseline: master@49004fd55807085939508220fe01e88846fdffd2
 ### A. Keep Java and add Spring AI Alibaba Graph
 
 Pros: least rewrite, retains current Spring AI integrations.
-Cons: preserves the current Java stack, requires careful module surgery, and does not align with the requested Go/auto_msg direction.
+Cons: preserves the current Java stack, requires careful module surgery, and does not align with the requested Go clean-architecture direction.
 
 ### B. Big-bang Go rewrite
 
