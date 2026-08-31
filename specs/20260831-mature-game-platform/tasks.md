@@ -25,6 +25,7 @@
 | T17 | ROLLOUT | TODO | Run approved real-model/Web smoke and inspect safe traces | AC7, AC8 | rollout report |
 | T18 | FOLLOW_UP | TODO | Add real payment provider, refund, tax, and abuse controls | excluded | separate security/product spec |
 | T19 | FOLLOW_UP | TODO | Add transactional Agent tools after ordinary commerce is proven | excluded | separate approval/idempotency spec |
+| T20 | PRE_MERGE | DONE | Correct chat log correlation to use the validated request ID | AC10 | failing-then-passing REST/SSE regression tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent

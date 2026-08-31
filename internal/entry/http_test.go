@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/red060324/XiaoLanHe/internal/platform/auth"
 	"github.com/red060324/XiaoLanHe/internal/platform/httpauth"
+	"github.com/red060324/XiaoLanHe/internal/platform/httpx"
 	"github.com/red060324/XiaoLanHe/internal/usecase"
 )
 
@@ -53,6 +55,22 @@ func TestHTTPMessage(t *testing.T) {
 		)
 		if response.Code != 400 || !strings.Contains(response.Body.String(), "message cannot be blank") {
 			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("logs the validated request ID", func(t *testing.T) {
+		logs, restore := captureDefaultLogger()
+		defer restore()
+		response := ut.PerformRequest(
+			h.server.Engine,
+			"POST",
+			"/api/chat/message",
+			&ut.Body{Body: bytes.NewBufferString(`{"sessionId":"s","message":"hi"}`), Len: -1},
+			ut.Header{Key: "X-Request-ID", Value: "unsafe id"},
+		)
+		requestID := string(response.Header().Peek("X-Request-ID"))
+		if requestID == "" || requestID == "unsafe id" || !strings.Contains(logs.String(), "request_id="+requestID) {
+			t.Fatalf("request ID=%q logs=%q", requestID, logs.String())
 		}
 	})
 }
@@ -95,6 +113,22 @@ func TestHTTPStream(t *testing.T) {
 		}
 		if len(store.roles) != 1 || store.roles[0] != "user" {
 			t.Fatalf("saved roles = %v", store.roles)
+		}
+	})
+
+	t.Run("logs the validated request ID", func(t *testing.T) {
+		logs, restore := captureDefaultLogger()
+		defer restore()
+		h := NewHTTP(":0", usecase.NewChat(&httpStore{}, httpAssistant{}))
+		c := app.NewContext(0)
+		c.Request.Header.Set("X-Request-ID", "unsafe id")
+		httpx.RequestIDMiddleware(context.Background(), c)
+		c.Request.SetBodyString(`{"sessionId":"s","message":"hi"}`)
+		c.Response.HijackWriter(&captureWriter{})
+		h.stream(context.Background(), c)
+		requestID := httpx.RequestID(c)
+		if requestID == "" || requestID == "unsafe id" || !strings.Contains(logs.String(), "request_id="+requestID) {
+			t.Fatalf("request ID=%q logs=%q", requestID, logs.String())
 		}
 	})
 }
@@ -260,3 +294,10 @@ func (w *captureWriter) Flush() error {
 	return nil
 }
 func (*captureWriter) Finalize() error { return nil }
+
+func captureDefaultLogger() (*bytes.Buffer, func()) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	return &output, func() { slog.SetDefault(previous) }
+}

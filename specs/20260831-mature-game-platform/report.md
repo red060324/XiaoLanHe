@@ -44,6 +44,7 @@ Redis, background Agent, or Java runtime was introduced.
 | PostgreSQL | GitHub Actions `33356971706`: migrations, identity, catalog, forum literal search, promotion, commerce | PASS |
 | Seed and container | GitHub Actions `33356971706`: repeated seed, health/readiness/catalog/community/deals/SPA | PASS |
 | Assistant | fake model/tool iteration, partial/all-failed/no-result/budget/cancellation, four-tool allowlist, REST/SSE citations | PASS |
+| Request correlation | invalid client IDs replaced once and the validated ID is shared by response and REST/SSE completion logs | PASS |
 | Public-only scan | no private domains/platform names; dependencies resolve from public modules | PASS |
 | Java absence | no Java/Maven/Gradle source or build files | PASS |
 | Real model/Web and deployed product smoke | rollout tasks T16-T17 | NOT RUN |
@@ -54,11 +55,11 @@ Redis, background Agent, or Java runtime was introduced.
 |---|---|---|
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
-| All product PRE_MERGE behavior | PASS | T1-T14 |
+| All product PRE_MERGE behavior | PASS | T1-T15 and T20 |
 | Final documentation and final clean-checkout CI | PASS | GitHub Actions `33357654243` |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |
-| Observability | PASS | request/result/latency plus Agent route/iteration/tool/stop reason |
+| Observability | PASS | validated request ID, result/latency and Agent route/iteration/tool/stop reason |
 
 ## Architecture And Deliberate Limits
 

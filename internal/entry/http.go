@@ -161,7 +161,7 @@ func (h *HTTP) message(ctx context.Context, c *app.RequestContext) {
 	route := "unknown"
 	defer func() {
 		slog.InfoContext(ctx, "chat request completed",
-			"request_id", string(c.Request.Header.Peek("X-Request-ID")),
+			"request_id", httpx.RequestID(c),
 			"route", route, "node", "answer", "provider", "eino",
 			"result", resultStatus, "latency_ms", time.Since(started).Milliseconds())
 	}()
@@ -187,7 +187,7 @@ func (h *HTTP) stream(ctx context.Context, c *app.RequestContext) {
 	route := "unknown"
 	defer func() {
 		slog.InfoContext(ctx, "chat stream completed",
-			"request_id", string(c.Request.Header.Peek("X-Request-ID")),
+			"request_id", httpx.RequestID(c),
 			"route", route, "node", "answer", "provider", "eino",
 			"result", resultStatus, "latency_ms", time.Since(started).Milliseconds())
 	}()
