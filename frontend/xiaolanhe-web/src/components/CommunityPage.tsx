@@ -117,21 +117,23 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
   async function savePost(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedPost) return;
+    const postId = selectedPost.id;
     setLoading(true);
     setError(null);
     try {
-      const updated = await updateCommunityPost(selectedPost.id, {
+      const updated = await updateCommunityPost(postId, {
         gameId: postGameId || undefined,
         title,
         content
       });
-      setSelectedPost(updated);
       setPosts((current) => current.map((item) => item.id === updated.id ? updated : item));
+      if (selectedPostId.current !== postId) return;
+      setSelectedPost(updated);
       setEditingPost(false);
     } catch (requestError) {
-      setError(messageOf(requestError, '保存失败'));
+      if (selectedPostId.current === postId) setError(messageOf(requestError, '保存失败'));
     } finally {
-      setLoading(false);
+      if (selectedPostId.current === postId) setLoading(false);
     }
   }
 

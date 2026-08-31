@@ -87,6 +87,25 @@ describe('CommunityPage', () => {
     expect(screen.queryByText('detail unavailable')).not.toBeInTheDocument();
   });
 
+  it('does not reopen a post when an earlier edit finishes after returning to the feed', async () => {
+    let resolveUpdate!: (value: unknown) => void;
+    api.updateCommunityPost.mockReturnValue(new Promise((resolve) => { resolveUpdate = resolve; }));
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    await screen.findByRole('heading', { name: 'Boss Guide', level: 1 });
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(api.updateCommunityPost).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '← 返回社区' }));
+
+    await act(async () => resolveUpdate({ ...post, title: 'Updated Guide' }));
+
+    expect(screen.getByRole('heading', { name: '游戏社区', level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Updated Guide', level: 2 })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Updated Guide', level: 1 })).not.toBeInTheDocument();
+  });
+
   it('sends a guest to login when they choose to publish', async () => {
     const onRequireLogin = vi.fn();
     api.listCommunityPosts.mockResolvedValue({ items: [] });

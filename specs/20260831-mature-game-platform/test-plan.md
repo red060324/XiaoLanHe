@@ -49,6 +49,8 @@ truth.
   the comment count of a later selected post.
 - A reaction response may refresh its post in the feed, but cannot reopen a
   closed detail or replace a different selected post.
+- A completed post edit may refresh its feed item, but cannot reopen a detail
+  that the user closed while the save was pending.
 - Repeated comment form submission while the first request is pending creates
   one comment request and exposes a disabled progress state.
 
