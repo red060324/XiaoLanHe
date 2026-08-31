@@ -121,5 +121,7 @@ sandbox-paid order, and an entitlement. Omit `XLH_SMOKE_ADMIN_PASSWORD` to skip
 the admin catalog-write case. Do not run it against an environment where this
 demo data is unwanted.
 
-Authenticated/admin product smoke and real model/Web smoke remain explicit
-rollout actions because they use credentials and may create data or incur cost.
+Hosted-environment authenticated/admin smoke and real model/Web smoke remain
+explicit rollout actions because they use credentials, create data, or may
+incur cost. The repository CI runs the same product script only against its
+disposable isolated database.

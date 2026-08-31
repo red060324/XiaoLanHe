@@ -21,7 +21,7 @@
 | T13 | PRE_MERGE | DONE | Implement Router/Answer Nodes and bounded Research Agent | AC7, AC8 | deterministic Agent-loop tests + local `make ci` + GitHub Actions `33356038295` PASS |
 | T14 | PRE_MERGE | DONE | Add knowledge/catalog/forum/Web read-only tools and citations | AC7 | tool/contract/PostgreSQL tests + local `make ci` + GitHub Actions `33356971706` PASS |
 | T15 | PRE_MERGE | DONE | Complete docs, API contracts, readiness report, and full CI | AC10 | public deployment guide + local `make ci` + GitHub Actions `33357654243` PASS |
-| T16 | ROLLOUT | TODO | Run isolated PostgreSQL migrations and product smoke | AC9, AC10 | rollout report |
+| T16 | ROLLOUT | DONE | Run isolated PostgreSQL migrations and product smoke | AC9, AC10 | repeat seed + full account/admin catalog/community/coupon/order/payment/entitlement container smoke; GitHub Actions `33378359262` PASS |
 | T17 | ROLLOUT | TODO | Run approved real-model/Web smoke and inspect safe traces | AC7, AC8 | rollout report |
 | T18 | FOLLOW_UP | TODO | Add real payment provider, refund, and tax | excluded | abuse protection moved to `../20260831-public-rollout-hardening/`; payment stays a separate spec |
 | T19 | FOLLOW_UP | TODO | Add transactional Agent tools after ordinary commerce is proven | excluded | separate approval/idempotency spec |

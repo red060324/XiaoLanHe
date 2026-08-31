@@ -37,20 +37,21 @@ Redis, background Agent, or Java runtime was introduced.
 
 | Gate | Evidence | Result |
 |---|---|---|
-| Latest local full command | `make ci`: Go tests, full race, frontend tests/build, hooks, architecture and spec drift | PASS |
-| Go vet and all tests | local `make ci`; full GitHub Actions `33377050477` at `68dddc5` | PASS |
-| Go race | local full repository race; GitHub Actions `33377050477` | PASS |
+| Latest local full command | `make ci BASE_REF=origin/master` at `c2ba3fd`: Go tests, full race, frontend tests/build, hooks, architecture and spec drift | PASS |
+| Go vet and all tests | local `make ci`; full GitHub Actions `33378359262` at `c2ba3fd` | PASS |
+| Go race | local full repository race; GitHub Actions `33378359262` | PASS |
 | Frontend | 4 files, 27 Vitest tests and Vite production build; coupon-claim restoration/reservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
 | Architecture/spec/docs | hooks, architecture, spec drift and link checks | PASS |
 | PostgreSQL | GitHub Actions `33377050477` passed migrations plus identity, forum, promotion, available-coupon reservation, order and entitlement integration | PASS |
-| Seed and container | GitHub Actions `33377050477`: repeated seed, health/readiness/catalog/community/deals/SPA | PASS |
+| Seed and container | GitHub Actions `33378359262`: repeated seed, health/readiness/SPA, account, admin catalog, community post/comment/reaction, coupon claim/replay/reservation, order create/replay, sandbox payment/replay, entitlement/ownership and logout | PASS |
 | Assistant | Browser history isolation, UUIDv4/session ownership, fake model/tool iteration, historical-context boundary, failure/budget/cancellation, four-tool allowlist, REST/SSE citations | PASS |
 | Request correlation | invalid client IDs replaced once and the validated ID is shared by response and REST/SSE completion logs | PASS |
 | Search input boundary | query trim/blank/100-rune checks and knowledge limit 1-10; invalid requests prove zero downstream calls | PASS |
 | Web Search contract | SearXNG identity is fixed to the actual adapter; nonexistent cache/provider-selection surfaces are absent | PASS |
 | Public-only scan | no private domains/platform names; dependencies resolve from public modules | PASS |
 | Java absence | no Java/Maven/Gradle source or build files | PASS |
-| Real model/Web and deployed product smoke | rollout tasks T16-T17 | NOT RUN |
+| Isolated migration and full product smoke | rollout T16, `scripts/smoke-product.sh`, GitHub Actions `33378359262` | PASS |
+| Real model/Web and hosted-environment smoke | rollout task T17 | NOT RUN |
 
 ## Readiness Checklist
 
@@ -86,7 +87,7 @@ editing applied migrations. Use a reviewed forward migration for schema fixes.
 | Risk | Disposition |
 |---|---|
 | Real model and optional Web output are nondeterministic/cost-bearing | T17 rollout smoke; inspect safe traces and citations |
-| No shared hosted environment has run authenticated/admin full-product smoke | T16 rollout task |
+| No shared hosted environment has run authenticated/admin full-product smoke | isolated T16 passed; hosted target still requires explicit approval |
 | Public API abuse and provider-cost admission control are not implemented | governed by draft `../20260831-public-rollout-hardening/`; rollout remains blocked pending approval and delivery |
 | Checked-in Render free database expires after 30 days and has no managed backups | demo only; choose durable PostgreSQL and tested backups before persistent rollout |
 | Streamdown keeps the initial Vite chunk near 1 MB | accepted for demo; split only when measured load time matters |
@@ -96,4 +97,4 @@ editing applied migrations. Use a reviewed forward migration for schema fixes.
 
 - Ready for review: yes.
 - Ready for merge: yes; all PRE_MERGE tasks and final clean-checkout CI pass.
-- Ready for rollout: no; T16-T17 and abuse protection remain explicit rollout work.
+- Ready for rollout: no; T17 and abuse protection remain explicit rollout work.
