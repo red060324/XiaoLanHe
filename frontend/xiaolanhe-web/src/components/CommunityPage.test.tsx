@@ -351,4 +351,21 @@ describe('CommunityPage', () => {
     expect(screen.getByRole('heading', { name: '游戏社区', level: 1 })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Boss Guide', level: 1 })).not.toBeInTheDocument();
   });
+
+  it('ignores an older reaction failure after returning to the feed', async () => {
+    let rejectReaction!: (reason?: unknown) => void;
+    api.setCommunityReaction.mockReturnValue(new Promise((_resolve, reject) => { rejectReaction = reject; }));
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    await screen.findByRole('heading', { name: 'Boss Guide', level: 1 });
+    fireEvent.click(screen.getByRole('button', { name: '赞 0' }));
+    await waitFor(() => expect(api.setCommunityReaction).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '← 返回社区' }));
+
+    await act(async () => rejectReaction(new Error('reaction unavailable')));
+
+    expect(screen.getByRole('heading', { name: '游戏社区', level: 1 })).toBeInTheDocument();
+    expect(screen.queryByText('reaction unavailable')).not.toBeInTheDocument();
+  });
 });

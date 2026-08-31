@@ -89,6 +89,8 @@ truth.
   from the filter captured when the claim started.
 - Navigating away from a failed view clears that view's error instead of
   displaying it on the Catalog, Assistant, Account, or Commerce page.
+- A reaction failure completed after the user leaves its post cannot surface
+  an error in the community feed or a different post.
 - An order transaction rejects a coupon quote when its campaign is paused or
   expires after quoting but before the order snapshot is written.
 

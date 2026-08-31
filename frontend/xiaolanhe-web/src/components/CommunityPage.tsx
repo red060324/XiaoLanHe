@@ -239,7 +239,7 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
       setSelectedPost((current) => current?.id === postId ? { ...current, ...summary } : current);
       setPosts((current) => current.map((item) => item.id === postId ? { ...item, ...summary } : item));
     } catch (requestError) {
-      setError(messageOf(requestError, '反应更新失败'));
+      if (selectedPostId.current === postId) setError(messageOf(requestError, '反应更新失败'));
     }
   }
 
