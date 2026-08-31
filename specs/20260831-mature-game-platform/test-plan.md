@@ -45,6 +45,9 @@ truth.
 - Order uses server price, rejects client price/currency, stores snapshots, and
   rejects invalid transitions.
 - Payment replay creates one payment, one redemption, and one entitlement.
+- Concurrent payments for two pending orders of the same user and edition yield
+  one paid order and one `already_owned` failure; the rejected order remains
+  pending with no payment.
 - Cross-user order access is forbidden; history pagination remains stable.
 - Frontend Deals/checkout/orders/owned states and error recovery.
 

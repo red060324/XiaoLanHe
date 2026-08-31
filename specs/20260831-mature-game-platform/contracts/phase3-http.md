@@ -125,6 +125,10 @@ the same paid order with `"replayed": true`. A different payment key after the
 order is paid returns `409 invalid_order_state`. No financial provider is
 contacted.
 
+If multiple pending orders exist for the same user and edition, at most one can
+complete payment. Concurrent confirmations yield one paid order; the other
+returns `409 already_owned`, stays pending, and records no payment.
+
 Order errors distinguish `order_not_found`, `price_unavailable`,
 `coupon_ineligible`, `already_owned`, `invalid_order_state`, and `forbidden`
 without exposing SQL or provider details.

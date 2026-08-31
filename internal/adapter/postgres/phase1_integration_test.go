@@ -367,6 +367,47 @@ func TestProductPostgres(t *testing.T) {
 		t.Fatalf("paid catalog=%+v err=%v", owned, err)
 	}
 
+	singleEntitlementGame := saveGame(t, ctx, catalogStore, "order-single-entitlement", 2499)
+	firstPending, err := orderService.Create(ctx, otherPrincipal, order.CreateInput{EditionID: singleEntitlementGame.Editions[0].ID, IdempotencyKey: "order-single.01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPending, err := orderService.Create(ctx, otherPrincipal, order.CreateInput{EditionID: singleEntitlementGame.Editions[0].ID, IdempotencyKey: "order-single.02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicatePaymentErrs := make(chan error, 2)
+	for index, pending := range []order.CreateResult{firstPending, secondPending} {
+		go func(index int, orderNo string) {
+			_, err := orderService.Pay(ctx, otherPrincipal, orderNo, "payment-single.0"+strconv.Itoa(index+1))
+			duplicatePaymentErrs <- err
+		}(index, pending.Order.OrderNo)
+	}
+	duplicatePaid, duplicateOwned := 0, 0
+	for range 2 {
+		switch err := <-duplicatePaymentErrs; {
+		case err == nil:
+			duplicatePaid++
+		case errors.Is(err, order.ErrAlreadyOwned):
+			duplicateOwned++
+		default:
+			t.Fatalf("duplicate edition payment error=%v", err)
+		}
+	}
+	var duplicatePayments, duplicateEntitlements, duplicatePending int
+	if err := pool.QueryRow(ctx, `select count(*) from payment_record where order_id in ($1,$2)`, firstPending.Order.ID, secondPending.Order.ID).Scan(&duplicatePayments); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) from game_entitlement where user_id=$1 and edition_id=$2 and status='active'`, other.ID, singleEntitlementGame.Editions[0].ID).Scan(&duplicateEntitlements); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) from purchase_order where id in ($1,$2) and status='pending_payment'`, firstPending.Order.ID, secondPending.Order.ID).Scan(&duplicatePending); err != nil {
+		t.Fatal(err)
+	}
+	if duplicatePaid != 1 || duplicateOwned != 1 || duplicatePayments != 1 || duplicateEntitlements != 1 || duplicatePending != 1 {
+		t.Fatalf("duplicate edition paid=%d owned=%d payments=%d entitlements=%d pending=%d", duplicatePaid, duplicateOwned, duplicatePayments, duplicateEntitlements, duplicatePending)
+	}
+
 	secondGame := saveGame(t, ctx, catalogStore, "order-game-two", 2999)
 	secondOrder, err := orderService.Create(ctx, otherPrincipal, order.CreateInput{EditionID: secondGame.Editions[0].ID, IdempotencyKey: "order-create.02"})
 	if err != nil {
