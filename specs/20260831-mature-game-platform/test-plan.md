@@ -71,6 +71,8 @@ truth.
 - Chat context excludes the current message while user-before-model and
   assistant-after-success persistence order remains intact; no partial
   assistant persistence occurs on failure.
+- A non-abort stream failure replaces an empty provisional assistant message
+  with an explicit failure state while retaining any partial response.
 - Logs/traces exclude full messages, prompts, tokens, cookies, and passwords.
 - Real model/Web calls remain ROLLOUT and never substitute for deterministic
   PRE_MERGE tests.

@@ -80,4 +80,15 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '游戏助手' }));
     expect(signal?.aborted).toBe(true);
   });
+
+  it('shows a failure message when the stream fails before replying', async () => {
+    api.streamChatMessage.mockRejectedValue(new Error('assistant unavailable'));
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText('问攻略、版本或社区内容'), { target: { value: '攻略' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('生成失败，请重试。')).toBeInTheDocument();
+    expect(screen.getByText('请求失败：assistant unavailable')).toBeInTheDocument();
+  });
 });

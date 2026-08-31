@@ -230,6 +230,20 @@ export default function App() {
 		}
       const message = requestError instanceof Error ? requestError.message : '请求失败';
       setError(message);
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === activeConversation.id
+            ? {
+                ...conversation,
+                messages: conversation.messages.map((message) =>
+                  message.id === assistantId && message.content === ''
+                    ? { ...message, content: '生成失败，请重试。' }
+                    : message
+                )
+              }
+            : conversation
+        )
+      );
     } finally {
 		abortRef.current = null;
       setLoading(false);
