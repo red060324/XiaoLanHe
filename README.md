@@ -1,6 +1,6 @@
 # XiaoLanHe
 
-小蓝盒使用 Go 1.23、CloudWeGo Hertz/Eino、React 和 PostgreSQL/pgvector，按业务模块组织整洁架构。目前第一阶段已包含账号、游戏目录和只读游戏助手。
+小蓝盒使用 Go 1.23、CloudWeGo Hertz/Eino、React 和 PostgreSQL/pgvector，按业务模块组织整洁架构。目前已包含账号、游戏目录、社区、优惠券、沙箱订单和只读游戏助手。
 
 ## 当前架构
 
@@ -8,15 +8,17 @@
 Hertz HTTP/SSE
   -> Presenter（协议校验与 DTO）
   -> Chat UseCase（会话、调用顺序、完整回答落库）
-  -> Orchestrator（路由与检索计划）
-  -> Research（有界并发检索与确定性融合）
-  -> Answer Node（直接回答或证据合成）
+  -> Router Node（一次结构化路由）
+       DIRECT/CLARIFY -> Answer Node
+       EVIDENCE -> Research Agent（有界 ReAct 工具循环）
+                    -> 本地知识 / 可选公开 Web
+                  -> Answer Node（证据合成）
   -> consumer-owned ports
        -> Eino/OpenAI-compatible 模型
        -> pgx/PostgreSQL
 ```
 
-Orchestrator Agent 负责意图与主路由，Research Agent 负责查询分解和数据源选择；检索执行器将本地 pgvector/关键词结果与 Web 结果做最多 4 路并发、最多 6 个查询的确定性融合。Answer、Embedding 和 RRF 是普通节点。个性化 Planning Agent 仍属于独立产品需求。
+Router 和 Answer 都是单次、有界的模型节点。只有 Research 是 Agent：它能读取工具结果、改写查询并继续调用下一个只读工具。每次请求默认最多 6 次模型迭代、8 次工具调用、总计 30 秒；取消会传递到模型和工具。当前没有任何领券、下单、支付或社区写入工具。
 
 ## 运行
 
@@ -29,6 +31,10 @@ export XLH_AI_BASE_URL='https://dashscope.aliyuncs.com/compatible-mode/v1'
 export XLH_AI_CHAT_MODEL='qwen3.5-flash'
 export XLH_AI_EMBEDDING_MODEL='text-embedding-v4'
 export XLH_AI_TIMEOUT='60s'
+export XLH_RESEARCH_TIMEOUT='30s'
+export XLH_RESEARCH_TOOL_TIMEOUT='10s'
+export XLH_RESEARCH_MAX_ITERATIONS='6'
+export XLH_RESEARCH_MAX_TOOL_CALLS='8'
 export XLH_SEARCH_ENABLED='true'
 export SEARXNG_BASE_URL='http://127.0.0.1:8080'
 export XLH_COOKIE_SECURE='false' # 仅本地 HTTP

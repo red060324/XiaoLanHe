@@ -28,7 +28,7 @@ func TestLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Address != ":10000" || cfg.DatabaseURL != "postgres://database" || cfg.AIAPIKey != "key" || cfg.AIModel != "model" || cfg.AITimeout != 60*time.Second || cfg.DirectPrompt != "direct prompt" || cfg.AIBaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
+	if cfg.Address != ":10000" || cfg.DatabaseURL != "postgres://database" || cfg.AIAPIKey != "key" || cfg.AIModel != "model" || cfg.AITimeout != 60*time.Second || cfg.DirectPrompt != "direct prompt" || cfg.AIBaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" || cfg.ResearchTimeout != 30*time.Second || cfg.ResearchToolTimeout != 10*time.Second || cfg.ResearchMaxIterations != 6 || cfg.ResearchMaxToolCalls != 8 {
 		t.Fatalf("config = %#v", cfg)
 	}
 
@@ -60,6 +60,22 @@ func TestLoad(t *testing.T) {
 		t.Setenv("XLH_AI_TIMEOUT", "0s")
 		if _, err := Load(); err == nil || err.Error() != "XLH_AI_TIMEOUT must be positive" {
 			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("rejects invalid research budgets", func(t *testing.T) {
+		for key, value := range map[string]string{
+			"XLH_RESEARCH_TIMEOUT":        "0s",
+			"XLH_RESEARCH_TOOL_TIMEOUT":   "later",
+			"XLH_RESEARCH_MAX_ITERATIONS": "0",
+			"XLH_RESEARCH_MAX_TOOL_CALLS": "many",
+		} {
+			t.Run(key, func(t *testing.T) {
+				t.Setenv(key, value)
+				if _, err := Load(); err == nil {
+					t.Fatal("expected budget validation error")
+				}
+			})
 		}
 	})
 }

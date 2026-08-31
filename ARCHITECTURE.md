@@ -46,7 +46,7 @@ Consumer packages own the narrow contracts they need. Do not add forwarding
 wrappers or one-implementation interfaces solely to make the directory tree
 look architectural.
 
-## Assistant Target
+## Assistant Runtime
 
 ```text
 Chat Entry
@@ -58,8 +58,6 @@ Chat Entry
        RESEARCH
           -> Research Agent (bounded ReAct loop)
                -> search_knowledge
-               -> search_forum
-               -> search_game
                -> search_web when enabled
           -> Answer Node with Evidence
   -> persist conversation
@@ -77,6 +75,8 @@ Definitions:
 
 The outer request lifecycle remains deterministic. Eino ADK is an adapter for
 the Research Agent runtime; Eino types remain private to that boundary.
+Catalog and forum search join this same read-only allowlist when their tool
+adapters land; they are not placeholder Agents or mutation capabilities.
 
 ## Agent Safety And Lifecycle
 
@@ -100,4 +100,3 @@ The HTTP server, ordinary business modules and Assistant Agent run in the same
 Go process. Each user request creates an independent Agent run. A separate
 Agent service is justified only by long-running/background execution,
 independent scaling, unsafe tool isolation, or materially different SLOs.
-

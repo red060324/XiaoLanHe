@@ -4,28 +4,33 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	Address         string
-	DatabaseURL     string
-	AIBaseURL       string
-	AIAPIKey        string
-	AIModel         string
-	AITimeout       time.Duration
-	DirectPrompt    string
-	PlanningPrompt  string
-	ResearchPrompt  string
-	SynthesisPrompt string
-	EmbeddingModel  string
-	SearchEnabled   bool
-	SearchProvider  string
-	SearchEndpoint  string
-	SearchTimeout   time.Duration
-	CookieSecure    bool
-	PublicOrigin    string
+	Address               string
+	DatabaseURL           string
+	AIBaseURL             string
+	AIAPIKey              string
+	AIModel               string
+	AITimeout             time.Duration
+	DirectPrompt          string
+	PlanningPrompt        string
+	ResearchPrompt        string
+	SynthesisPrompt       string
+	EmbeddingModel        string
+	ResearchTimeout       time.Duration
+	ResearchToolTimeout   time.Duration
+	ResearchMaxIterations int
+	ResearchMaxToolCalls  int
+	SearchEnabled         bool
+	SearchProvider        string
+	SearchEndpoint        string
+	SearchTimeout         time.Duration
+	CookieSecure          bool
+	PublicOrigin          string
 }
 
 func Load() (Config, error) {
@@ -39,6 +44,22 @@ func Load() (Config, error) {
 	searchTimeout, err := time.ParseDuration(env("XLH_SEARCH_TIMEOUT", "10s"))
 	if err != nil || searchTimeout <= 0 {
 		return Config{}, errors.New("XLH_SEARCH_TIMEOUT must be a positive duration")
+	}
+	researchTimeout, err := positiveDuration("XLH_RESEARCH_TIMEOUT", "30s")
+	if err != nil {
+		return Config{}, err
+	}
+	researchToolTimeout, err := positiveDuration("XLH_RESEARCH_TOOL_TIMEOUT", "10s")
+	if err != nil {
+		return Config{}, err
+	}
+	researchMaxIterations, err := positiveInt("XLH_RESEARCH_MAX_ITERATIONS", 6)
+	if err != nil {
+		return Config{}, err
+	}
+	researchMaxToolCalls, err := positiveInt("XLH_RESEARCH_MAX_TOOL_CALLS", 8)
+	if err != nil {
+		return Config{}, err
 	}
 	promptPath := env("XLH_DIRECT_PROMPT_FILE", "prompts/main-agent-direct.md")
 	prompt, err := os.ReadFile(promptPath)
@@ -59,23 +80,27 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		Address:         listenAddress(),
-		DatabaseURL:     os.Getenv("XLH_DATABASE_URL"),
-		AIBaseURL:       normalizeAIBaseURL(env("XLH_AI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")),
-		AIAPIKey:        first(os.Getenv("XLH_AI_API_KEY"), os.Getenv("DASHSCOPE_API_KEY")),
-		AIModel:         env("XLH_AI_CHAT_MODEL", "qwen3.5-flash"),
-		AITimeout:       timeout,
-		DirectPrompt:    string(prompt),
-		PlanningPrompt:  string(planningPrompt),
-		ResearchPrompt:  string(researchPrompt),
-		SynthesisPrompt: string(synthesisPrompt),
-		EmbeddingModel:  env("XLH_AI_EMBEDDING_MODEL", "text-embedding-v4"),
-		SearchEnabled:   strings.EqualFold(env("XLH_SEARCH_ENABLED", "true"), "true"),
-		SearchProvider:  env("XLH_SEARCH_PROVIDER", "searxng"),
-		SearchEndpoint:  env("SEARXNG_BASE_URL", "http://127.0.0.1:8080"),
-		SearchTimeout:   searchTimeout,
-		CookieSecure:    !strings.EqualFold(env("XLH_COOKIE_SECURE", "true"), "false"),
-		PublicOrigin:    strings.TrimRight(os.Getenv("XLH_PUBLIC_ORIGIN"), "/"),
+		Address:               listenAddress(),
+		DatabaseURL:           os.Getenv("XLH_DATABASE_URL"),
+		AIBaseURL:             normalizeAIBaseURL(env("XLH_AI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")),
+		AIAPIKey:              first(os.Getenv("XLH_AI_API_KEY"), os.Getenv("DASHSCOPE_API_KEY")),
+		AIModel:               env("XLH_AI_CHAT_MODEL", "qwen3.5-flash"),
+		AITimeout:             timeout,
+		DirectPrompt:          string(prompt),
+		PlanningPrompt:        string(planningPrompt),
+		ResearchPrompt:        string(researchPrompt),
+		SynthesisPrompt:       string(synthesisPrompt),
+		EmbeddingModel:        env("XLH_AI_EMBEDDING_MODEL", "text-embedding-v4"),
+		ResearchTimeout:       researchTimeout,
+		ResearchToolTimeout:   researchToolTimeout,
+		ResearchMaxIterations: researchMaxIterations,
+		ResearchMaxToolCalls:  researchMaxToolCalls,
+		SearchEnabled:         strings.EqualFold(env("XLH_SEARCH_ENABLED", "true"), "true"),
+		SearchProvider:        env("XLH_SEARCH_PROVIDER", "searxng"),
+		SearchEndpoint:        env("SEARXNG_BASE_URL", "http://127.0.0.1:8080"),
+		SearchTimeout:         searchTimeout,
+		CookieSecure:          !strings.EqualFold(env("XLH_COOKIE_SECURE", "true"), "false"),
+		PublicOrigin:          strings.TrimRight(os.Getenv("XLH_PUBLIC_ORIGIN"), "/"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("XLH_DATABASE_URL is required")
@@ -84,6 +109,22 @@ func Load() (Config, error) {
 		return Config{}, errors.New("XLH_AI_API_KEY or DASHSCOPE_API_KEY is required")
 	}
 	return cfg, nil
+}
+
+func positiveDuration(key, fallback string) (time.Duration, error) {
+	value, err := time.ParseDuration(env(key, fallback))
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration", key)
+	}
+	return value, nil
+}
+
+func positiveInt(key string, fallback int) (int, error) {
+	value, err := strconv.Atoi(env(key, strconv.Itoa(fallback)))
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return value, nil
 }
 
 func listenAddress() string {
