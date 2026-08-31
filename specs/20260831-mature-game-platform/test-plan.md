@@ -92,6 +92,8 @@ truth.
   claimed on login, while another user or an anonymous request cannot reuse a
   bound conversation.
 - Router structured direct/clarify/research decisions and deterministic fallback.
+- Direct, clarify, and evidence answers retain bounded prior conversation
+  context while excluding the current message from that history.
 - Research one/multiple/refined tool calls, no result, partial failure, all
   failure, max iterations, max tool calls, deadline, and cancellation.
 - Deterministic Knowledge/Web/Catalog/Forum input errors produce `invalid`

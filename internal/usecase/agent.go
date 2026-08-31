@@ -118,7 +118,6 @@ func (a *AssistantFlow) prepare(ctx context.Context, input AssistantInput) (Answ
 	slog.InfoContext(ctx, "assistant routed", "route", decision.Route)
 	request := AnswerRequest{Message: input.Message, Context: input.Context, ResponseMode: decision.ResponseMode, Route: decision.Route, Notes: decision.Notes}
 	if decision.Route != RouteEvidence {
-		request.Context = ""
 		return request, nil
 	}
 	result, err := a.researcher.Research(ctx, decision)

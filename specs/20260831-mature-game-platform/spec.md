@@ -158,6 +158,7 @@ Router and Answer remain Nodes; Research is the sole autonomous Agent. The
 Agent can iteratively use only allowlisted read-only tools, observes typed tool
 results, stays within configured budgets, preserves citations, and cannot claim
 coupons, create/pay orders, or mutate community data.
+Bounded prior conversation context reaches Router and Answer on every route.
 
 ### AC8 Failure and cancellation semantics
 

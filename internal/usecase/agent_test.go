@@ -8,11 +8,11 @@ import (
 )
 
 func TestAssistantFlowGenerate(t *testing.T) {
-	t.Run("direct route skips research", func(t *testing.T) {
+	t.Run("direct route preserves context and skips research", func(t *testing.T) {
 		research := &researchFake{}
 		answerer := &answerNodeFake{answer: Answer{Text: "hello", Model: "m"}}
 		answer, err := NewAssistantFlow(routerFake{decision: RouteDecision{Route: RouteDirect, ResponseMode: "chat"}}, research, answerer).Generate(context.Background(), AssistantInput{Message: "hi", Context: "old"})
-		if err != nil || answer.Text != "hello" || research.calls != 0 || answerer.request.Route != RouteDirect || answerer.request.Context != "" {
+		if err != nil || answer.Text != "hello" || research.calls != 0 || answerer.request.Route != RouteDirect || answerer.request.Context != "old" {
 			t.Fatalf("answer=%#v research=%d request=%#v err=%v", answer, research.calls, answerer.request, err)
 		}
 	})

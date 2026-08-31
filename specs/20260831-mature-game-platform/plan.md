@@ -120,6 +120,8 @@ Research defaults: 30-second total budget, six model iterations, eight tool
 calls, per-tool timeout, and request cancellation. Tools accept query/filter
 arguments only; trusted identity and provider endpoints come from request
 context/composition. No mutation tool is registered.
+The bounded historical conversation context is passed to both Router and
+Answer for every route; Chat excludes the current message before loading it.
 
 ## Data And Migration
 
