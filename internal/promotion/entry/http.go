@@ -29,6 +29,7 @@ func NewHTTP(service *promotion.Service, authenticator httpauth.Authenticator, p
 
 func (h *HTTP) Register(router *server.Hertz) {
 	router.GET("/api/deals", httpauth.Optional(h.auth), h.list)
+	router.GET("/api/coupon-claims", httpauth.Require(h.auth), h.listClaims)
 	router.POST("/api/coupons/:code/claims", httpauth.RequireOrigin(h.origin), httpauth.Require(h.auth), h.claim)
 }
 
@@ -68,6 +69,21 @@ func (h *HTTP) claim(ctx context.Context, c *app.RequestContext) {
 		status = consts.StatusOK
 	}
 	c.JSON(status, map[string]any{"claim": promotionpresenter.PresentClaim(result.Claim), "replayed": result.Replayed})
+}
+
+func (h *HTTP) listClaims(ctx context.Context, c *app.RequestContext) {
+	limit, err := optionalLimit(string(c.Query("limit")))
+	if err != nil {
+		h.writeError(ctx, c, "list_coupon_claims", err)
+		return
+	}
+	principal, _ := httpauth.Principal(c)
+	page, err := h.service.ListClaims(ctx, principal, string(c.Query("cursor")), limit)
+	if err != nil {
+		h.writeError(ctx, c, "list_coupon_claims", err)
+		return
+	}
+	c.JSON(consts.StatusOK, promotionpresenter.PresentClaimPage(page))
 }
 
 func (h *HTTP) writeError(ctx context.Context, c *app.RequestContext, operation string, err error) {

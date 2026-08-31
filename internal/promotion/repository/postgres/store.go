@@ -41,6 +41,32 @@ func (s *Store) List(ctx context.Context, filter promotion.ListFilter) ([]entity
 	return items, rows.Err()
 }
 
+func (s *Store) ListClaims(ctx context.Context, filter promotion.ClaimFilter) ([]entity.Claim, error) {
+	rows, err := s.pool.Query(ctx, `
+		select cl.id,cl.coupon_id,d.code,cl.user_id,cl.status,cl.idempotency_key,cl.claimed_at
+		from coupon_claim cl
+		join coupon_definition d on d.id=cl.coupon_id
+		join coupon_campaign c on c.id=d.campaign_id
+		where cl.user_id=$1 and cl.status='claimed'
+			and c.status='active' and c.starts_at<=$2 and c.ends_at>$2
+			and not exists(select 1 from purchase_order o where o.coupon_claim_id=cl.id)
+			and ($3::bigint=0 or cl.id<$3)
+		order by cl.id desc limit $4`, filter.UserID, filter.Now, filter.BeforeID, filter.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]entity.Claim, 0, filter.Limit)
+	for rows.Next() {
+		var claim entity.Claim
+		if err := rows.Scan(&claim.ID, &claim.CouponID, &claim.CouponCode, &claim.UserID, &claim.Status, &claim.IdempotencyKey, &claim.ClaimedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, claim)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) Claim(ctx context.Context, command promotion.ClaimCommand) (result promotion.ClaimResult, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

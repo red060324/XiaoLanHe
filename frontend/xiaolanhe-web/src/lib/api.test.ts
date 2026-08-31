@@ -5,6 +5,7 @@ import {
   createOrder,
   getMe,
   listCommunityPosts,
+  listCouponClaims,
   listDeals,
   listGames,
   listOrders,
@@ -55,6 +56,13 @@ describe('commerce API', () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ items: [], nextCursor: 'order-next' }), { status: 200 }));
     await expect(listOrders('order page')).resolves.toMatchObject({ nextCursor: 'order-next' });
     expect(fetchMock).toHaveBeenLastCalledWith('/api/orders?cursor=order+page', expect.objectContaining({ credentials: 'include' }));
+  });
+
+  it('loads available coupon claims with a cursor', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ items: [], nextCursor: 'claim-next' }), { status: 200 }));
+
+    await expect(listCouponClaims('claim page')).resolves.toMatchObject({ nextCursor: 'claim-next' });
+    expect(fetchMock).toHaveBeenCalledWith('/api/coupon-claims?cursor=claim+page', expect.objectContaining({ credentials: 'include' }));
   });
 
   it('sends idempotency keys without inventing request bodies', async () => {

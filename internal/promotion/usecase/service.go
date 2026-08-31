@@ -41,6 +41,13 @@ type ClaimCommand struct {
 	Now            time.Time
 }
 
+type ClaimFilter struct {
+	UserID   int64
+	BeforeID int64
+	Limit    int
+	Now      time.Time
+}
+
 type ClaimResult struct {
 	Claim    entity.Claim
 	Replayed bool
@@ -48,8 +55,40 @@ type ClaimResult struct {
 
 type Store interface {
 	List(context.Context, ListFilter) ([]entity.Coupon, error)
+	ListClaims(context.Context, ClaimFilter) ([]entity.Claim, error)
 	Claim(context.Context, ClaimCommand) (ClaimResult, error)
 	FindClaimCoupon(context.Context, int64, int64) (entity.Claim, entity.Coupon, error)
+}
+
+type ClaimPage struct {
+	Items      []entity.Claim
+	NextCursor string
+}
+
+func (s *Service) ListClaims(ctx context.Context, principal auth.Principal, cursor string, limit int) (ClaimPage, error) {
+	if principal.UserID <= 0 {
+		return ClaimPage{}, ErrUnauthenticated
+	}
+	beforeID, err := decodeCursor(cursor)
+	if err != nil {
+		return ClaimPage{}, ErrInvalidInput
+	}
+	if limit == 0 {
+		limit = 20
+	}
+	if limit < 1 || limit > 50 {
+		return ClaimPage{}, ErrInvalidInput
+	}
+	items, err := s.store.ListClaims(ctx, ClaimFilter{UserID: principal.UserID, BeforeID: beforeID, Limit: limit + 1, Now: s.now().UTC()})
+	if err != nil {
+		return ClaimPage{}, err
+	}
+	result := ClaimPage{Items: items}
+	if len(items) > limit {
+		result.Items = items[:limit]
+		result.NextCursor = encodeCursor(result.Items[len(result.Items)-1].ID)
+	}
+	return result, nil
 }
 
 type Service struct {

@@ -319,6 +319,10 @@ func TestProductPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	availableClaims, err := promotionService.ListClaims(ctx, otherPrincipal, "", 20)
+	if err != nil || len(availableClaims.Items) != 1 || availableClaims.Items[0].ID != orderCoupon.Claim.ID {
+		t.Fatalf("available claims before order=%+v err=%v", availableClaims, err)
+	}
 	orderService := order.NewService(orderpg.NewStore(pool), catalog.NewService(catalogStore), promotionService)
 	createInput := order.CreateInput{EditionID: game.Editions[0].ID, Region: "CN", Currency: "USD", CouponClaimID: orderCoupon.Claim.ID, IdempotencyKey: "order-create.01"}
 	orderResults := make(chan order.CreateResult, 8)
@@ -344,6 +348,10 @@ func TestProductPostgres(t *testing.T) {
 	}
 	if createdOrder.Item.Region != "CN" || createdOrder.SubtotalMinor != 1999 || createdOrder.DiscountMinor != 399 || createdOrder.TotalMinor != 1600 {
 		t.Fatalf("order snapshot=%+v", createdOrder)
+	}
+	availableClaims, err = promotionService.ListClaims(ctx, otherPrincipal, "", 20)
+	if err != nil || len(availableClaims.Items) != 0 {
+		t.Fatalf("available claims after order=%+v err=%v", availableClaims, err)
 	}
 	var orderCount int
 	if err := pool.QueryRow(ctx, `select count(*) from purchase_order where user_id=$1 and idempotency_key=$2`, other.ID, createInput.IdempotencyKey).Scan(&orderCount); err != nil || orderCount != 1 {

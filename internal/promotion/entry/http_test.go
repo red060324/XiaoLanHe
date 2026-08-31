@@ -34,6 +34,21 @@ func TestHTTP(t *testing.T) {
 		t.Fatalf("list status=%d body=%s", list.Code, list.Body.String())
 	}
 
+	claimsUnauthenticated := ut.PerformRequest(router.Engine, "GET", "/api/coupon-claims", nil)
+	if claimsUnauthenticated.Code != 401 {
+		t.Fatalf("claims unauthenticated status=%d body=%s", claimsUnauthenticated.Code, claimsUnauthenticated.Body.String())
+	}
+	claims := ut.PerformRequest(router.Engine, "GET", "/api/coupon-claims?limit=1", nil,
+		ut.Header{Key: "Cookie", Value: httpauth.CookieName + "=user"})
+	if claims.Code != 200 || !strings.Contains(claims.Body.String(), `"couponCode":"WELCOME20"`) {
+		t.Fatalf("claims status=%d body=%s", claims.Code, claims.Body.String())
+	}
+	invalidClaims := ut.PerformRequest(router.Engine, "GET", "/api/coupon-claims?limit=51", nil,
+		ut.Header{Key: "Cookie", Value: httpauth.CookieName + "=user"})
+	if invalidClaims.Code != 400 || !strings.Contains(invalidClaims.Body.String(), `"code":"invalid_request"`) {
+		t.Fatalf("invalid claims status=%d body=%s", invalidClaims.Code, invalidClaims.Body.String())
+	}
+
 	unauthenticated := ut.PerformRequest(router.Engine, "POST", "/api/coupons/WELCOME20/claims", nil,
 		ut.Header{Key: "Idempotency-Key", Value: "claim-new.01"})
 	if unauthenticated.Code != 401 {
@@ -78,6 +93,10 @@ type httpStore struct{ coupon entity.Coupon }
 
 func (s *httpStore) List(context.Context, promotion.ListFilter) ([]entity.Coupon, error) {
 	return []entity.Coupon{s.coupon}, nil
+}
+
+func (s *httpStore) ListClaims(_ context.Context, filter promotion.ClaimFilter) ([]entity.Claim, error) {
+	return []entity.Claim{{ID: 9, CouponID: s.coupon.ID, CouponCode: s.coupon.Code, UserID: filter.UserID, Status: "claimed", ClaimedAt: filter.Now}}, nil
 }
 
 func (s *httpStore) Claim(_ context.Context, command promotion.ClaimCommand) (promotion.ClaimResult, error) {

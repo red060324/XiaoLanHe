@@ -39,6 +39,40 @@ func TestServiceList(t *testing.T) {
 	}
 }
 
+func TestServiceListClaims(t *testing.T) {
+	now := time.Date(2026, 8, 31, 8, 0, 0, 0, time.FixedZone("test", 8*60*60))
+	items := make([]entity.Claim, 21)
+	for i := range items {
+		items[i].ID = int64(100 - i)
+	}
+	store := &fakeStore{claimItems: items}
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+	principal := auth.Principal{UserID: 9, Role: auth.RoleUser}
+
+	page, err := service.ListClaims(context.Background(), principal, "", 0)
+	if err != nil || len(page.Items) != 20 || page.NextCursor == "" {
+		t.Fatalf("page=%+v error=%v", page, err)
+	}
+	if store.claimFilter.UserID != 9 || store.claimFilter.Limit != 21 || !store.claimFilter.Now.Equal(now.UTC()) {
+		t.Fatalf("filter=%+v", store.claimFilter)
+	}
+	before, err := decodeCursor(page.NextCursor)
+	if err != nil || before != page.Items[19].ID {
+		t.Fatalf("cursor=%q before=%d error=%v", page.NextCursor, before, err)
+	}
+	for _, input := range []struct {
+		principal auth.Principal
+		cursor    string
+		limit     int
+		want      error
+	}{{auth.Principal{}, "", 0, ErrUnauthenticated}, {principal, "bad", 0, ErrInvalidInput}, {principal, "", -1, ErrInvalidInput}, {principal, "", 51, ErrInvalidInput}} {
+		if _, err := service.ListClaims(context.Background(), input.principal, input.cursor, input.limit); !errors.Is(err, input.want) {
+			t.Fatalf("input=%+v error=%v", input, err)
+		}
+	}
+}
+
 func TestServiceClaim(t *testing.T) {
 	now := time.Date(2026, 8, 31, 8, 0, 0, 0, time.UTC)
 	store := &fakeStore{claimResult: ClaimResult{Claim: entity.Claim{ID: 3, CouponCode: "WELCOME20"}}}
@@ -114,6 +148,9 @@ type fakeStore struct {
 	listItems    []entity.Coupon
 	listErr      error
 	listFilter   ListFilter
+	claimItems   []entity.Claim
+	claimListErr error
+	claimFilter  ClaimFilter
 	claimResult  ClaimResult
 	claimErr     error
 	claimCommand ClaimCommand
@@ -128,6 +165,11 @@ type fakeStore struct {
 func (s *fakeStore) List(_ context.Context, filter ListFilter) ([]entity.Coupon, error) {
 	s.listFilter = filter
 	return s.listItems, s.listErr
+}
+
+func (s *fakeStore) ListClaims(_ context.Context, filter ClaimFilter) ([]entity.Claim, error) {
+	s.claimFilter = filter
+	return s.claimItems, s.claimListErr
 }
 
 func (s *fakeStore) Claim(_ context.Context, command ClaimCommand) (ClaimResult, error) {

@@ -62,6 +62,28 @@ The key is scoped to the user, not the coupon. Reusing it for another coupon is
 the per-user limit returns `409 claim_limit_reached`; an unknown code returns
 `404 coupon_not_found`.
 
+### `GET /api/coupon-claims?cursor=&limit=`
+
+Authenticated. Returns the current user's unredeemed claims whose campaign is
+still active and which are not already attached to an order. The response uses
+the same claim shape as the claim mutation:
+
+```json
+{
+  "items": [{
+    "id": "91",
+    "couponCode": "WELCOME20",
+    "status": "claimed",
+    "claimedAt": "2026-08-31T08:00:00Z"
+  }],
+  "nextCursor": "OTE"
+}
+```
+
+Pagination is a stable descending claim-ID cursor. Default limit is 20;
+maximum is 50. A claim disappears from this list as soon as an order reserves
+it, preventing the browser from offering the same claim twice.
+
 ## Orders
 
 These endpoints are implemented by T11 after coupon claims pass concurrency CI.

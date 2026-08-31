@@ -7,6 +7,7 @@ import {
   User,
   claimCoupon,
   createOrder,
+  listCouponClaims,
   listDeals,
   listOrders,
   payOrder
@@ -46,6 +47,7 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
   const orderKeys = useRef(new Map<string, string>());
   const paymentKeys = useRef(new Map<string, string>());
   const dealRequest = useRef(0);
+  const claimRequest = useRef(0);
   const orderRequest = useRef(0);
 
   useEffect(() => {
@@ -55,6 +57,16 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
   useEffect(() => {
     if (tab === 'orders' && user) void loadOrderHistory();
   }, [tab, user]);
+
+  useEffect(() => {
+    const request = ++claimRequest.current;
+    if (!user) {
+      setClaims([]);
+      setSelectedClaimId('');
+      return;
+    }
+    void loadClaims(request);
+  }, [user]);
 
   async function loadDeals() {
     const request = ++dealRequest.current;
@@ -78,6 +90,17 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
     }
   }
 
+  async function loadClaims(request: number) {
+    try {
+      const page = await listCouponClaims();
+      if (request !== claimRequest.current) return;
+      setClaims(page.items);
+      setSelectedClaimId((current) => page.items.some((claim) => claim.id === current) ? current : '');
+    } catch (requestError) {
+      if (request === claimRequest.current) setError(message(requestError, '优惠券加载失败'));
+    }
+  }
+
   async function claim(deal: Deal) {
     if (!user) {
       onRequireLogin();
@@ -90,6 +113,7 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
     try {
       const result = await claimCoupon(deal.code, requestKey);
       claimKeys.current.delete(deal.code);
+      claimRequest.current++;
       setClaims((current) => current.some((item) => item.id === result.claim.id) ? current : [...current, result.claim]);
       setSelectedClaimId(result.claim.id);
       await loadDeals();
@@ -119,6 +143,11 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
         ...(selectedClaimId ? { couponClaimId: selectedClaimId } : {})
       }, requestKey);
       orderKeys.current.delete(requestIdentity);
+      if (selectedClaimId) {
+        claimRequest.current++;
+        setClaims((current) => current.filter((claim) => claim.id !== selectedClaimId));
+        setSelectedClaimId('');
+      }
       setOrders((current) => [result.order, ...current.filter((item) => item.orderNo !== result.order.orderNo)]);
       setTab('orders');
     } catch (requestError) {

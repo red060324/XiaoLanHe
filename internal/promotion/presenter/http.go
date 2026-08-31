@@ -41,6 +41,14 @@ func PresentPage(page promotion.Page) map[string]any {
 	return map[string]any{"items": items, "nextCursor": page.NextCursor}
 }
 
+func PresentClaimPage(page promotion.ClaimPage) map[string]any {
+	items := make([]ClaimResponse, len(page.Items))
+	for i := range page.Items {
+		items[i] = PresentClaim(page.Items[i])
+	}
+	return map[string]any{"items": items, "nextCursor": page.NextCursor}
+}
+
 func PresentCoupon(coupon entity.Coupon) CouponResponse {
 	result := CouponResponse{
 		ID: strconv.FormatInt(coupon.ID, 10), Code: coupon.Code, Name: coupon.Name,

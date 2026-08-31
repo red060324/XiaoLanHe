@@ -206,6 +206,12 @@ export async function claimCoupon(code: string, idempotencyKey: string): Promise
   });
 }
 
+export async function listCouponClaims(cursor = ''): Promise<Page<CouponClaim>> {
+  const params = new URLSearchParams();
+  if (cursor) params.set('cursor', cursor);
+  return requestJSON<Page<CouponClaim>>(`/api/coupon-claims?${params}`);
+}
+
 export async function createOrder(input: { editionId: string; region: string; currency: string; couponClaimId?: string }, idempotencyKey: string): Promise<{ order: Order; replayed: boolean }> {
   return requestJSON<{ order: Order; replayed: boolean }>('/api/orders', {
     method: 'POST',

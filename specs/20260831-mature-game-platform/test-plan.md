@@ -53,6 +53,8 @@ truth.
   pending with no payment.
 - Cross-user order access is forbidden; history pagination remains stable.
 - Frontend Deals/checkout/orders/owned states and error recovery.
+- Available unredeemed claims reload after navigation or refresh; claims already
+  attached to an order are not offered for another checkout.
 
 ## Phase 4: Assistant
 

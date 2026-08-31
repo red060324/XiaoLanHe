@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   claimCoupon: vi.fn(),
   createOrder: vi.fn(),
   listDeals: vi.fn(),
+  listCouponClaims: vi.fn(),
   listOrders: vi.fn(),
   payOrder: vi.fn()
 }));
@@ -32,6 +33,7 @@ const pendingOrder: Order = {
 
 beforeEach(() => {
   api.listDeals.mockResolvedValue({ items: [] });
+  api.listCouponClaims.mockResolvedValue({ items: [] });
   api.listOrders.mockResolvedValue({ items: [] });
 });
 
@@ -64,6 +66,22 @@ describe('CommercePage', () => {
 
     await waitFor(() => expect(api.createOrder).toHaveBeenCalledWith({ editionId: '12', region: 'GLOBAL', currency: 'USD', couponClaimId: '9' }, expect.stringMatching(/^order:/)));
     expect(await screen.findByText('待支付')).toBeInTheDocument();
+  });
+
+  it('restores an unredeemed coupon claim after remount', async () => {
+    api.listDeals.mockResolvedValue({ items: [{ ...deal, viewerClaimCount: 1 }] });
+    api.listCouponClaims.mockResolvedValue({ items: [{ id: '9', couponCode: 'WELCOME20', status: 'claimed', claimedAt: '2026-08-31T08:00:00Z' }] });
+    api.createOrder.mockResolvedValue({ order: pendingOrder, replayed: false });
+    api.listOrders.mockResolvedValue({ items: [pendingOrder] });
+    render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    expect(await screen.findByRole('option', { name: 'WELCOME20 · #9' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('本次结算优惠券'), { target: { value: '9' } });
+    fireEvent.click(screen.getByRole('button', { name: '购买' }));
+
+    await waitFor(() => expect(api.createOrder).toHaveBeenCalledWith({ editionId: '12', region: 'GLOBAL', currency: 'USD', couponClaimId: '9' }, expect.stringMatching(/^order:/)));
+    fireEvent.click(screen.getByRole('button', { name: '优惠与购买' }));
+    expect(screen.queryByRole('option', { name: 'WELCOME20 · #9' })).not.toBeInTheDocument();
   });
 
   it('reuses the checkout key after a recoverable error', async () => {
