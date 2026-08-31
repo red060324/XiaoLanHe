@@ -11,7 +11,6 @@ type WebSearchItemResponse struct {
 
 type WebSearchResponse struct {
 	Enabled  bool                    `json:"enabled"`
-	CacheHit bool                    `json:"cacheHit"`
 	Provider string                  `json:"provider"`
 	Query    string                  `json:"query"`
 	Items    []WebSearchItemResponse `json:"items"`
@@ -23,5 +22,5 @@ func PresentWebSearch(result usecase.WebSearchResult) WebSearchResponse {
 	for _, item := range result.Items {
 		items = append(items, WebSearchItemResponse{Title: item.Title, URL: item.URL, Snippet: item.Snippet, Source: item.Source})
 	}
-	return WebSearchResponse{Enabled: result.Enabled, CacheHit: result.CacheHit, Provider: result.Provider, Query: result.Query, Items: items, Note: result.Note}
+	return WebSearchResponse{Enabled: result.Enabled, Provider: result.Provider, Query: result.Query, Items: items, Note: result.Note}
 }

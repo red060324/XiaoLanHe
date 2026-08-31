@@ -209,7 +209,7 @@ func (httpAuthenticator) Authenticate(_ context.Context, token string) (auth.Pri
 func TestHTTPWebSearchAndPing(t *testing.T) {
 	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), nil, usecase.NewWebSearch(httpSearchClient{}))
 	searched := ut.PerformRequest(h.server.Engine, "GET", "/api/search/web?query=guide", nil)
-	if searched.Code != 200 || !strings.Contains(searched.Body.String(), `"provider":"searxng"`) || !strings.Contains(searched.Body.String(), `"title":"A"`) {
+	if searched.Code != 200 || !strings.Contains(searched.Body.String(), `"provider":"searxng"`) || !strings.Contains(searched.Body.String(), `"title":"A"`) || strings.Contains(searched.Body.String(), `"cacheHit"`) {
 		t.Fatalf("status=%d body=%s", searched.Code, searched.Body.String())
 	}
 	for _, path := range []string{"/api/search/web?query=%20%20", "/api/search/web?query=" + strings.Repeat("a", 101)} {

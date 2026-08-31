@@ -30,6 +30,7 @@
 | T22 | PRE_MERGE | DONE | Classify deterministic Research tool-input errors separately from provider failures | AC7, AC8 | failing-then-passing Agent adapter test + GitHub Actions `33361284676` PASS |
 | T23 | PRE_MERGE | DONE | Prevent successful empty model streams from producing empty assistant replies | AC8 | failing-then-passing SSE Answer adapter test + GitHub Actions `33362087122` PASS |
 | T24 | PRE_MERGE | DONE | Prevent two orders for one user and edition from both completing payment | AC6 | GitHub Actions `33362876531` failed before fix; `33363326436` PASS after fix |
+| T25 | PRE_MERGE | IN_PROGRESS | Remove Web Search cache/provider surfaces that have no implementation | AC1, AC8 | focused config/adapter/HTTP tests; public CI pending |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent

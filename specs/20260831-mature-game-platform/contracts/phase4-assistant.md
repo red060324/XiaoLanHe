@@ -19,6 +19,9 @@ Invalid input cannot trigger provider work.
 `search_web` is registered only when Web Search is enabled. Unknown and
 mutation-like names such as `create_order`, `claim_coupon`, `pay_order`, or
 `create_post` are not registered and cannot reach an ordinary service.
+The current Web adapter is SearXNG, so its provider identity is fixed to
+`searxng`. The HTTP response does not expose cache metadata because no cache is
+implemented.
 
 Every tool returns a typed observation with `ok`, `no_result`, `invalid`, or
 `failed` status. Provider failures are observations that the Agent may refine;

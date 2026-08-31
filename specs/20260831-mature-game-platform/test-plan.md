@@ -63,6 +63,8 @@ truth.
 - Knowledge/Web queries are trimmed and reject blank or over-100-rune input
   before storage, embedding, or provider calls; malformed knowledge limits
   return 400 without downstream work.
+- Web Search identifies its actual SearXNG adapter and does not expose a cache
+  hit field or provider selector until those capabilities exist.
 - Answer direct/evidence/degraded/clarify/stream cases with citations; an empty
   model stream emits a fallback reply before EOF.
 - Chat persistence order and no partial assistant persistence on failure.

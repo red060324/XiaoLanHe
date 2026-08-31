@@ -76,7 +76,7 @@ func main() {
 
 	store := postgres.NewConversationStore(pool)
 	knowledge := usecase.NewKnowledge(postgres.NewKnowledgeStore(pool), einoadapter.NewOpenAIEmbedder(cfg.AIBaseURL, cfg.AIAPIKey, cfg.EmbeddingModel, cfg.AITimeout))
-	search := usecase.NewWebSearch(websearch.NewSearXNG(cfg.SearchEnabled, cfg.SearchProvider, cfg.SearchEndpoint, cfg.SearchTimeout))
+	search := usecase.NewWebSearch(websearch.NewSearXNG(cfg.SearchEnabled, cfg.SearchEndpoint, cfg.SearchTimeout))
 	accountService := account.NewService(accountpg.NewStore(pool), password.Bcrypt{}, 7*24*time.Hour)
 	catalogService := catalog.NewService(catalogpg.NewStore(pool))
 	communityService := community.NewService(communitypg.NewStore(pool), catalogService)

@@ -17,7 +17,7 @@ type WebSearchItem struct {
 }
 
 type WebSearchResult struct {
-	Enabled, CacheHit     bool
+	Enabled               bool
 	Provider, Query, Note string
 	Items                 []WebSearchItem
 }

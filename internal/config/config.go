@@ -26,7 +26,6 @@ type Config struct {
 	ResearchMaxIterations int
 	ResearchMaxToolCalls  int
 	SearchEnabled         bool
-	SearchProvider        string
 	SearchEndpoint        string
 	SearchTimeout         time.Duration
 	CookieSecure          bool
@@ -96,7 +95,6 @@ func Load() (Config, error) {
 		ResearchMaxIterations: researchMaxIterations,
 		ResearchMaxToolCalls:  researchMaxToolCalls,
 		SearchEnabled:         strings.EqualFold(env("XLH_SEARCH_ENABLED", "true"), "true"),
-		SearchProvider:        env("XLH_SEARCH_PROVIDER", "searxng"),
 		SearchEndpoint:        env("SEARXNG_BASE_URL", "http://127.0.0.1:8080"),
 		SearchTimeout:         searchTimeout,
 		CookieSecure:          !strings.EqualFold(env("XLH_COOKIE_SECURE", "true"), "false"),
