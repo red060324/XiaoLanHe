@@ -38,13 +38,13 @@ Redis, background Agent, or Java runtime was introduced.
 | Gate | Evidence | Result |
 |---|---|---|
 | Latest local full command | `make ci` reached Go tests; sandbox denied localhost listeners used by `httptest`; all non-listener local gates passed | ENVIRONMENT BLOCKED; public CI substituted |
-| Go vet and all tests | affected packages local PASS; full GitHub Actions `33360429384` at `8ce4a61` | PASS |
-| Go race | targeted local race PASS; full repository race in GitHub Actions `33360429384` | PASS |
+| Go vet and all tests | affected packages local PASS; full GitHub Actions `33361284676` at `bdeda1c` | PASS |
+| Go race | targeted local race PASS; full repository race in GitHub Actions `33361284676` | PASS |
 | Frontend | 4 files, 21 Vitest tests and Vite production build | PASS |
 | Architecture/spec/docs | hooks, architecture, spec drift and link checks | PASS |
 | PostgreSQL | GitHub Actions `33356971706`: migrations, identity, catalog, forum literal search, promotion, commerce | PASS |
 | Seed and container | GitHub Actions `33356971706`: repeated seed, health/readiness/catalog/community/deals/SPA | PASS |
-| Assistant | fake model/tool iteration, partial/all-failed/no-result/budget/cancellation, four-tool allowlist, REST/SSE citations | PASS |
+| Assistant | fake model/tool iteration, invalid-input classification, partial/all-failed/no-result/budget/cancellation, four-tool allowlist, REST/SSE citations | PASS |
 | Request correlation | invalid client IDs replaced once and the validated ID is shared by response and REST/SSE completion logs | PASS |
 | Search input boundary | query trim/blank/100-rune checks and knowledge limit 1-10; invalid requests prove zero downstream calls | PASS |
 | Public-only scan | no private domains/platform names; dependencies resolve from public modules | PASS |
@@ -57,8 +57,8 @@ Redis, background Agent, or Java runtime was introduced.
 |---|---|---|
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
-| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T21 |
-| Final documentation and final clean-checkout CI | PASS | GitHub Actions `33360429384` |
+| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T22 |
+| Final documentation and final clean-checkout CI | PASS | GitHub Actions `33361284676` |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |
 | Observability | PASS | validated request ID, result/latency and Agent route/iteration/tool/stop reason |
