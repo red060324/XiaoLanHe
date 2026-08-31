@@ -61,6 +61,9 @@ truth.
   user opened while the creation was pending or overwrite that detail's state.
 - Repeated comment form submission while the first request is pending creates
   one comment request and exposes a disabled progress state.
+- Community repository writes revalidate that the target post is published;
+  moderation racing with a new comment or reaction cannot create engagement on
+  hidden or deleted content.
 
 ## Phase 3: Promotion And Commerce
 

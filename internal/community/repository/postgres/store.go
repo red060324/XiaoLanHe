@@ -142,7 +142,12 @@ func (s *Store) GetComment(ctx context.Context, id int64, includeNonPublic bool)
 
 func (s *Store) CreateComment(ctx context.Context, postID, authorID int64, content string) (entity.Comment, error) {
 	var id int64
-	err := s.pool.QueryRow(ctx, `insert into community_comment(post_id,author_id,content) values ($1,$2,$3) returning id`, postID, authorID, content).Scan(&id)
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := lockPublishedPost(ctx, tx, postID); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `insert into community_comment(post_id,author_id,content) values ($1,$2,$3) returning id`, postID, authorID, content).Scan(&id)
+	})
 	if err != nil {
 		return entity.Comment{}, err
 	}
@@ -180,16 +185,30 @@ func (s *Store) ModerateComment(ctx context.Context, id int64, status entity.Sta
 }
 
 func (s *Store) SetReaction(ctx context.Context, postID, userID int64, reaction entity.ReactionType, active bool) (entity.ReactionSummary, error) {
-	var err error
-	if active {
-		_, err = s.pool.Exec(ctx, `insert into community_reaction(post_id,user_id,reaction_type) values ($1,$2,$3) on conflict do nothing`, postID, userID, reaction)
-	} else {
-		_, err = s.pool.Exec(ctx, `delete from community_reaction where post_id=$1 and user_id=$2 and reaction_type=$3`, postID, userID, reaction)
-	}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) (err error) {
+		if err = lockPublishedPost(ctx, tx, postID); err != nil {
+			return err
+		}
+		if active {
+			_, err = tx.Exec(ctx, `insert into community_reaction(post_id,user_id,reaction_type) values ($1,$2,$3) on conflict do nothing`, postID, userID, reaction)
+		} else {
+			_, err = tx.Exec(ctx, `delete from community_reaction where post_id=$1 and user_id=$2 and reaction_type=$3`, postID, userID, reaction)
+		}
+		return err
+	})
 	if err != nil {
 		return entity.ReactionSummary{}, err
 	}
 	return s.reactionSummary(ctx, postID, userID)
+}
+
+func lockPublishedPost(ctx context.Context, tx pgx.Tx, postID int64) error {
+	var id int64
+	err := tx.QueryRow(ctx, `select id from community_post where id=$1 and status='published' for update`, postID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return community.ErrNotFound
+	}
+	return err
 }
 
 func (s *Store) reactionSummary(ctx context.Context, postID, viewerID int64) (entity.ReactionSummary, error) {

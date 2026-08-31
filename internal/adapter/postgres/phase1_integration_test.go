@@ -250,6 +250,16 @@ func TestProductPostgres(t *testing.T) {
 	if _, err := communityService.GetPost(ctx, second.ID, other.ID); !errors.Is(err, community.ErrNotFound) {
 		t.Fatalf("hidden public post error=%v", err)
 	}
+	t.Run("hidden post rejects direct comment writes", func(t *testing.T) {
+		if _, err := communityStore.CreateComment(ctx, second.ID, other.ID, "late comment"); !errors.Is(err, community.ErrNotFound) {
+			t.Fatalf("hidden post comment error=%v", err)
+		}
+	})
+	t.Run("hidden post rejects direct reaction writes", func(t *testing.T) {
+		if _, err := communityStore.SetReaction(ctx, second.ID, other.ID, communityentity.ReactionFunny, true); !errors.Is(err, community.ErrNotFound) {
+			t.Fatalf("hidden post reaction error=%v", err)
+		}
+	})
 
 	promotionService := promotion.NewService(promotionpg.NewStore(pool))
 	campaignID := insertCampaign(t, ctx, pool, "phase-campaign", "active", time.Now().Add(-time.Hour), time.Now().Add(time.Hour))

@@ -58,11 +58,12 @@
 | T50 | PRE_MERGE | DONE | Keep a completed post creation from replacing a newer selected detail | AC4, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 44 Vitest tests |
 | T51 | PRE_MERGE | DONE | Keep an older chat stream cleanup from disabling a newer stream | AC7, AC8, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 45 Vitest tests |
 | T52 | PRE_MERGE | DONE | Preserve a newer coupon selection when an earlier checkout completes | AC6, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 46 Vitest tests |
-| T53 | PRE_MERGE | IN_PROGRESS | Revalidate coupon campaign eligibility at the final order transaction boundary | AC5, AC6, AC10 | local `make ci BASE_REF=origin/master` PASS; PostgreSQL regression compiles but skips without `XLH_TEST_DATABASE_URL`; clean-checkout database execution pending |
+| T53 | PRE_MERGE | DONE | Revalidate coupon campaign eligibility at the final order transaction boundary | AC5, AC6, AC10 | `TestProductPostgres` passed locally against isolated PostgreSQL 17 + pgvector 0.8.6; full local `make ci BASE_REF=origin/master` PASS |
 | T54 | PRE_MERGE | DONE | Prevent a failed view from leaking its error into another page | AC8, AC10 | failing-then-passing Assistant-to-Catalog regression; full local `make ci BASE_REF=origin/master` passed with 47 Vitest tests |
 | T55 | PRE_MERGE | DONE | Ignore a stale reaction failure after the user leaves its post | AC4, AC8, AC10 | failing-then-passing controlled-rejection frontend regression; full local `make ci BASE_REF=origin/master` passed with 48 Vitest tests |
 | T56 | PRE_MERGE | DONE | Prevent an order-history error from leaking into the deals tab | AC5, AC6, AC10 | failing-then-passing Commerce tab regression; full local `make ci BASE_REF=origin/master` passed with 49 Vitest tests |
 | T57 | PRE_MERGE | DONE | Ignore an order-history failure completed after leaving the orders tab | AC5, AC6, AC10 | failing-then-passing controlled-rejection regression; full local `make ci BASE_REF=origin/master` passed with 50 Vitest tests |
+| T58 | PRE_MERGE | DONE | Revalidate public post status at final comment and reaction writes | AC4, AC10 | failing-then-passing PostgreSQL Store regressions; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent
