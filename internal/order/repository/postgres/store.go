@@ -113,6 +113,9 @@ func (s *Store) Pay(ctx context.Context, command order.PayCommand) (result order
 		return order.PayResult{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock($1)`, command.UserID); err != nil {
+		return order.PayResult{}, err
+	}
 	existing, err := queryOrderWithPaymentKey(ctx, tx, command.OrderNo, command.UserID, command.IdempotencyKey)
 	if err == nil {
 		return order.PayResult{Order: existing, Replayed: true}, nil
@@ -170,11 +173,15 @@ func (s *Store) Pay(ctx context.Context, command order.PayCommand) (result order
 	if _, err := tx.Exec(ctx, `update purchase_order set status='paid',updated_at=$2 where id=$1`, current.ID, command.Now); err != nil {
 		return order.PayResult{}, err
 	}
-	if _, err := tx.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		insert into game_entitlement(user_id,edition_id,source_order_id,status,granted_at)
 		values ($1,$2,$3,'active',$4)
-		on conflict (user_id,edition_id) where status='active' do nothing`, current.UserID, current.Item.EditionID, current.ID, command.Now); err != nil {
+		on conflict (user_id,edition_id) where status='active' do nothing`, current.UserID, current.Item.EditionID, current.ID, command.Now)
+	if err != nil {
 		return order.PayResult{}, err
+	}
+	if tag.RowsAffected() != 1 {
+		return order.PayResult{}, order.ErrAlreadyOwned
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return order.PayResult{}, err
