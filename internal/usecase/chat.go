@@ -119,12 +119,12 @@ func (c *Chat) prepare(ctx context.Context, in ChatInput) (string, int64, string
 	if err != nil {
 		return "", 0, "", fmt.Errorf("find or create session: %w", err)
 	}
-	if err := c.store.SaveMessage(ctx, sessionDBID, "user", in.Message, ""); err != nil {
-		return "", 0, "", fmt.Errorf("save user message: %w", err)
-	}
 	contextText, err := c.store.LoadContext(ctx, sessionDBID, 8)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("load conversation context: %w", err)
+	}
+	if err := c.store.SaveMessage(ctx, sessionDBID, "user", in.Message, ""); err != nil {
+		return "", 0, "", fmt.Errorf("save user message: %w", err)
 	}
 	return sessionID, sessionDBID, contextText, nil
 }

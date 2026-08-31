@@ -67,7 +67,9 @@ truth.
   hit field or provider selector until those capabilities exist.
 - Answer direct/evidence/degraded/clarify/stream cases with citations; an empty
   model stream emits a fallback reply before EOF.
-- Chat persistence order and no partial assistant persistence on failure.
+- Chat context excludes the current message while user-before-model and
+  assistant-after-success persistence order remains intact; no partial
+  assistant persistence occurs on failure.
 - Logs/traces exclude full messages, prompts, tokens, cookies, and passwords.
 - Real model/Web calls remain ROLLOUT and never substitute for deterministic
   PRE_MERGE tests.

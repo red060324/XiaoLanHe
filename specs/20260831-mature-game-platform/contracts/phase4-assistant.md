@@ -3,6 +3,10 @@
 The Assistant remains request-scoped and read-only. Router and Answer each run
 as one bounded model node. Research is the only autonomous Agent.
 
+Conversation context contains only history that predates the current request.
+The current user message is persisted before model execution, but is passed to
+Router/Answer exactly once through the dedicated message field.
+
 ## Tool Allowlist
 
 | Tool | Input | Evidence source | Citation URL |

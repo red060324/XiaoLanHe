@@ -12,7 +12,7 @@ import (
 )
 
 func TestChatRun(t *testing.T) {
-	t.Run("persists user before generation and assistant after success", func(t *testing.T) {
+	t.Run("loads history before persisting the current user message", func(t *testing.T) {
 		var calls []string
 		store := &fakeStore{calls: &calls, sessionID: 7}
 		assistant := &fakeAssistant{calls: &calls, answer: Answer{Text: "hello", Model: "model"}}
@@ -27,7 +27,7 @@ func TestChatRun(t *testing.T) {
 		if result != (ChatResult{SessionID: "session", Answer: "hello", CreatedAt: now}) {
 			t.Fatalf("unexpected result: %#v", result)
 		}
-		want := []string{"find:session", "save:user:hi:", "context:8", "generate:hi:", "save:assistant:hello:model"}
+		want := []string{"find:session", "context:8", "save:user:hi:", "generate:hi:", "save:assistant:hello:model"}
 		if !slices.Equal(calls, want) {
 			t.Fatalf("calls = %v, want %v", calls, want)
 		}
