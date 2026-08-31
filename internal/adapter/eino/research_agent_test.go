@@ -205,6 +205,50 @@ func TestResearchAgentResearch(t *testing.T) {
 	})
 }
 
+func TestResearchRunRunTool(t *testing.T) {
+	t.Run("records successful evidence", func(t *testing.T) {
+		state := &researchRun{maxTools: 1, toolTimeout: time.Second}
+		observation, err := state.runTool(context.Background(), "knowledge", func(context.Context) ([]usecase.Evidence, error) {
+			return []usecase.Evidence{{Source: "knowledge", Title: "guide", Content: "fact"}}, nil
+		})
+
+		if err != nil || observation.Status != "ok" || state.successes != 1 || state.failures != 0 || len(state.evidence) != 1 {
+			t.Fatalf("observation=%#v state=%#v err=%v", observation, state, err)
+		}
+	})
+
+	t.Run("classifies deterministic input errors as invalid", func(t *testing.T) {
+		for name, inputErr := range map[string]error{
+			"missing query":         errInvalidQuery,
+			"invalid search query":  usecase.ErrInvalidSearchQuery,
+			"invalid catalog input": catalog.ErrInvalidInput,
+			"invalid forum input":   community.ErrInvalidInput,
+		} {
+			t.Run(name, func(t *testing.T) {
+				state := &researchRun{maxTools: 1, toolTimeout: time.Second}
+				observation, err := state.runTool(context.Background(), "provider", func(context.Context) ([]usecase.Evidence, error) {
+					return nil, inputErr
+				})
+
+				if err != nil || observation.Status != "invalid" || state.calls != 1 || state.successes != 0 || state.failures != 0 || state.allFailed() {
+					t.Fatalf("observation=%#v state=%#v err=%v", observation, state, err)
+				}
+			})
+		}
+	})
+
+	t.Run("records provider failures", func(t *testing.T) {
+		state := &researchRun{maxTools: 1, toolTimeout: time.Second}
+		observation, err := state.runTool(context.Background(), "web", func(context.Context) ([]usecase.Evidence, error) {
+			return nil, errors.New("unavailable")
+		})
+
+		if err != nil || observation.Status != "failed" || state.successes != 0 || state.failures != 1 || !state.allFailed() {
+			t.Fatalf("observation=%#v state=%#v err=%v", observation, state, err)
+		}
+	})
+}
+
 func newTestResearchAgent(t *testing.T, chatModel *fakeChatModel, store *researchKnowledgeStore, webClient usecase.WebSearchClient, webEnabled bool, limits ResearchLimits) *ResearchAgent {
 	t.Helper()
 	knowledge := usecase.NewKnowledge(store, unavailableTestEmbedder{})

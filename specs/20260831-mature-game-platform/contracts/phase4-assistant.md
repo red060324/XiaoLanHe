@@ -24,6 +24,8 @@ Every tool returns a typed observation with `ok`, `no_result`, `invalid`, or
 `failed` status. Provider failures are observations that the Agent may refine;
 they are not successful empty searches. Request cancellation, total deadline,
 per-tool deadline, model-iteration budget, and tool-call budget remain in force.
+Deterministic tool-input errors are `invalid`, not provider failures, and still
+consume one tool call from the bounded budget.
 
 ## Citations
 

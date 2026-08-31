@@ -316,9 +316,9 @@ func (r *researchRun) runTool(ctx context.Context, provider string, fn func(cont
 			logTool(ctx, provider, call, "cancelled", started)
 			return toolObservation{}, ctx.Err()
 		}
-		if errors.Is(err, errInvalidQuery) {
+		if errors.Is(err, errInvalidQuery) || errors.Is(err, usecase.ErrInvalidSearchQuery) || errors.Is(err, catalog.ErrInvalidInput) || errors.Is(err, community.ErrInvalidInput) {
 			logTool(ctx, provider, call, "invalid", started)
-			return toolObservation{Status: "invalid", Provider: provider, Note: "query is required"}, nil
+			return toolObservation{Status: "invalid", Provider: provider, Note: "tool input is invalid"}, nil
 		}
 		r.mu.Lock()
 		r.failures++

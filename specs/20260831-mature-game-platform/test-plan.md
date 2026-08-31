@@ -53,6 +53,8 @@ truth.
 - Router structured direct/clarify/research decisions and deterministic fallback.
 - Research one/multiple/refined tool calls, no result, partial failure, all
   failure, max iterations, max tool calls, deadline, and cancellation.
+- Deterministic Knowledge/Web/Catalog/Forum input errors produce `invalid`
+  observations without being counted as provider failures.
 - Registry contains only read-only knowledge/catalog/forum/optional Web tools;
   mutation-like or unknown tool request is rejected.
 - Knowledge/Web queries are trimmed and reject blank or over-100-rune input
