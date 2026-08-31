@@ -23,7 +23,7 @@ Redis, background Agent, or Java runtime was introduced.
 | Criterion | Evidence | Result |
 |---|---|---|
 | AC1 architecture and Go-only backend | architecture hook, import review, Java/Maven/Gradle scan | PASS |
-| AC2 identity and authorization | Account UseCase/HTTP/PostgreSQL tests; admin/owner/anonymous cases | PASS |
+| AC2 identity and authorization | Account and conversation ownership UseCase/HTTP/PostgreSQL tests; admin/owner/anonymous cases | PASS |
 | AC3 catalog and ownership | Catalog UseCase/HTTP/PostgreSQL and frontend tests | PASS |
 | AC4 community | entity/UseCase/HTTP/PostgreSQL and frontend tests | PASS |
 | AC5 atomic coupon claim | entity/UseCase/HTTP/PostgreSQL concurrency tests | PASS |
@@ -38,13 +38,13 @@ Redis, background Agent, or Java runtime was introduced.
 | Gate | Evidence | Result |
 |---|---|---|
 | Latest local full command | `make ci`: Go tests, full race, frontend tests/build, hooks, architecture and spec drift | PASS |
-| Go vet and all tests | local `make ci`; full GitHub Actions `33369003504` at `b10bcaa` | PASS |
-| Go race | local full repository race; GitHub Actions `33369003504` | PASS |
+| Go vet and all tests | local `make ci`; full GitHub Actions `33370520530` at `0834373` | PASS |
+| Go race | local full repository race; GitHub Actions `33370520530` | PASS |
 | Frontend | 4 files, 23 Vitest tests and Vite production build; failed-stream and mixed-edition ownership regressions | PASS |
 | Architecture/spec/docs | hooks, architecture, spec drift and link checks | PASS |
-| PostgreSQL | GitHub Actions `33366323928` proved stale omitted catalog price before fix; `33369003504` passed migrations, edition ownership, catalog aggregate replacement, identity, forum, promotion and commerce | PASS |
-| Seed and container | GitHub Actions `33369003504`: repeated seed, health/readiness/catalog/community/deals/SPA | PASS |
-| Assistant | fake model/tool iteration, historical-context boundary, invalid-input classification, partial/all-failed/no-result/budget/cancellation, empty-stream fallback, four-tool allowlist, REST/SSE citations | PASS |
+| PostgreSQL | GitHub Actions `33366323928` proved stale omitted catalog price before fix; `33370520530` passed migrations, conversation/edition ownership, catalog aggregate replacement, identity, forum, promotion and commerce | PASS |
+| Seed and container | GitHub Actions `33370520530`: repeated seed, health/readiness/catalog/community/deals/SPA | PASS |
+| Assistant | UUIDv4 session boundary, authenticated conversation ownership, fake model/tool iteration, historical-context boundary, failure/budget/cancellation, four-tool allowlist, REST/SSE citations | PASS |
 | Request correlation | invalid client IDs replaced once and the validated ID is shared by response and REST/SSE completion logs | PASS |
 | Search input boundary | query trim/blank/100-rune checks and knowledge limit 1-10; invalid requests prove zero downstream calls | PASS |
 | Web Search contract | SearXNG identity is fixed to the actual adapter; nonexistent cache/provider-selection surfaces are absent | PASS |
@@ -58,8 +58,8 @@ Redis, background Agent, or Java runtime was introduced.
 |---|---|---|
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
-| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T29 |
-| Final documentation and latest code-bearing clean-checkout CI | PASS | GitHub Actions `33369003504` |
+| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T30 |
+| Final documentation and latest code-bearing clean-checkout CI | PASS | GitHub Actions `33370520530` |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |
 | Observability | PASS | validated request ID, result/latency and Agent route/iteration/tool/stop reason |
