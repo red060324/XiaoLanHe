@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -28,13 +29,44 @@ func TestKnowledgeCreate(t *testing.T) {
 }
 
 func TestKnowledgeSearch(t *testing.T) {
-	keyword := []KnowledgeSnippet{{ChunkID: 1, Score: 20}, {ChunkID: 2, Score: 30}}
-	vector := []KnowledgeSnippet{{ChunkID: 1, Score: 50}, {ChunkID: 3, Score: 40}}
-	store := &knowledgeStoreFake{keyword: keyword, vector: vector}
-	embedding := make([]float32, 1536)
-	items, err := NewKnowledge(store, embedderFunc(func(context.Context, []string) ([][]float32, error) { return [][]float32{embedding}, nil })).Search(context.Background(), "q", "g", "r", 99)
-	if err != nil || len(items) != 3 || items[0].ChunkID != 1 || items[0].Score != 60 || store.limit != 10 {
-		t.Fatalf("items=%#v limit=%d err=%v", items, store.limit, err)
+	t.Run("merges keyword and vector results within the limit", func(t *testing.T) {
+		keyword := []KnowledgeSnippet{{ChunkID: 1, Score: 20}, {ChunkID: 2, Score: 30}}
+		vector := []KnowledgeSnippet{{ChunkID: 1, Score: 50}, {ChunkID: 3, Score: 40}}
+		store := &knowledgeStoreFake{keyword: keyword, vector: vector}
+		embedding := make([]float32, 1536)
+		items, err := NewKnowledge(store, embedderFunc(func(context.Context, []string) ([][]float32, error) { return [][]float32{embedding}, nil })).Search(context.Background(), "q", "g", "r", 99)
+		if err != nil || len(items) != 3 || items[0].ChunkID != 1 || items[0].Score != 60 || store.limit != 10 {
+			t.Fatalf("items=%#v limit=%d err=%v", items, store.limit, err)
+		}
+	})
+
+	t.Run("normalizes the query before dependencies", func(t *testing.T) {
+		store := &knowledgeStoreFake{}
+		var embedded string
+		knowledge := NewKnowledge(store, embedderFunc(func(_ context.Context, values []string) ([][]float32, error) {
+			embedded = values[0]
+			return nil, ErrEmbeddingUnavailable
+		}))
+		if _, err := knowledge.Search(context.Background(), "  guide  ", "g", "r", 5); err != nil {
+			t.Fatal(err)
+		}
+		if store.query != "guide" || embedded != "guide" {
+			t.Fatalf("keyword query=%q embedding query=%q", store.query, embedded)
+		}
+	})
+
+	for name, query := range map[string]string{"blank": " \t ", "too long": strings.Repeat("游", 101)} {
+		t.Run("rejects "+name+" query", func(t *testing.T) {
+			store := &knowledgeStoreFake{}
+			embedCalls := 0
+			knowledge := NewKnowledge(store, embedderFunc(func(context.Context, []string) ([][]float32, error) {
+				embedCalls++
+				return nil, nil
+			}))
+			if _, err := knowledge.Search(context.Background(), query, "g", "r", 5); err == nil || store.searchCalls != 0 || embedCalls != 0 {
+				t.Fatalf("search calls=%d embed calls=%d err=%v", store.searchCalls, embedCalls, err)
+			}
+		})
 	}
 }
 
@@ -58,10 +90,11 @@ func (f embedderFunc) Embed(ctx context.Context, input []string) ([][]float32, e
 }
 
 type knowledgeStoreFake struct {
-	id                 int64
-	createCalls, limit int
-	embeddings         [][]float32
-	keyword, vector    []KnowledgeSnippet
+	id                              int64
+	createCalls, searchCalls, limit int
+	query                           string
+	embeddings                      [][]float32
+	keyword, vector                 []KnowledgeSnippet
 }
 
 func (s *knowledgeStoreFake) CreateDocument(_ context.Context, _ KnowledgeDocument, _ []string, embeddings [][]float32) (int64, error) {
@@ -69,7 +102,9 @@ func (s *knowledgeStoreFake) CreateDocument(_ context.Context, _ KnowledgeDocume
 	s.embeddings = embeddings
 	return s.id, nil
 }
-func (s *knowledgeStoreFake) SearchKeyword(_ context.Context, _ string, _, _ string, limit int) ([]KnowledgeSnippet, error) {
+func (s *knowledgeStoreFake) SearchKeyword(_ context.Context, query string, _, _ string, limit int) ([]KnowledgeSnippet, error) {
+	s.searchCalls++
+	s.query = query
 	s.limit = limit
 	return s.keyword, nil
 }

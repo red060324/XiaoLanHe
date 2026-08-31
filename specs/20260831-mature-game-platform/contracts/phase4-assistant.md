@@ -12,6 +12,10 @@ as one bounded model node. Research is the only autonomous Agent.
 | `search_forum` | `query`, optional `gameId` | published community posts | `/api/community/posts/{id}` |
 | `search_web` | `query` | configured public SearXNG provider | result HTTP(S) URL |
 
+Knowledge and Web search queries are trimmed and must contain 1-100 Unicode
+characters before they reach storage, embedding, or a public search provider.
+Invalid input cannot trigger provider work.
+
 `search_web` is registered only when Web Search is enabled. Unknown and
 mutation-like names such as `create_order`, `claim_coupon`, `pay_order`, or
 `create_post` are not registered and cannot reach an ordinary service.

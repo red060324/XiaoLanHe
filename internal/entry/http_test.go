@@ -179,6 +179,22 @@ func TestHTTPKnowledge(t *testing.T) {
 	if searched.Code != 200 || !strings.Contains(searched.Body.String(), `"snippet":"fact"`) {
 		t.Fatalf("status=%d body=%s", searched.Code, searched.Body.String())
 	}
+	searchCalls := store.searchCalls
+	for _, path := range []string{
+		"/api/knowledge/search?query=%20%20",
+		"/api/knowledge/search?query=" + strings.Repeat("a", 101),
+		"/api/knowledge/search?query=guide&limit=bad",
+		"/api/knowledge/search?query=guide&limit=0",
+		"/api/knowledge/search?query=guide&limit=11",
+	} {
+		response := ut.PerformRequest(h.server.Engine, "GET", path, nil)
+		if response.Code != 400 {
+			t.Fatalf("path=%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+	if store.searchCalls != searchCalls {
+		t.Fatalf("invalid requests reached knowledge store: before=%d after=%d", searchCalls, store.searchCalls)
+	}
 }
 
 type httpAuthenticator struct{}
@@ -195,6 +211,12 @@ func TestHTTPWebSearchAndPing(t *testing.T) {
 	searched := ut.PerformRequest(h.server.Engine, "GET", "/api/search/web?query=guide", nil)
 	if searched.Code != 200 || !strings.Contains(searched.Body.String(), `"provider":"searxng"`) || !strings.Contains(searched.Body.String(), `"title":"A"`) {
 		t.Fatalf("status=%d body=%s", searched.Code, searched.Body.String())
+	}
+	for _, path := range []string{"/api/search/web?query=%20%20", "/api/search/web?query=" + strings.Repeat("a", 101)} {
+		response := ut.PerformRequest(h.server.Engine, "GET", path, nil)
+		if response.Code != 400 {
+			t.Fatalf("path=%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
 	}
 	ping := ut.PerformRequest(h.server.Engine, "GET", "/api/system/ping", nil)
 	if ping.Code != 200 || ping.Body.String() != `{"name":"xiaolanhe","status":"ok"}` {
@@ -255,8 +277,9 @@ func (einoDisabledEmbedder) Embed(context.Context, []string) ([][]float32, error
 }
 
 type httpKnowledgeStore struct {
-	chunks []string
-	items  []usecase.KnowledgeSnippet
+	chunks      []string
+	items       []usecase.KnowledgeSnippet
+	searchCalls int
 }
 
 func (s *httpKnowledgeStore) CreateDocument(_ context.Context, _ usecase.KnowledgeDocument, chunks []string, _ [][]float32) (int64, error) {
@@ -264,6 +287,7 @@ func (s *httpKnowledgeStore) CreateDocument(_ context.Context, _ usecase.Knowled
 	return 11, nil
 }
 func (s *httpKnowledgeStore) SearchKeyword(context.Context, string, string, string, int) ([]usecase.KnowledgeSnippet, error) {
+	s.searchCalls++
 	return s.items, nil
 }
 func (*httpKnowledgeStore) SearchVector(context.Context, []float32, string, string, int) ([]usecase.KnowledgeSnippet, error) {

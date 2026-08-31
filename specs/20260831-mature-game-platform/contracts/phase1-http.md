@@ -196,6 +196,9 @@ an announced game that is not yet purchasable.
 
 - `POST /api/knowledge/documents` now requires `admin`.
 - Read-only knowledge/search endpoints remain public in phase one.
+- Knowledge and Web queries are trimmed, must contain 1-100 Unicode
+  characters, and return `400 invalid_request` before a provider call when
+  invalid. Knowledge `limit` defaults to 5 and accepts only 1-10.
 - Existing successful chat REST/SSE response fields remain compatible.
 - Existing chat/knowledge/search errors adopt the common error envelope in the
   same frontend/backend release.

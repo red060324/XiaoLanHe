@@ -55,6 +55,9 @@ truth.
   failure, max iterations, max tool calls, deadline, and cancellation.
 - Registry contains only read-only knowledge/catalog/forum/optional Web tools;
   mutation-like or unknown tool request is rejected.
+- Knowledge/Web queries are trimmed and reject blank or over-100-rune input
+  before storage, embedding, or provider calls; malformed knowledge limits
+  return 400 without downstream work.
 - Answer direct/evidence/degraded/clarify/stream cases with citations.
 - Chat persistence order and no partial assistant persistence on failure.
 - Logs/traces exclude full messages, prompts, tokens, cookies, and passwords.

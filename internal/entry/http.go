@@ -116,17 +116,26 @@ func (h *HTTP) createKnowledge(ctx context.Context, c *app.RequestContext) {
 }
 
 func (h *HTTP) searchKnowledge(ctx context.Context, c *app.RequestContext) {
-	query := string(c.Query("query"))
+	query := strings.TrimSpace(string(c.Query("query")))
 	if query == "" {
 		writeError(c, consts.StatusBadRequest, "query cannot be blank")
 		return
 	}
-	limit, _ := strconv.Atoi(string(c.Query("limit")))
-	if limit == 0 {
-		limit = 5
+	limit := 5
+	if raw := string(c.Query("limit")); raw != "" {
+		var err error
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 10 {
+			writeError(c, consts.StatusBadRequest, "limit must be between 1 and 10")
+			return
+		}
 	}
 	items, err := h.knowledge.Search(ctx, query, string(c.Query("gameCode")), string(c.Query("regionCode")), limit)
 	if err != nil {
+		if errors.Is(err, usecase.ErrInvalidSearchQuery) {
+			writeError(c, consts.StatusBadRequest, "query must contain 1 to 100 characters")
+			return
+		}
 		slog.ErrorContext(ctx, "search knowledge", "error", err)
 		writeError(c, consts.StatusInternalServerError, "knowledge search failed")
 		return
@@ -135,13 +144,17 @@ func (h *HTTP) searchKnowledge(ctx context.Context, c *app.RequestContext) {
 }
 
 func (h *HTTP) searchWeb(ctx context.Context, c *app.RequestContext) {
-	query := string(c.Query("query"))
+	query := strings.TrimSpace(string(c.Query("query")))
 	if query == "" {
 		writeError(c, consts.StatusBadRequest, "query cannot be blank")
 		return
 	}
 	result, err := h.search.Run(ctx, query)
 	if err != nil {
+		if errors.Is(err, usecase.ErrInvalidSearchQuery) {
+			writeError(c, consts.StatusBadRequest, "query must contain 1 to 100 characters")
+			return
+		}
 		slog.ErrorContext(ctx, "web search", "error", err)
 		writeError(c, consts.StatusServiceUnavailable, "web search failed")
 		return

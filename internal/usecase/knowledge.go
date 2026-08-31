@@ -57,6 +57,10 @@ func (k *Knowledge) Create(ctx context.Context, document KnowledgeDocument) (int
 }
 
 func (k *Knowledge) Search(ctx context.Context, query, gameCode, regionCode string, limit int) ([]KnowledgeSnippet, error) {
+	query, err := normalizeSearchQuery(query)
+	if err != nil {
+		return nil, err
+	}
 	limit = clamp(limit, 1, 10)
 	keyword, err := k.store.SearchKeyword(ctx, query, gameCode, regionCode, limit)
 	if err != nil {
