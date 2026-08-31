@@ -1,6 +1,6 @@
 # Tasks
 
-- Status: `IMPLEMENTING`
+- Status: `PRE_MERGE_COMPLETE`
 - Authoritative spec: `./spec.md`
 
 | ID | Class | Status | Task | Acceptance criteria | Evidence |
@@ -37,7 +37,7 @@
 | T29 | PRE_MERGE | DONE | Preserve edition-level ownership in Catalog and Commerce | AC3, AC6 | failing-then-passing frontend regression + HTTP/PostgreSQL coverage + local `make ci` + GitHub Actions `33369003504` PASS |
 | T30 | PRE_MERGE | DONE | Bind authenticated conversations to their owner and reject predictable session keys | AC2, AC7, AC8 | failing-then-passing Presenter regression + UseCase/HTTP/PostgreSQL coverage + local `make ci` + GitHub Actions `33370520530` PASS |
 | T31 | PRE_MERGE | DONE | Isolate browser conversation history when the authenticated account changes | AC2, AC8 | failing-then-passing account-switch regression + local `make ci` + GitHub Actions `33371992090` PASS |
-| T32 | PRE_MERGE | IN_PROGRESS | Prevent a stale initial identity lookup from overwriting a completed authentication action | AC2, AC8 | failing auth-race frontend regression; final CI pending |
+| T32 | PRE_MERGE | DONE | Prevent a stale initial identity lookup from overwriting a completed authentication action | AC2, AC8 | failing-then-passing auth-race regression + local `make ci` + GitHub Actions `33373433217` PASS |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent
