@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,8 @@ import (
 	toolutils "github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/compose"
 
+	catalog "github.com/red060324/XiaoLanHe/internal/catalog/usecase"
+	community "github.com/red060324/XiaoLanHe/internal/community/usecase"
 	"github.com/red060324/XiaoLanHe/internal/usecase"
 )
 
@@ -34,11 +37,27 @@ type ResearchAgent struct {
 	limits ResearchLimits
 }
 
-func NewResearchAgent(ctx context.Context, chatModel model.ToolCallingChatModel, prompt string, knowledge *usecase.Knowledge, web *usecase.WebSearch, webEnabled bool, limits ResearchLimits) (*ResearchAgent, error) {
+type CatalogSearch interface {
+	List(context.Context, catalog.ListInput) (catalog.ListResult, error)
+}
+
+type ForumSearch interface {
+	ListPosts(context.Context, community.ListPostsInput) (community.PostPage, error)
+}
+
+type ResearchCapabilities struct {
+	Knowledge  *usecase.Knowledge
+	Catalog    CatalogSearch
+	Forum      ForumSearch
+	Web        *usecase.WebSearch
+	WebEnabled bool
+}
+
+func NewResearchAgent(ctx context.Context, chatModel model.ToolCallingChatModel, prompt string, capabilities ResearchCapabilities, limits ResearchLimits) (*ResearchAgent, error) {
 	if limits.TotalTimeout <= 0 || limits.ToolTimeout <= 0 || limits.MaxIterations <= 0 || limits.MaxToolCalls <= 0 {
 		return nil, errors.New("research limits must be positive")
 	}
-	if knowledge == nil || webEnabled && web == nil {
+	if capabilities.Knowledge == nil || capabilities.Catalog == nil || capabilities.Forum == nil || capabilities.WebEnabled && capabilities.Web == nil {
 		return nil, errors.New("enabled research tools require a capability")
 	}
 	knowledgeTool, err := toolutils.InferTool("search_knowledge", "Search the local game-guide knowledge base. This tool is read-only.", func(ctx context.Context, input knowledgeQuery) (toolObservation, error) {
@@ -47,7 +66,7 @@ func NewResearchAgent(ctx context.Context, chatModel model.ToolCallingChatModel,
 			if query == "" {
 				return nil, errInvalidQuery
 			}
-			items, err := knowledge.Search(toolCtx, query, strings.TrimSpace(input.GameCode), strings.TrimSpace(input.RegionCode), 5)
+			items, err := capabilities.Knowledge.Search(toolCtx, query, strings.TrimSpace(input.GameCode), strings.TrimSpace(input.RegionCode), 5)
 			if err != nil {
 				return nil, err
 			}
@@ -61,15 +80,55 @@ func NewResearchAgent(ctx context.Context, chatModel model.ToolCallingChatModel,
 	if err != nil {
 		return nil, fmt.Errorf("create knowledge tool: %w", err)
 	}
-	tools := []tool.BaseTool{knowledgeTool}
-	if webEnabled {
+	catalogTool, err := toolutils.InferTool("search_catalog", "Search the game catalog by name or slug. This tool is read-only.", func(ctx context.Context, input catalogQuery) (toolObservation, error) {
+		query := strings.TrimSpace(input.Query)
+		return runTool(ctx, "catalog", func(toolCtx context.Context) ([]usecase.Evidence, error) {
+			if query == "" {
+				return nil, errInvalidQuery
+			}
+			result, err := capabilities.Catalog.List(toolCtx, catalog.ListInput{Query: query, Region: input.Region, Currency: input.Currency, Limit: 5})
+			if err != nil {
+				return nil, err
+			}
+			evidence := make([]usecase.Evidence, 0, len(result.Items))
+			for _, item := range result.Items {
+				evidence = append(evidence, usecase.Evidence{Source: "catalog", Title: item.Name, Content: firstText(item.Summary, item.Name), URL: "/api/games/" + url.PathEscape(item.Slug)})
+			}
+			return evidence, nil
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create catalog tool: %w", err)
+	}
+	forumTool, err := toolutils.InferTool("search_forum", "Search published game-community posts. This tool is read-only.", func(ctx context.Context, input forumQuery) (toolObservation, error) {
+		query := strings.TrimSpace(input.Query)
+		return runTool(ctx, "forum", func(toolCtx context.Context) ([]usecase.Evidence, error) {
+			if query == "" {
+				return nil, errInvalidQuery
+			}
+			result, err := capabilities.Forum.ListPosts(toolCtx, community.ListPostsInput{GameID: input.GameID, Query: query, Limit: 5})
+			if err != nil {
+				return nil, err
+			}
+			evidence := make([]usecase.Evidence, 0, len(result.Items))
+			for _, item := range result.Items {
+				evidence = append(evidence, usecase.Evidence{Source: "forum", Title: item.Title, Content: item.Content, URL: fmt.Sprintf("/api/community/posts/%d", item.ID)})
+			}
+			return evidence, nil
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create forum tool: %w", err)
+	}
+	tools := []tool.BaseTool{knowledgeTool, catalogTool, forumTool}
+	if capabilities.WebEnabled {
 		webTool, err := toolutils.InferTool("search_web", "Search the public Web for time-sensitive game information. This tool is read-only.", func(ctx context.Context, input webQuery) (toolObservation, error) {
 			query := strings.TrimSpace(input.Query)
 			return runTool(ctx, "web", func(toolCtx context.Context) ([]usecase.Evidence, error) {
 				if query == "" {
 					return nil, errInvalidQuery
 				}
-				response, err := web.Run(toolCtx, query)
+				response, err := capabilities.Web.Run(toolCtx, query)
 				if err != nil {
 					return nil, err
 				}
@@ -187,6 +246,17 @@ type knowledgeQuery struct {
 
 type webQuery struct {
 	Query string `json:"query"`
+}
+
+type catalogQuery struct {
+	Query    string `json:"query"`
+	Region   string `json:"region,omitempty"`
+	Currency string `json:"currency,omitempty"`
+}
+
+type forumQuery struct {
+	Query  string `json:"query"`
+	GameID int64  `json:"gameId,omitempty"`
 }
 
 type toolEvidence struct {

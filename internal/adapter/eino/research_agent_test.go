@@ -13,6 +13,10 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
+	catalogentity "github.com/red060324/XiaoLanHe/internal/catalog/entity"
+	catalog "github.com/red060324/XiaoLanHe/internal/catalog/usecase"
+	communityentity "github.com/red060324/XiaoLanHe/internal/community/entity"
+	community "github.com/red060324/XiaoLanHe/internal/community/usecase"
 	"github.com/red060324/XiaoLanHe/internal/usecase"
 )
 
@@ -164,6 +168,41 @@ func TestResearchAgentResearch(t *testing.T) {
 			t.Fatalf("err=%v", err)
 		}
 	})
+
+	t.Run("collects catalog and forum citations", func(t *testing.T) {
+		catalogSearch := &researchCatalog{result: catalog.ListResult{Items: []catalogentity.Game{{Slug: "example-game", Name: "Example Game", Summary: "catalog fact"}}}}
+		forumSearch := &researchForum{result: community.PostPage{Items: []communityentity.Post{{ID: 42, Title: "Build guide", Content: "forum fact"}}}}
+		model := scriptedResearchModel(
+			schema.AssistantMessage("", []schema.ToolCall{
+				{ID: "1", Function: schema.FunctionCall{Name: "search_catalog", Arguments: `{"query":" example ","region":"cn","currency":"cny"}`}},
+				{ID: "2", Function: schema.FunctionCall{Name: "search_forum", Arguments: `{"query":" build ","gameId":7}`}},
+			}),
+			schema.AssistantMessage("done", nil),
+		)
+		knowledge := usecase.NewKnowledge(&researchKnowledgeStore{}, unavailableTestEmbedder{})
+		agent, err := NewResearchAgent(context.Background(), model, "research", ResearchCapabilities{Knowledge: knowledge, Catalog: catalogSearch, Forum: forumSearch}, ResearchLimits{TotalTimeout: time.Second, ToolTimeout: time.Second, MaxIterations: 6, MaxToolCalls: 8})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := agent.Research(context.Background(), usecase.RouteDecision{Queries: []string{"question"}, NeedLocalKnowledge: true})
+
+		if err != nil || len(result.Evidence) != 2 || result.Evidence[0].URL != "/api/games/example-game" || result.Evidence[1].URL != "/api/community/posts/42" || catalogSearch.input.Query != "example" || forumSearch.input.Query != "build" || forumSearch.input.GameID != 7 {
+			t.Fatalf("result=%#v catalog=%#v forum=%#v err=%v", result, catalogSearch.input, forumSearch.input, err)
+		}
+	})
+
+	t.Run("rejects a mutation-like tool request", func(t *testing.T) {
+		store := &researchKnowledgeStore{}
+		model := scriptedResearchModel(researchToolCall("1", "create_order", `{"editionId":1}`))
+		agent := newTestResearchAgent(t, model, store, nil, false, ResearchLimits{TotalTimeout: time.Second, ToolTimeout: time.Second, MaxIterations: 6, MaxToolCalls: 8})
+
+		result, err := agent.Research(context.Background(), usecase.RouteDecision{Queries: []string{"buy it"}, NeedLocalKnowledge: true})
+
+		if err == nil || result.ToolCalls != 0 || len(store.queries()) != 0 {
+			t.Fatalf("result=%#v queries=%v err=%v", result, store.queries(), err)
+		}
+	})
 }
 
 func newTestResearchAgent(t *testing.T, chatModel *fakeChatModel, store *researchKnowledgeStore, webClient usecase.WebSearchClient, webEnabled bool, limits ResearchLimits) *ResearchAgent {
@@ -173,7 +212,7 @@ func newTestResearchAgent(t *testing.T, chatModel *fakeChatModel, store *researc
 	if webClient != nil {
 		web = usecase.NewWebSearch(webClient)
 	}
-	agent, err := NewResearchAgent(context.Background(), chatModel, "research", knowledge, web, webEnabled, limits)
+	agent, err := NewResearchAgent(context.Background(), chatModel, "research", ResearchCapabilities{Knowledge: knowledge, Catalog: &researchCatalog{}, Forum: &researchForum{}, Web: web, WebEnabled: webEnabled}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,4 +289,26 @@ type researchWebClient struct {
 
 func (c *researchWebClient) Search(ctx context.Context, query string) (usecase.WebSearchResult, error) {
 	return c.search(ctx, query)
+}
+
+type researchCatalog struct {
+	input  catalog.ListInput
+	result catalog.ListResult
+	err    error
+}
+
+func (c *researchCatalog) List(_ context.Context, input catalog.ListInput) (catalog.ListResult, error) {
+	c.input = input
+	return c.result, c.err
+}
+
+type researchForum struct {
+	input  community.ListPostsInput
+	result community.PostPage
+	err    error
+}
+
+func (f *researchForum) ListPosts(_ context.Context, input community.ListPostsInput) (community.PostPage, error) {
+	f.input = input
+	return f.result, f.err
 }

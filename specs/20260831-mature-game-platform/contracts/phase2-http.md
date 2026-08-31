@@ -7,8 +7,9 @@ envelope.
 
 ## Posts
 
-`GET /api/community/posts?gameId=&cursor=&limit=` returns published posts in
-descending `(createdAt,id)` order:
+`GET /api/community/posts?q=&gameId=&cursor=&limit=` returns published posts in
+descending `(createdAt,id)` order. `q` is an optional case-insensitive literal
+substring search over title and content, limited to 100 Unicode characters:
 
 ```json
 {

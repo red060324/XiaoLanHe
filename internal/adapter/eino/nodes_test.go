@@ -2,6 +2,7 @@ package einoadapter
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
@@ -45,8 +46,11 @@ func TestModelNodesGenerateAnswer(t *testing.T) {
 		}
 		return schema.AssistantMessage("answer", nil), nil
 	}}
-	answer, err := NewModelNodes(fake, "m", "route", "direct", "synthesis").GenerateAnswer(context.Background(), usecase.AnswerRequest{Route: usecase.RouteEvidence, Message: "q", Evidence: []usecase.Evidence{{Source: "web", Title: "A", Content: "fact"}}})
-	if err != nil || answer.Text != "answer" {
+	answer, err := NewModelNodes(fake, "m", "route", "direct", "synthesis").GenerateAnswer(context.Background(), usecase.AnswerRequest{Route: usecase.RouteEvidence, Message: "q", Evidence: []usecase.Evidence{
+		{Source: "web", Title: "A", Content: "fact", URL: "https://example.com/guide"},
+		{Source: "knowledge", Title: "unsafe", Content: "bad", URL: "javascript:alert(1)"},
+	}})
+	if err != nil || !strings.HasPrefix(answer.Text, "answer") || !strings.Contains(answer.Text, "https://example.com/guide") || strings.Contains(answer.Text, "javascript:") {
 		t.Fatalf("answer=%#v err=%v", answer, err)
 	}
 }

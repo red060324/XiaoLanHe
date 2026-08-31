@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/components/model"
@@ -47,6 +48,30 @@ func TestModelNodesStreamAnswer(t *testing.T) {
 		fake := &fakeChatModel{stream: func([]*schema.Message) (*schema.StreamReader[*schema.Message], error) { return nil, want }}
 		_, err := NewModelNodes(fake, "qwen", "route", "direct", "synthesis").StreamAnswer(context.Background(), usecase.AnswerRequest{Route: usecase.RouteDirect, Message: "hi"})
 		if !errors.Is(err, want) {
+			t.Fatalf("err=%v", err)
+		}
+	})
+
+	t.Run("emits evidence citations before EOF", func(t *testing.T) {
+		fake := &fakeChatModel{stream: func([]*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+			return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("answer", nil)}), nil
+		}}
+		stream, err := NewModelNodes(fake, "qwen", "route", "direct", "synthesis").StreamAnswer(context.Background(), usecase.AnswerRequest{
+			Route:    usecase.RouteEvidence,
+			Message:  "q",
+			Evidence: []usecase.Evidence{{Source: "catalog", Title: "Game", Content: "fact", URL: "/api/games/example-game"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Close()
+		if chunk, err := stream.Recv(); err != nil || chunk != "answer" {
+			t.Fatalf("chunk=%q err=%v", chunk, err)
+		}
+		if citation, err := stream.Recv(); err != nil || !strings.Contains(citation, "/api/games/example-game") {
+			t.Fatalf("citation=%q err=%v", citation, err)
+		}
+		if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
 			t.Fatalf("err=%v", err)
 		}
 	})

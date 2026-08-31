@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,11 +15,11 @@ func TestServiceListPosts(t *testing.T) {
 	created := time.Date(2026, 8, 31, 10, 0, 0, 123000000, time.UTC)
 	store := &fakeStore{posts: []entity.Post{{ID: 3, CreatedAt: created}, {ID: 2, CreatedAt: created.Add(-time.Second)}, {ID: 1, CreatedAt: created.Add(-2 * time.Second)}}}
 	service := NewService(store, &fakeCatalog{exists: true})
-	page, err := service.ListPosts(context.Background(), ListPostsInput{GameID: 9, ViewerID: 7, Limit: 2})
+	page, err := service.ListPosts(context.Background(), ListPostsInput{GameID: 9, ViewerID: 7, Query: " guide ", Limit: 2})
 	if err != nil || len(page.Items) != 2 || page.NextCursor == "" {
 		t.Fatalf("page=%+v err=%v", page, err)
 	}
-	if store.postFilter.GameID != 9 || store.postFilter.ViewerID != 7 || store.postFilter.Limit != 3 {
+	if store.postFilter.GameID != 9 || store.postFilter.ViewerID != 7 || store.postFilter.Query != "guide" || store.postFilter.Limit != 3 {
 		t.Fatalf("filter=%+v", store.postFilter)
 	}
 	if _, err := service.ListPosts(context.Background(), ListPostsInput{Cursor: page.NextCursor, Limit: 2}); err != nil {
@@ -27,7 +28,7 @@ func TestServiceListPosts(t *testing.T) {
 	if store.postFilter.Cursor.ID != 2 || !store.postFilter.Cursor.CreatedAt.Equal(created.Add(-time.Second)) {
 		t.Fatalf("cursor=%+v", store.postFilter.Cursor)
 	}
-	for _, input := range []ListPostsInput{{GameID: -1}, {ViewerID: -1}, {Limit: 51}, {Cursor: "bad***"}} {
+	for _, input := range []ListPostsInput{{GameID: -1}, {ViewerID: -1}, {Limit: 51}, {Cursor: "bad***"}, {Query: strings.Repeat("界", 101)}} {
 		if _, err := service.ListPosts(context.Background(), input); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("input=%+v err=%v", input, err)
 		}

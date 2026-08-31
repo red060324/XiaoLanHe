@@ -62,7 +62,7 @@ func (h *HTTP) listPosts(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	principal, _ := httpauth.Principal(c)
-	page, err := h.service.ListPosts(ctx, community.ListPostsInput{GameID: gameID, ViewerID: principal.UserID, Cursor: string(c.Query("cursor")), Limit: limit})
+	page, err := h.service.ListPosts(ctx, community.ListPostsInput{GameID: gameID, ViewerID: principal.UserID, Cursor: string(c.Query("cursor")), Query: string(c.Query("q")), Limit: limit})
 	if err != nil {
 		h.writeError(ctx, c, "list_posts", 0, err)
 		return

@@ -33,7 +33,8 @@ func (s *Store) ListPosts(ctx context.Context, filter community.PostFilter) ([]e
 		left join game g on g.id=p.game_id
 		where p.status='published' and ($2::bigint=0 or p.game_id=$2)
 			and ($3::bigint=0 or (p.created_at,p.id)<($4,$3))
-		order by p.created_at desc,p.id desc limit $5`, filter.ViewerID, filter.GameID, filter.Cursor.ID, filter.Cursor.CreatedAt, filter.Limit)
+			and ($6='' or strpos(lower(p.title),lower($6))>0 or strpos(lower(p.content),lower($6))>0)
+		order by p.created_at desc,p.id desc limit $5`, filter.ViewerID, filter.GameID, filter.Cursor.ID, filter.Cursor.CreatedAt, filter.Limit, filter.Query)
 	if err != nil {
 		return nil, err
 	}

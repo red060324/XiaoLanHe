@@ -162,6 +162,14 @@ func TestProductPostgres(t *testing.T) {
 	if _, err := pool.Exec(ctx, `update community_post set created_at='2026-08-31T00:00:01Z' where id=$1`, second.ID); err != nil {
 		t.Fatal(err)
 	}
+	searchPage, err := communityService.ListPosts(ctx, community.ListPostsInput{Query: "second", Limit: 10})
+	if err != nil || len(searchPage.Items) != 1 || searchPage.Items[0].ID != second.ID {
+		t.Fatalf("community search=%+v err=%v", searchPage, err)
+	}
+	literalWildcard, err := communityService.ListPosts(ctx, community.ListPostsInput{Query: "%", Limit: 10})
+	if err != nil || len(literalWildcard.Items) != 0 {
+		t.Fatalf("literal wildcard search=%+v err=%v", literalWildcard, err)
+	}
 	page, err := communityService.ListPosts(ctx, community.ListPostsInput{GameID: game.ID, ViewerID: user.ID, Limit: 1})
 	if err != nil || len(page.Items) != 1 || page.Items[0].ID != second.ID || page.NextCursor == "" {
 		t.Fatalf("first community page=%+v err=%v", page, err)

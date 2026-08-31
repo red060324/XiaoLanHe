@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/red060324/XiaoLanHe/internal/community/entity"
 	"github.com/red060324/XiaoLanHe/internal/platform/auth"
@@ -31,6 +32,7 @@ type PostFilter struct {
 	Cursor   Cursor
 	Limit    int
 	ViewerID int64
+	Query    string
 }
 
 type CommentFilter struct {
@@ -71,6 +73,7 @@ func NewService(store Store, catalog Catalog) *Service {
 type ListPostsInput struct {
 	GameID, ViewerID int64
 	Cursor           string
+	Query            string
 	Limit            int
 }
 
@@ -80,11 +83,12 @@ type PostPage struct {
 }
 
 func (s *Service) ListPosts(ctx context.Context, in ListPostsInput) (PostPage, error) {
+	query := strings.TrimSpace(in.Query)
 	cursor, limit, err := pageInput(in.Cursor, in.Limit)
-	if err != nil || in.GameID < 0 || in.ViewerID < 0 {
+	if err != nil || in.GameID < 0 || in.ViewerID < 0 || utf8.RuneCountInString(query) > 100 {
 		return PostPage{}, ErrInvalidInput
 	}
-	items, err := s.store.ListPosts(ctx, PostFilter{GameID: in.GameID, Cursor: cursor, Limit: limit + 1, ViewerID: in.ViewerID})
+	items, err := s.store.ListPosts(ctx, PostFilter{GameID: in.GameID, Cursor: cursor, Limit: limit + 1, ViewerID: in.ViewerID, Query: query})
 	if err != nil {
 		return PostPage{}, err
 	}

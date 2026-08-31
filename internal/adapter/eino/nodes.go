@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/cloudwego/eino/components/model"
@@ -58,6 +59,7 @@ func (m *ModelNodes) GenerateAnswer(ctx context.Context, request usecase.AnswerR
 	if text == "" {
 		text = emptyReply
 	}
+	text += citationSuffix(request.Evidence)
 	return usecase.Answer{Text: text, Model: m.name}, nil
 }
 
@@ -66,7 +68,7 @@ func (m *ModelNodes) StreamAnswer(ctx context.Context, request usecase.AnswerReq
 	if err != nil {
 		return nil, err
 	}
-	return &directStream{stream: stream, model: m.name}, nil
+	return &directStream{stream: stream, model: m.name, suffix: citationSuffix(request.Evidence)}, nil
 }
 
 func (m *ModelNodes) answerMessages(request usecase.AnswerRequest) []*schema.Message {
@@ -105,6 +107,29 @@ func firstText(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func citationSuffix(evidence []usecase.Evidence) string {
+	seen := make(map[string]bool, len(evidence))
+	var result strings.Builder
+	for _, item := range evidence {
+		raw := strings.TrimSpace(item.URL)
+		parsed, err := url.ParseRequestURI(raw)
+		if err != nil || parsed.User != nil || parsed.IsAbs() && (parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "") || !parsed.IsAbs() && !strings.HasPrefix(parsed.Path, "/api/") {
+			continue
+		}
+		raw = strings.NewReplacer("(", "%28", ")", "%29").Replace(parsed.String())
+		if seen[raw] {
+			continue
+		}
+		seen[raw] = true
+		if result.Len() == 0 {
+			result.WriteString("\n\n来源：")
+		}
+		title := strings.NewReplacer("\\", "\\\\", "[", "\\[", "]", "\\]").Replace(firstText(strings.TrimSpace(item.Title), strings.TrimSpace(item.Source), "来源"))
+		fmt.Fprintf(&result, "\n- [%s](%s)", title, raw)
+	}
+	return result.String()
 }
 
 var _ usecase.RouterNode = (*ModelNodes)(nil)
