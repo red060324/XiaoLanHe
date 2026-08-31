@@ -166,6 +166,30 @@ describe('CommunityPage', () => {
     }));
   });
 
+  it('keeps a submitted comment with its original post when another post opens', async () => {
+    const secondPost = { ...post, id: '10', title: 'Second Guide', commentCount: 4 };
+    const createdComment = { id: '11', postId: post.id, content: 'Only for the first post', status: 'published' as const, author: user, createdAt: post.createdAt, updatedAt: post.updatedAt };
+    let resolveComment!: (value: unknown) => void;
+    api.listCommunityPosts.mockResolvedValue({ items: [post, secondPost] });
+    api.getCommunityPost.mockResolvedValueOnce(post).mockResolvedValueOnce(secondPost);
+    api.createCommunityComment.mockReturnValue(new Promise((resolve) => { resolveComment = resolve; }));
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    await screen.findByRole('heading', { name: 'Boss Guide', level: 1 });
+    fireEvent.change(screen.getByLabelText('写评论'), { target: { value: createdComment.content } });
+    fireEvent.click(screen.getByRole('button', { name: '发布' }));
+    await waitFor(() => expect(api.createCommunityComment).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole('button', { name: '← 返回社区' }));
+    fireEvent.click(screen.getByRole('button', { name: /Second Guide/ }));
+    expect(await screen.findByRole('heading', { name: 'Second Guide', level: 1 })).toBeInTheDocument();
+
+    await act(async () => resolveComment(createdComment));
+    expect(screen.queryByText(createdComment.content)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '评论 4', level: 2 })).toBeInTheDocument();
+  });
+
   it('ignores an older comment page after another post opens', async () => {
     const secondPost = { ...post, id: '10', title: 'Second Guide' };
     const firstComment = { id: '11', postId: post.id, content: 'First comment', status: 'published' as const, author: user, createdAt: post.createdAt, updatedAt: post.updatedAt };

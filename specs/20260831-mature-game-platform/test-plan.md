@@ -45,6 +45,8 @@ truth.
   detail after returning to the feed.
 - An older comment page from a prior post cannot append comments or replace the
   cursor after another post opens.
+- A completed comment submission from a prior post cannot append to or change
+  the comment count of a later selected post.
 - A reaction response may refresh its post in the feed, but cannot reopen a
   closed detail or replace a different selected post.
 - Repeated comment form submission while the first request is pending creates

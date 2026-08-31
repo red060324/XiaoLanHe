@@ -46,7 +46,8 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
   const [error, setError] = useState<string | null>(null);
   const postRequest = useRef(0);
   const detailRequest = useRef(0);
-  const commentSubmitting = useRef(false);
+  const selectedPostId = useRef<string | null>(null);
+  const commentSubmitting = useRef('');
 
   useEffect(() => {
     void loadPosts('', false);
@@ -69,6 +70,7 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
   }
 
   async function openPost(id: string) {
+    selectedPostId.current = id;
     const request = ++detailRequest.current;
     setLoading(true);
     setError(null);
@@ -101,6 +103,7 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
       setContent('');
       setPostGameId('');
       detailRequest.current++;
+      selectedPostId.current = created.id;
       setSelectedPost(created);
       setComments([]);
       setCommentCursor('');
@@ -142,11 +145,13 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
 
   function closePost() {
     detailRequest.current++;
+    selectedPostId.current = null;
     setSelectedPost(null);
     setEditingPost(false);
     setTitle('');
     setContent('');
     setPostGameId('');
+    setLoading(false);
   }
 
   async function removePost() {
@@ -168,20 +173,22 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
       onRequireLogin();
       return;
     }
-    if (commentSubmitting.current) return;
-    commentSubmitting.current = true;
+    const postId = selectedPost.id;
+    if (commentSubmitting.current === postId) return;
+    commentSubmitting.current = postId;
     setLoading(true);
     setError(null);
     try {
-      const created = await createCommunityComment(selectedPost.id, comment);
-      setComments((current) => [...current, created]);
-      setSelectedPost((current) => current ? { ...current, commentCount: current.commentCount + 1 } : current);
+      const created = await createCommunityComment(postId, comment);
+      if (selectedPostId.current !== postId) return;
+      setComments((current) => current.some((item) => item.id === created.id) ? current : [...current, created]);
+      setSelectedPost((current) => current?.id === postId ? { ...current, commentCount: current.commentCount + 1 } : current);
       setComment('');
     } catch (requestError) {
-      setError(messageOf(requestError, '评论失败'));
+      if (selectedPostId.current === postId) setError(messageOf(requestError, '评论失败'));
     } finally {
-      commentSubmitting.current = false;
-      setLoading(false);
+      if (commentSubmitting.current === postId) commentSubmitting.current = '';
+      if (selectedPostId.current === postId) setLoading(false);
     }
   }
 
