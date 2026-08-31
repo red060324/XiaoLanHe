@@ -68,6 +68,31 @@ describe('CommercePage', () => {
     expect(await screen.findByText('待支付')).toBeInTheDocument();
   });
 
+  it('preserves a newer coupon selection when an earlier checkout completes', async () => {
+    const nextClaim = { id: '10', couponCode: 'NEXT10', status: 'claimed', claimedAt: '2026-08-31T08:01:00Z' };
+    let resolveOrder!: (value: unknown) => void;
+    api.listCouponClaims.mockResolvedValue({
+      items: [
+        { id: '9', couponCode: 'WELCOME20', status: 'claimed', claimedAt: '2026-08-31T08:00:00Z' },
+        nextClaim
+      ]
+    });
+    api.createOrder.mockReturnValue(new Promise((resolve) => { resolveOrder = resolve; }));
+    api.listOrders.mockResolvedValue({ items: [pendingOrder] });
+    render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    await screen.findByRole('option', { name: 'NEXT10 · #10' });
+    fireEvent.change(screen.getByLabelText('本次结算优惠券'), { target: { value: '9' } });
+    fireEvent.click(screen.getByRole('button', { name: '购买' }));
+    await waitFor(() => expect(api.createOrder).toHaveBeenCalledOnce());
+    fireEvent.change(screen.getByLabelText('本次结算优惠券'), { target: { value: nextClaim.id } });
+
+    await act(async () => resolveOrder({ order: pendingOrder, replayed: false }));
+    fireEvent.click(await screen.findByRole('button', { name: '优惠与购买' }));
+
+    expect(screen.getByLabelText('本次结算优惠券')).toHaveValue(nextClaim.id);
+  });
+
   it('keeps the current game filter after an earlier coupon claim completes', async () => {
     const filteredDeal = { ...deal, id: '5', code: 'DEMO20', name: 'Demo only' };
     let resolveClaim!: (value: unknown) => void;

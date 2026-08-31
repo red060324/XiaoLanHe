@@ -83,6 +83,8 @@ truth.
   attached to an order are not offered for another checkout.
 - A superseded deal or order-history request that fails after a newer filter or
   completed payment cannot replace the current success state with a stale error.
+- A completed checkout consumes its captured coupon but cannot clear another
+  coupon the user selected while that checkout was pending.
 - A coupon claim completed after the game filter changes cannot restore deals
   from the filter captured when the claim started.
 

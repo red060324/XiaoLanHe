@@ -57,6 +57,7 @@
 | T49 | PRE_MERGE | DONE | Hydrate catalog summaries before exposing purchase controls | AC3, AC6, AC10 | failing-then-passing real-contract frontend regression; full local `make ci BASE_REF=origin/master` passed with 43 Vitest tests |
 | T50 | PRE_MERGE | DONE | Keep a completed post creation from replacing a newer selected detail | AC4, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 44 Vitest tests |
 | T51 | PRE_MERGE | DONE | Keep an older chat stream cleanup from disabling a newer stream | AC7, AC8, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 45 Vitest tests |
+| T52 | PRE_MERGE | DONE | Preserve a newer coupon selection when an earlier checkout completes | AC6, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 46 Vitest tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent

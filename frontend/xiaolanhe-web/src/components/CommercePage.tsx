@@ -148,7 +148,7 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
       if (selectedClaimId) {
         claimRequest.current++;
         setClaims((current) => current.filter((claim) => claim.id !== selectedClaimId));
-        setSelectedClaimId('');
+        setSelectedClaimId((current) => current === selectedClaimId ? '' : current);
       }
       setOrders((current) => [result.order, ...current.filter((item) => item.orderNo !== result.order.orderNo)]);
       setTab('orders');
