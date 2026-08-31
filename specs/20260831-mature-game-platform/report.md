@@ -38,12 +38,12 @@ Redis, background Agent, or Java runtime was introduced.
 | Gate | Evidence | Result |
 |---|---|---|
 | Latest local full command | `make ci`: Go tests, full race, frontend tests/build, hooks, architecture and spec drift | PASS |
-| Go vet and all tests | local `make ci`; full GitHub Actions `33371992090` at `ab90044` | PASS |
-| Go race | local full repository race; GitHub Actions `33371992090` | PASS |
-| Frontend | 4 files, 24 Vitest tests and Vite production build; account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
+| Go vet and all tests | local `make ci`; full GitHub Actions `33377050477` at `68dddc5` | PASS |
+| Go race | local full repository race; GitHub Actions `33377050477` | PASS |
+| Frontend | 4 files, 27 Vitest tests and Vite production build; coupon-claim restoration/reservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
 | Architecture/spec/docs | hooks, architecture, spec drift and link checks | PASS |
-| PostgreSQL | GitHub Actions `33366323928` proved stale omitted catalog price before fix; `33371992090` passed migrations, conversation/edition ownership, catalog aggregate replacement, identity, forum, promotion and commerce | PASS |
-| Seed and container | GitHub Actions `33371992090`: repeated seed, health/readiness/catalog/community/deals/SPA | PASS |
+| PostgreSQL | GitHub Actions `33377050477` passed migrations plus identity, forum, promotion, available-coupon reservation, order and entitlement integration | PASS |
+| Seed and container | GitHub Actions `33377050477`: repeated seed, health/readiness/catalog/community/deals/SPA | PASS |
 | Assistant | Browser history isolation, UUIDv4/session ownership, fake model/tool iteration, historical-context boundary, failure/budget/cancellation, four-tool allowlist, REST/SSE citations | PASS |
 | Request correlation | invalid client IDs replaced once and the validated ID is shared by response and REST/SSE completion logs | PASS |
 | Search input boundary | query trim/blank/100-rune checks and knowledge limit 1-10; invalid requests prove zero downstream calls | PASS |
@@ -58,8 +58,8 @@ Redis, background Agent, or Java runtime was introduced.
 |---|---|---|
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
-| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T31 |
-| Final documentation and latest code-bearing clean-checkout CI | PASS | GitHub Actions `33371992090` |
+| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T33 |
+| Final documentation and latest code-bearing clean-checkout CI | PASS | GitHub Actions `33377050477` |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |
 | Observability | PASS | validated request ID, result/latency and Agent route/iteration/tool/stop reason |
