@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +37,19 @@ func TestOpenAIEmbedderEmbed(t *testing.T) {
 		defer server.Close()
 		_, err := NewOpenAIEmbedder(server.URL, "key", "embedding", time.Second).Embed(context.Background(), []string{"q"})
 		if !errors.Is(err, usecase.ErrEmbeddingUnavailable) {
+			t.Fatalf("err=%v", err)
+		}
+	})
+	t.Run("rejects oversized provider response", func(t *testing.T) {
+		const oversized = 64<<10 + 1
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"padding":"`)
+			_, _ = io.CopyN(w, strings.NewReader(strings.Repeat("a", oversized)), oversized)
+			_, _ = io.WriteString(w, `","data":[]}`)
+		}))
+		defer server.Close()
+		_, err := NewOpenAIEmbedder(server.URL, "key", "embedding", time.Second).Embed(context.Background(), []string{"q"})
+		if err == nil || !strings.Contains(err.Error(), "response exceeds") {
 			t.Fatalf("err=%v", err)
 		}
 	})

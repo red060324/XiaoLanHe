@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ type OpenAIEmbedder struct {
 	endpoint, apiKey, model string
 	client                  *http.Client
 }
+
+const maxEmbeddingResponseBytesPerInput = 64 << 10
 
 func NewOpenAIEmbedder(baseURL, apiKey, model string, timeout time.Duration) *OpenAIEmbedder {
 	return &OpenAIEmbedder{endpoint: strings.TrimRight(baseURL, "/") + "/embeddings", apiKey: apiKey, model: model, client: &http.Client{Timeout: timeout}}
@@ -40,13 +43,21 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, input []string) ([][]float32
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("embedding provider returned HTTP %d", resp.StatusCode)
 	}
+	limit := int64(max(1, len(input)) * maxEmbeddingResponseBytesPerInput)
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read embedding response: %w", err)
+	}
+	if int64(len(responseBody)) > limit {
+		return nil, fmt.Errorf("embedding response exceeds %d bytes", limit)
+	}
 	var payload struct {
 		Data []struct {
 			Embedding []float32 `json:"embedding"`
 			Index     int       `json:"index"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(responseBody, &payload); err != nil {
 		return nil, err
 	}
 	result := make([][]float32, len(input))
