@@ -88,6 +88,28 @@ describe('CommunityPage', () => {
     expect(screen.queryByText('detail unavailable')).not.toBeInTheDocument();
   });
 
+  it('keeps a newer post open when an earlier create finishes', async () => {
+    const secondPost = { ...post, id: '10', title: 'Second Guide' };
+    const createdPost = { ...post, id: '11', title: 'Created Guide' };
+    let resolveCreate!: (value: unknown) => void;
+    api.listCommunityPosts.mockResolvedValue({ items: [post, secondPost] });
+    api.getCommunityPost.mockResolvedValue(secondPost);
+    api.createCommunityPost.mockReturnValue(new Promise((resolve) => { resolveCreate = resolve; }));
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.change(await screen.findByLabelText('标题'), { target: { value: createdPost.title } });
+    fireEvent.change(screen.getByLabelText('内容'), { target: { value: createdPost.content } });
+    fireEvent.click(screen.getByRole('button', { name: '发布' }));
+    await waitFor(() => expect(api.createCommunityPost).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: /Second Guide/ }));
+    expect(await screen.findByRole('heading', { name: 'Second Guide', level: 1 })).toBeInTheDocument();
+
+    await act(async () => resolveCreate(createdPost));
+
+    expect(screen.getByRole('heading', { name: 'Second Guide', level: 1 })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Created Guide', level: 1 })).not.toBeInTheDocument();
+  });
+
   it('does not reopen a post when an earlier edit finishes after returning to the feed', async () => {
     let resolveUpdate!: (value: unknown) => void;
     api.updateCommunityPost.mockReturnValue(new Promise((resolve) => { resolveUpdate = resolve; }));

@@ -94,6 +94,7 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
       onRequireLogin();
       return;
     }
+    const request = detailRequest.current;
     setLoading(true);
     setError(null);
     try {
@@ -102,15 +103,16 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
       setTitle('');
       setContent('');
       setPostGameId('');
+      if (request !== detailRequest.current) return;
       detailRequest.current++;
       selectedPostId.current = created.id;
       setSelectedPost(created);
       setComments([]);
       setCommentCursor('');
     } catch (requestError) {
-      setError(messageOf(requestError, '发布失败'));
+      if (request === detailRequest.current) setError(messageOf(requestError, '发布失败'));
     } finally {
-      setLoading(false);
+      if (request === detailRequest.current) setLoading(false);
     }
   }
 

@@ -57,6 +57,8 @@ truth.
   that the user closed while the save was pending.
 - A completed post deletion removes its feed item, but cannot close a different
   post opened while the deletion was pending.
+- A completed post creation remains in the feed, but cannot replace a post the
+  user opened while the creation was pending or overwrite that detail's state.
 - Repeated comment form submission while the first request is pending creates
   one comment request and exposes a disabled progress state.
 
