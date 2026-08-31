@@ -73,4 +73,5 @@ jobs:
           curl --fail --silent http://127.0.0.1:18088/readyz
           curl --fail --silent http://127.0.0.1:18088/api/games
           curl --fail --silent http://127.0.0.1:18088/api/community/posts
+          curl --fail --silent http://127.0.0.1:18088/api/deals
           curl --fail --silent http://127.0.0.1:18088/

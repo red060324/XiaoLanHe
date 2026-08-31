@@ -1,6 +1,6 @@
 # Tasks
 
-- Status: `PHASE_2_COMPLETE`
+- Status: `PHASE_3_IN_PROGRESS`
 - Authoritative spec: `./spec.md`
 
 | ID | Class | Status | Task | Acceptance criteria | Evidence |
@@ -15,7 +15,7 @@
 | T7 | PRE_MERGE | DONE | Fix anonymous knowledge write, Web Search failure semantics, dead config, and cancellable chat UI | AC2, AC8 | Go/HTTP/frontend regression PASS |
 | T8 | PRE_MERGE | DONE | Implement Community posts/comments/reactions/feed | AC4 | entity/UseCase/HTTP/PostgreSQL tests + `contracts/phase2-http.md` |
 | T9 | PRE_MERGE | DONE | Add Community UI and ownership/error states | AC4 | 13 Vitest tests + production build |
-| T10 | PRE_MERGE | TODO | Implement atomic idempotent coupon campaign/claim | AC5 | concurrency + PostgreSQL tests |
+| T10 | PRE_MERGE | IN_PROGRESS | Implement atomic idempotent coupon campaign/claim | AC5 | Entity/UseCase/HTTP local PASS; PostgreSQL concurrency CI pending |
 | T11 | PRE_MERGE | TODO | Implement order, sandbox payment, redemption, and entitlement | AC6 | state/idempotency/integration tests |
 | T12 | PRE_MERGE | TODO | Add Deals/checkout/orders/ownership UI | AC5, AC6 | frontend tests + build |
 | T13 | PRE_MERGE | TODO | Implement Router/Answer Nodes and bounded Research Agent | AC7, AC8 | deterministic Agent-loop tests |
@@ -27,5 +27,5 @@
 | T19 | FOLLOW_UP | TODO | Add transactional Agent tools after ordinary commerce is proven | excluded | separate approval/idempotency spec |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
-T8-T9 form Phase 2. Phase 3 starts with T10 only after the Phase 2 revision
-passes GitHub Actions against PostgreSQL.
+T8-T9 form Phase 2. Phase 3 started after revision `3ae736a` passed GitHub
+Actions against PostgreSQL.

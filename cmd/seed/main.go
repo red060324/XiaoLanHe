@@ -72,10 +72,27 @@ func main() {
 		do update set amount_minor=excluded.amount_minor,updated_at=now()`, editionID); err != nil {
 		fail("seed price", err)
 	}
+	var campaignID int64
+	if err := tx.QueryRow(ctx, `
+		insert into coupon_campaign(code,name,status,starts_at,ends_at)
+		values ('DEMO-WELCOME','Demo welcome campaign','active','2020-01-01T00:00:00Z','2099-01-01T00:00:00Z')
+		on conflict ((lower(code))) do update set name=excluded.name,status='active',starts_at=excluded.starts_at,ends_at=excluded.ends_at,updated_at=now()
+		returning id`).Scan(&campaignID); err != nil {
+		fail("seed coupon campaign", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into coupon_definition(campaign_id,code,name,discount_type,percentage_bps,currency,minimum_minor,total_stock,per_user_limit,game_id,edition_id)
+		values ($1,'WELCOME20','Demo 20% off','percentage',2000,'USD',1000,1000,1,$2,$3)
+		on conflict ((lower(code))) do update set campaign_id=excluded.campaign_id,name=excluded.name,discount_type=excluded.discount_type,
+			fixed_minor=null,percentage_bps=excluded.percentage_bps,currency=excluded.currency,minimum_minor=excluded.minimum_minor,
+			total_stock=greatest(coupon_definition.claimed_stock,excluded.total_stock),per_user_limit=excluded.per_user_limit,
+			game_id=excluded.game_id,edition_id=excluded.edition_id,updated_at=now()`, campaignID, gameID, editionID); err != nil {
+		fail("seed coupon", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		fail("commit seed", err)
 	}
-	slog.Info("seed completed", "admin", username, "game", "xiaolanhe-demo")
+	slog.Info("seed completed", "admin", username, "game", "xiaolanhe-demo", "coupon", "WELCOME20")
 }
 
 func fail(action string, err error) {

@@ -11,8 +11,8 @@ The Community vertical slice is implemented on top of the Phase 1 foundation.
 Users can browse stable game-scoped feeds, create and manage owned posts and
 comments, and add idempotent reactions. Admin moderation, soft deletion,
 cross-module game validation, React navigation, detail/error states, and the
-third ordered migration are included. The slice is ready for pushed CI and
-review, not rollout.
+third ordered migration are included. The pushed revision passed public CI and
+is ready for review, not rollout.
 
 ## Acceptance Criteria
 
@@ -34,8 +34,8 @@ review, not rollout.
 | Static/build | vet, hooks, architecture, spec drift, Vite production build | PASS |
 | Full local CI | `make ci BASE_REF=origin/master` | ENVIRONMENT BLOCKED: desktop sandbox forbids legacy `httptest` port binding; equivalent split gates pass |
 | Java absence | repository file scan | PASS |
-| PostgreSQL integration | GitHub Actions pgvector service: migration, pagination, comments, concurrent reaction | REQUIRED ON PUSH |
-| Container smoke | GitHub Actions: health/readiness/catalog/community/SPA | REQUIRED ON PUSH |
+| PostgreSQL integration | GitHub Actions run `33350379345`: migration, pagination, comments, concurrent reaction | PASS |
+| Container smoke | GitHub Actions run `33350379345`: health/readiness/catalog/community/SPA | PASS |
 | Rollout/model/Web smoke | shared deployment | NOT RUN: rollout-only |
 
 ## Architecture And Debt
@@ -57,6 +57,5 @@ smoke owner and admin mutations.
 
 ## Required Next Evidence
 
-1. Require the pushed GitHub Actions PostgreSQL/container run to pass.
-2. Start Phase 3 promotion/coupon work from the reviewed Phase 2 revision.
-3. Keep authenticated/admin rollout smoke and real-model/Web smoke rollout-only.
+1. Start Phase 3 promotion/coupon work from revision `3ae736a`.
+2. Keep authenticated/admin rollout smoke and real-model/Web smoke rollout-only.

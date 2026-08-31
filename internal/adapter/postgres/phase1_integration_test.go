@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -23,6 +24,9 @@ import (
 	communitypg "github.com/red060324/XiaoLanHe/internal/community/repository/postgres"
 	community "github.com/red060324/XiaoLanHe/internal/community/usecase"
 	"github.com/red060324/XiaoLanHe/internal/platform/auth"
+	promotionentity "github.com/red060324/XiaoLanHe/internal/promotion/entity"
+	promotionpg "github.com/red060324/XiaoLanHe/internal/promotion/repository/postgres"
+	promotion "github.com/red060324/XiaoLanHe/internal/promotion/usecase"
 	"github.com/red060324/XiaoLanHe/migrations"
 )
 
@@ -76,12 +80,12 @@ func TestProductPostgres(t *testing.T) {
 		}
 	}
 	var versions int
-	if err := pool.QueryRow(ctx, `select count(*) from schema_migration`).Scan(&versions); err != nil || versions != 3 {
+	if err := pool.QueryRow(ctx, `select count(*) from schema_migration`).Scan(&versions); err != nil || versions != 4 {
 		t.Fatalf("migration versions=%d err=%v", versions, err)
 	}
 
 	changed := fstest.MapFS{}
-	for _, name := range []string{"001_initial_schema.sql", "002_account_catalog.sql", "003_community.sql"} {
+	for _, name := range []string{"001_initial_schema.sql", "002_account_catalog.sql", "003_community.sql", "004_promotion.sql"} {
 		body, err := fs.ReadFile(migrations.Files, name)
 		if err != nil {
 			t.Fatal(err)
@@ -196,5 +200,99 @@ func TestProductPostgres(t *testing.T) {
 	}
 	if _, err := communityService.GetPost(ctx, second.ID, other.ID); !errors.Is(err, community.ErrNotFound) {
 		t.Fatalf("hidden public post error=%v", err)
+	}
+
+	promotionService := promotion.NewService(promotionpg.NewStore(pool))
+	campaignID := insertCampaign(t, ctx, pool, "phase-campaign", "active", time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	lastCouponID := insertCoupon(t, ctx, pool, campaignID, "LASTONE", 1, 1, game.ID, game.Editions[0].ID)
+	idempotentCouponID := insertCoupon(t, ctx, pool, campaignID, "IDEMP20", 10, 1, game.ID, game.Editions[0].ID)
+	insertCoupon(t, ctx, pool, campaignID, "OTHER20", 10, 1, game.ID, game.Editions[0].ID)
+
+	dealPage, err := promotionService.List(ctx, promotion.ListInput{GameID: game.ID, ViewerID: user.ID})
+	if err != nil || len(dealPage.Items) != 3 {
+		t.Fatalf("promotion page=%+v err=%v", dealPage, err)
+	}
+
+	claimIDs := make(chan int64, 8)
+	claimErrs := make(chan error, 8)
+	for range 8 {
+		go func() {
+			result, err := promotionService.Claim(ctx, owner, "IDEMP20", "same-key.001")
+			claimErrs <- err
+			claimIDs <- result.Claim.ID
+		}()
+	}
+	var firstClaimID int64
+	for range 8 {
+		if err := <-claimErrs; err != nil {
+			t.Fatalf("idempotent claim: %v", err)
+		}
+		claimID := <-claimIDs
+		if firstClaimID == 0 {
+			firstClaimID = claimID
+		} else if claimID != firstClaimID {
+			t.Fatalf("claim ids differ: first=%d got=%d", firstClaimID, claimID)
+		}
+	}
+	assertCouponCounts(t, ctx, pool, idempotentCouponID, 1, 1)
+	if _, err := promotionService.Claim(ctx, owner, "IDEMP20", "other-key.001"); !errors.Is(err, promotion.ErrClaimLimit) {
+		t.Fatalf("claim limit error=%v", err)
+	}
+	if _, err := promotionService.Claim(ctx, owner, "OTHER20", "same-key.001"); !errors.Is(err, promotion.ErrIdempotencyConflict) {
+		t.Fatalf("idempotency conflict error=%v", err)
+	}
+
+	stockErrs := make(chan error, 2)
+	for _, principal := range []auth.Principal{owner, otherPrincipal} {
+		go func(principal auth.Principal) {
+			_, err := promotionService.Claim(ctx, principal, "LASTONE", "last-stock."+strconv.FormatInt(principal.UserID, 10))
+			stockErrs <- err
+		}(principal)
+	}
+	succeeded, exhausted := 0, 0
+	for range 2 {
+		switch err := <-stockErrs; {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, promotionentity.ErrExhausted):
+			exhausted++
+		default:
+			t.Fatalf("last stock error=%v", err)
+		}
+	}
+	if succeeded != 1 || exhausted != 1 {
+		t.Fatalf("last stock succeeded=%d exhausted=%d", succeeded, exhausted)
+	}
+	assertCouponCounts(t, ctx, pool, lastCouponID, 1, 1)
+}
+
+func insertCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool, code, status string, startsAt, endsAt time.Time) int64 {
+	t.Helper()
+	var id int64
+	if err := pool.QueryRow(ctx, `insert into coupon_campaign(code,name,status,starts_at,ends_at) values ($1,$1,$2,$3,$4) returning id`, code, status, startsAt, endsAt).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func insertCoupon(t *testing.T, ctx context.Context, pool *pgxpool.Pool, campaignID int64, code string, stock int64, perUser int, gameID, editionID int64) int64 {
+	t.Helper()
+	var id int64
+	if err := pool.QueryRow(ctx, `
+		insert into coupon_definition(campaign_id,code,name,discount_type,percentage_bps,currency,minimum_minor,total_stock,per_user_limit,game_id,edition_id)
+		values ($1,$2,$2,'percentage',2000,'USD',1000,$3,$4,$5,$6) returning id`, campaignID, code, stock, perUser, gameID, editionID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func assertCouponCounts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, couponID, wantStock, wantClaims int64) {
+	t.Helper()
+	var stock, claims int64
+	if err := pool.QueryRow(ctx, `select claimed_stock,(select count(*) from coupon_claim where coupon_id=$1) from coupon_definition where id=$1`, couponID).Scan(&stock, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if stock != wantStock || claims != wantClaims {
+		t.Fatalf("coupon=%d stock=%d claims=%d want=%d,%d", couponID, stock, claims, wantStock, wantClaims)
 	}
 }
