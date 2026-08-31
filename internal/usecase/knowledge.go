@@ -67,6 +67,9 @@ func (k *Knowledge) Search(ctx context.Context, query, gameCode, regionCode stri
 		return nil, fmt.Errorf("keyword search: %w", err)
 	}
 	embeddings, err := k.embedder.Embed(ctx, []string{query})
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
+	}
 	if err != nil || len(embeddings) != 1 || len(embeddings[0]) != 1536 {
 		return keyword, nil
 	}

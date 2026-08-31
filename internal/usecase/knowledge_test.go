@@ -56,6 +56,19 @@ func TestKnowledgeSearch(t *testing.T) {
 		}
 	})
 
+	for name, contextErr := range map[string]error{"cancellation": context.Canceled, "deadline": context.DeadlineExceeded} {
+		t.Run("propagates request "+name, func(t *testing.T) {
+			store := &knowledgeStoreFake{keyword: []KnowledgeSnippet{{ChunkID: 1, Score: 20}}}
+			knowledge := NewKnowledge(store, embedderFunc(func(context.Context, []string) ([][]float32, error) {
+				return nil, contextErr
+			}))
+			items, err := knowledge.Search(context.Background(), "guide", "g", "r", 5)
+			if !errors.Is(err, contextErr) || items != nil || store.vectorCalls != 0 {
+				t.Fatalf("items=%#v vector calls=%d err=%v", items, store.vectorCalls, err)
+			}
+		})
+	}
+
 	for name, query := range map[string]string{"blank": " \t ", "too long": strings.Repeat("游", 101)} {
 		t.Run("rejects "+name+" query", func(t *testing.T) {
 			store := &knowledgeStoreFake{}
@@ -103,11 +116,11 @@ func (f embedderFunc) Embed(ctx context.Context, input []string) ([][]float32, e
 }
 
 type knowledgeStoreFake struct {
-	id                              int64
-	createCalls, searchCalls, limit int
-	query                           string
-	embeddings                      [][]float32
-	keyword, vector                 []KnowledgeSnippet
+	id                                           int64
+	createCalls, searchCalls, vectorCalls, limit int
+	query                                        string
+	embeddings                                   [][]float32
+	keyword, vector                              []KnowledgeSnippet
 }
 
 func (s *knowledgeStoreFake) CreateDocument(_ context.Context, _ KnowledgeDocument, _ []string, embeddings [][]float32) (int64, error) {
@@ -122,5 +135,6 @@ func (s *knowledgeStoreFake) SearchKeyword(_ context.Context, query string, _, _
 	return s.keyword, nil
 }
 func (s *knowledgeStoreFake) SearchVector(_ context.Context, _ []float32, _, _ string, _ int) ([]KnowledgeSnippet, error) {
+	s.vectorCalls++
 	return s.vector, nil
 }
