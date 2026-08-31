@@ -154,6 +154,34 @@ describe('CommunityPage', () => {
     expect(screen.getByRole('heading', { name: '评论 4', level: 2 })).toBeInTheDocument();
   });
 
+  it('keeps a newer comment editor open when an earlier edit finishes', async () => {
+    const secondPost = { ...post, id: '10', title: 'Second Guide', commentCount: 1 };
+    const firstComment = { id: '11', postId: post.id, content: 'First comment', status: 'published' as const, author: user, createdAt: post.createdAt, updatedAt: post.updatedAt };
+    const secondComment = { ...firstComment, id: '12', postId: secondPost.id, content: 'Second comment' };
+    let resolveUpdate!: (value: unknown) => void;
+    api.listCommunityPosts.mockResolvedValue({ items: [post, secondPost] });
+    api.getCommunityPost.mockResolvedValueOnce(post).mockResolvedValueOnce(secondPost);
+    api.listCommunityComments.mockResolvedValueOnce({ items: [firstComment] }).mockResolvedValueOnce({ items: [secondComment] });
+    api.updateCommunityComment.mockReturnValue(new Promise((resolve) => { resolveUpdate = resolve; }));
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    expect(await screen.findByText(firstComment.content)).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: '编辑' })[1]);
+    fireEvent.change(screen.getByDisplayValue(firstComment.content), { target: { value: 'Updated first' } });
+    fireEvent.click(screen.getAllByRole('button', { name: '保存' })[0]);
+    await waitFor(() => expect(api.updateCommunityComment).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '← 返回社区' }));
+    fireEvent.click(screen.getByRole('button', { name: /Second Guide/ }));
+    expect(await screen.findByText(secondComment.content)).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: '编辑' })[1]);
+    fireEvent.change(screen.getByDisplayValue(secondComment.content), { target: { value: 'Unsaved second' } });
+
+    await act(async () => resolveUpdate({ ...firstComment, content: 'Updated first' }));
+
+    expect(screen.getByDisplayValue('Unsaved second')).toBeInTheDocument();
+  });
+
   it('sends a guest to login when they choose to publish', async () => {
     const onRequireLogin = vi.fn();
     api.listCommunityPosts.mockResolvedValue({ items: [] });

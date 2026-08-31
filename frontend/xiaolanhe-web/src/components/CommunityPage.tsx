@@ -197,12 +197,15 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
   }
 
   async function saveComment(id: string) {
+    const postId = selectedPostId.current;
+    if (!postId) return;
     try {
       const updated = await updateCommunityComment(id, editingCommentContent);
+      if (selectedPostId.current !== postId) return;
       setComments((current) => current.map((item) => item.id === id ? updated : item));
-      setEditingComment(null);
+      setEditingComment((current) => current === id ? null : current);
     } catch (requestError) {
-      setError(messageOf(requestError, '评论保存失败'));
+      if (selectedPostId.current === postId) setError(messageOf(requestError, '评论保存失败'));
     }
   }
 
