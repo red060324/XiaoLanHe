@@ -190,7 +190,8 @@ Success: `201` with the public detail representation.
 
 Uses the same aggregate request. Success: `200`. Missing aggregate returns
 `404`; slug collision returns `409`. An empty editions/prices list is valid for
-an announced game that is not yet purchasable.
+an announced game that is not yet purchasable. Editions and prices omitted from
+the request become inactive and are absent from public purchase offers.
 
 ## Existing Endpoint Changes
 

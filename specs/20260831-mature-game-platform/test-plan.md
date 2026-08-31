@@ -24,6 +24,7 @@ when introduced. Compilation or an empty test selection is not evidence.
 | V8 | PRE_MERGE | provider | Web Search timeout/non-2xx/malformed/empty | failures distinct from empty result |
 | V9 | PRE_MERGE | lifecycle | liveness, readiness failure, shutdown cancellation | observable and bounded |
 | V10 | PRE_MERGE | frontend | auth state, catalog states, aborted/error chat stream | no no-op affordance or empty assistant message |
+| V11 | PRE_MERGE | catalog/PostgreSQL | admin aggregate update omits a previously active regional price | omitted price is no longer returned or purchasable; submitted replacement remains active |
 
 Phase-one HTTP assertions use `contracts/phase1-http.md` as the wire source of
 truth.

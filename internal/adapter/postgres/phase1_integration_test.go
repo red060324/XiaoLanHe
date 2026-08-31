@@ -139,6 +139,20 @@ func TestProductPostgres(t *testing.T) {
 	if !found.Owned || len(found.Editions) != 1 || len(found.Editions[0].Prices) != 1 || found.Editions[0].Prices[0].AmountMinor != 9900 {
 		t.Fatalf("catalog result=%+v", found)
 	}
+	if _, err := catalogStore.Save(ctx, game.ID, entity.Draft{
+		Slug: "phase-game", Name: "Phase Game",
+		Editions: []entity.EditionDraft{{Code: "standard", Name: "Standard", Prices: []entity.Price{
+			{Region: "GLOBAL", Currency: "USD", AmountMinor: 1999},
+		}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if offer, err := catalogStore.FindPurchaseOffer(ctx, game.Editions[0].ID, catalog.Pricing{Region: "GLOBAL", Currency: "USD"}); err != nil || offer.AmountMinor != 1999 {
+		t.Fatalf("replacement offer=%+v err=%v", offer, err)
+	}
+	if offer, err := catalogStore.FindPurchaseOffer(ctx, game.Editions[0].ID, catalog.Pricing{Region: "CN", Currency: "CNY"}); !errors.Is(err, catalog.ErrNotFound) {
+		t.Fatalf("omitted offer=%+v err=%v", offer, err)
+	}
 
 	other, err := accountStore.Register(ctx, "phase_other", "Phase Other", strings.Repeat("q", 60), strings.Repeat("d", 64), time.Now().Add(time.Hour))
 	if err != nil {
