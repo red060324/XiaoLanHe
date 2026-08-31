@@ -27,7 +27,7 @@ Redis, background Agent, or Java runtime was introduced.
 | AC3 catalog and ownership | Catalog UseCase/HTTP/PostgreSQL and frontend tests | PASS |
 | AC4 community | entity/UseCase/HTTP/PostgreSQL and frontend tests | PASS |
 | AC5 atomic coupon claim | entity/UseCase/HTTP/PostgreSQL concurrency tests | PASS |
-| AC6 order and entitlement | entity/UseCase/HTTP/PostgreSQL/frontend replay and ownership tests | PASS |
+| AC6 order and entitlement | entity/UseCase/HTTP/PostgreSQL/frontend replay, ownership, and duplicate-edition payment tests | PASS |
 | AC7 bounded read-only Assistant | deterministic Agent/tool/allowlist/citation tests | PASS |
 | AC8 failure and cancellation | provider, Agent budget, deadline, cancellation, SSE tests | PASS |
 | AC9 migrations and data invariants | fresh/repeat/concurrent/checksum and migrations 001-005 | PASS |
@@ -38,11 +38,11 @@ Redis, background Agent, or Java runtime was introduced.
 | Gate | Evidence | Result |
 |---|---|---|
 | Latest local full command | `make ci` reached Go tests; sandbox denied localhost listeners used by `httptest`; all non-listener local gates passed | ENVIRONMENT BLOCKED; public CI substituted |
-| Go vet and all tests | affected packages local PASS; full GitHub Actions `33362087122` at `b03990a` | PASS |
-| Go race | targeted local race PASS; full repository race in GitHub Actions `33362087122` | PASS |
+| Go vet and all tests | affected packages local PASS; full GitHub Actions `33363326436` at `463bf7d` | PASS |
+| Go race | targeted local race PASS; full repository race in GitHub Actions `33363326436` | PASS |
 | Frontend | 4 files, 21 Vitest tests and Vite production build | PASS |
 | Architecture/spec/docs | hooks, architecture, spec drift and link checks | PASS |
-| PostgreSQL | GitHub Actions `33356971706`: migrations, identity, catalog, forum literal search, promotion, commerce | PASS |
+| PostgreSQL | GitHub Actions `33363326436`: migrations, identity, catalog, forum literal search, promotion, commerce, duplicate-edition payment concurrency | PASS |
 | Seed and container | GitHub Actions `33356971706`: repeated seed, health/readiness/catalog/community/deals/SPA | PASS |
 | Assistant | fake model/tool iteration, invalid-input classification, partial/all-failed/no-result/budget/cancellation, empty-stream fallback, four-tool allowlist, REST/SSE citations | PASS |
 | Request correlation | invalid client IDs replaced once and the validated ID is shared by response and REST/SSE completion logs | PASS |
@@ -57,8 +57,8 @@ Redis, background Agent, or Java runtime was introduced.
 |---|---|---|
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
-| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T23 |
-| Final documentation and final clean-checkout CI | PASS | GitHub Actions `33362087122` |
+| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T24 |
+| Final documentation and final clean-checkout CI | PASS | GitHub Actions `33363326436` |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |
 | Observability | PASS | validated request ID, result/latency and Agent route/iteration/tool/stop reason |
