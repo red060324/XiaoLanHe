@@ -119,12 +119,12 @@ func (s *Store) Save(ctx context.Context, id int64, draft entity.Draft) (game en
 		if err != nil {
 			return entity.Game{}, err
 		}
+		if _, err = tx.Exec(ctx, `
+			update game_price set active_until=now(),updated_at=now()
+			where edition_id=$1 and active_until is null`, editionID); err != nil {
+			return entity.Game{}, err
+		}
 		for _, price := range edition.Prices {
-			if _, err = tx.Exec(ctx, `
-				update game_price set active_until=now(),updated_at=now()
-				where edition_id=$1 and region_code=$2 and currency=$3 and active_until is null`, editionID, price.Region, price.Currency); err != nil {
-				return entity.Game{}, err
-			}
 			if _, err = tx.Exec(ctx, `
 				insert into game_price(edition_id,region_code,currency,amount_minor) values ($1,$2,$3,$4)`, editionID, price.Region, price.Currency, price.AmountMinor); err != nil {
 				return entity.Game{}, err
