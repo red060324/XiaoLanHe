@@ -324,6 +324,33 @@ func TestProductPostgres(t *testing.T) {
 		t.Fatalf("available claims before order=%+v err=%v", availableClaims, err)
 	}
 	orderService := order.NewService(orderpg.NewStore(pool), catalog.NewService(catalogStore), promotionService)
+	staleCampaignID := insertCampaign(t, ctx, pool, "STALE-CAMPAIGN", "active", time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	insertCoupon(t, ctx, pool, staleCampaignID, "STALE20", 1, 1, game.ID, game.Editions[0].ID)
+	staleClaim, err := promotionService.Claim(ctx, otherPrincipal, "STALE20", "stale-coupon.01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleOffer, err := catalog.NewService(catalogStore).PurchaseOffer(ctx, game.Editions[0].ID, "CN", "USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleQuote, err := promotionService.QuoteClaim(ctx, other.ID, staleClaim.Claim.ID, staleOffer.AmountMinor, staleOffer.Currency, staleOffer.GameID, staleOffer.EditionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update coupon_campaign set status='paused' where id=$1`, staleCampaignID); err != nil {
+		t.Fatal(err)
+	}
+	staleTotal, err := orderentity.CalculateTotals(staleOffer.AmountMinor, staleQuote.DiscountMinor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orderpg.NewStore(pool).Create(ctx, order.CreateCommand{
+		OrderNo: "ord_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", UserID: other.ID, IdempotencyKey: "order-stale.01",
+		Offer: staleOffer, Quote: staleQuote, TotalMinor: staleTotal, Now: time.Now().UTC(),
+	}); !errors.Is(err, order.ErrCouponIneligible) {
+		t.Fatalf("stale coupon order error=%v", err)
+	}
 	createInput := order.CreateInput{EditionID: game.Editions[0].ID, Region: "CN", Currency: "USD", CouponClaimID: orderCoupon.Claim.ID, IdempotencyKey: "order-create.01"}
 	orderResults := make(chan order.CreateResult, 8)
 	orderErrs := make(chan error, 8)

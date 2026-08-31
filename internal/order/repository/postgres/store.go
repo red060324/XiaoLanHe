@@ -72,7 +72,14 @@ func (s *Store) Create(ctx context.Context, command order.CreateCommand) (result
 	if command.Quote.ClaimID > 0 {
 		var claimUserID int64
 		var status string
-		if err := tx.QueryRow(ctx, `select user_id,status from coupon_claim where id=$1 for update`, command.Quote.ClaimID).Scan(&claimUserID, &status); errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, `
+			select cl.user_id,cl.status
+			from coupon_claim cl
+			join coupon_definition d on d.id=cl.coupon_id
+			join coupon_campaign c on c.id=d.campaign_id
+			where cl.id=$1 and cl.coupon_id=$2 and c.status='active' and c.starts_at<=$3 and c.ends_at>$3
+			for update of cl
+			for share of c`, command.Quote.ClaimID, command.Quote.CouponID, command.Now).Scan(&claimUserID, &status); errors.Is(err, pgx.ErrNoRows) {
 			return order.CreateResult{}, order.ErrCouponIneligible
 		} else if err != nil {
 			return order.CreateResult{}, err
