@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestKnowledgeCreate(t *testing.T) {
@@ -71,9 +72,21 @@ func TestKnowledgeSearch(t *testing.T) {
 }
 
 func TestChunkText(t *testing.T) {
-	if got := chunkText("first line\nsecond line"); !slices.Equal(got, []string{"first line\nsecond line"}) {
-		t.Fatalf("chunks=%q", got)
-	}
+	t.Run("keeps short content together", func(t *testing.T) {
+		if got := chunkText("first line\nsecond line"); !slices.Equal(got, []string{"first line\nsecond line"}) {
+			t.Fatalf("chunks=%q", got)
+		}
+	})
+	t.Run("bounds a long paragraph by runes", func(t *testing.T) {
+		input := strings.Repeat("游", 801)
+		got := chunkText(input)
+		if len(got) != 2 {
+			t.Fatalf("chunk count=%d", len(got))
+		}
+		if utf8.RuneCountInString(got[0]) != 800 || utf8.RuneCountInString(got[1]) != 1 || strings.Join(got, "") != input {
+			t.Fatalf("rune lengths=%v", []int{utf8.RuneCountInString(got[0]), utf8.RuneCountInString(got[1])})
+		}
+	})
 }
 
 func TestMergeKnowledge(t *testing.T) {

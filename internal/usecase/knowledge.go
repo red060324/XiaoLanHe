@@ -78,6 +78,7 @@ func (k *Knowledge) Search(ctx context.Context, query, gameCode, regionCode stri
 }
 
 func chunkText(value string) []string {
+	const maxChunkRunes = 800
 	normalized := strings.ReplaceAll(strings.TrimSpace(value), "\r", "")
 	lines := strings.Split(normalized, "\n")
 	blocks := make([]string, 0, len(lines))
@@ -100,7 +101,22 @@ func chunkText(value string) []string {
 		if block == "" {
 			continue
 		}
-		if current.Len() > 0 && utf8.RuneCountInString(current.String())+utf8.RuneCountInString(block)+2 > 800 {
+		blockRunes := []rune(block)
+		if len(blockRunes) > maxChunkRunes {
+			if current.Len() > 0 {
+				chunks = append(chunks, current.String())
+				current.Reset()
+			}
+			for len(blockRunes) > maxChunkRunes {
+				chunks = append(chunks, string(blockRunes[:maxChunkRunes]))
+				blockRunes = blockRunes[maxChunkRunes:]
+			}
+			if len(blockRunes) > 0 {
+				current.WriteString(string(blockRunes))
+			}
+			continue
+		}
+		if current.Len() > 0 && utf8.RuneCountInString(current.String())+len(blockRunes)+2 > maxChunkRunes {
 			chunks = append(chunks, current.String())
 			current.Reset()
 		}
