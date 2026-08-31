@@ -40,6 +40,10 @@ truth.
 - HTTP contracts and frontend create/feed/detail/error flows.
 - An older feed request finishing after a newer game filter cannot replace the
   filtered posts, cursor, loading state, or error state.
+- An older detail request cannot replace a later selected post or reopen a
+  detail after returning to the feed.
+- Repeated comment form submission while the first request is pending creates
+  one comment request and exposes a disabled progress state.
 
 ## Phase 3: Promotion And Commerce
 

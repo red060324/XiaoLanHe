@@ -118,4 +118,51 @@ describe('CommunityPage', () => {
     expect(screen.getByText('Filtered Guide')).toBeInTheDocument();
     expect(screen.queryByText('Old Feed')).not.toBeInTheDocument();
   });
+
+  it('keeps the latest selected post when an earlier detail request finishes later', async () => {
+    const secondPost = { ...post, id: '10', title: 'Second Guide' };
+    let resolveFirst!: (value: unknown) => void;
+    let resolveSecond!: (value: unknown) => void;
+    api.listCommunityPosts.mockResolvedValue({ items: [post, secondPost] });
+    api.getCommunityPost
+      .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve; }));
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Second Guide/ }));
+    await waitFor(() => expect(api.getCommunityPost).toHaveBeenCalledTimes(2));
+
+    await act(async () => resolveSecond(secondPost));
+    expect(await screen.findByRole('heading', { name: 'Second Guide', level: 1 })).toBeInTheDocument();
+
+    await act(async () => resolveFirst(post));
+    expect(screen.getByRole('heading', { name: 'Second Guide', level: 1 })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Boss Guide', level: 1 })).not.toBeInTheDocument();
+  });
+
+  it('submits one comment while the first request is still pending', async () => {
+    let resolveComment!: (value: unknown) => void;
+    api.createCommunityComment.mockReturnValue(new Promise((resolve) => { resolveComment = resolve; }));
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    await screen.findByRole('heading', { name: 'Boss Guide', level: 1 });
+    fireEvent.change(screen.getByLabelText('写评论'), { target: { value: 'Only once.' } });
+    const form = screen.getByLabelText('写评论').closest('form')!;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+
+    expect(api.createCommunityComment).toHaveBeenCalledOnce();
+
+    await act(async () => resolveComment({
+      id: '11',
+      postId: post.id,
+      content: 'Only once.',
+      status: 'published',
+      author: user,
+      createdAt: post.createdAt,
+      updatedAt: post.updatedAt
+    }));
+  });
 });

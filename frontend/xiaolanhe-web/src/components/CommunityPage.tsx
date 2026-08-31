@@ -45,6 +45,8 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const postRequest = useRef(0);
+  const detailRequest = useRef(0);
+  const commentSubmitting = useRef(false);
 
   useEffect(() => {
     void loadPosts('', false);
@@ -67,18 +69,20 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
   }
 
   async function openPost(id: string) {
+    const request = ++detailRequest.current;
     setLoading(true);
     setError(null);
     try {
       const [post, page] = await Promise.all([getCommunityPost(id), listCommunityComments(id)]);
+      if (request !== detailRequest.current) return;
       setSelectedPost(post);
       setComments(page.items);
       setCommentCursor(page.nextCursor ?? '');
       setEditingPost(false);
     } catch (requestError) {
-      setError(messageOf(requestError, '帖子加载失败'));
+      if (request === detailRequest.current) setError(messageOf(requestError, '帖子加载失败'));
     } finally {
-      setLoading(false);
+      if (request === detailRequest.current) setLoading(false);
     }
   }
 
@@ -96,6 +100,7 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
       setTitle('');
       setContent('');
       setPostGameId('');
+      detailRequest.current++;
       setSelectedPost(created);
       setComments([]);
       setCommentCursor('');
@@ -136,6 +141,7 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
   }
 
   function closePost() {
+    detailRequest.current++;
     setSelectedPost(null);
     setEditingPost(false);
     setTitle('');
@@ -162,6 +168,10 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
       onRequireLogin();
       return;
     }
+    if (commentSubmitting.current) return;
+    commentSubmitting.current = true;
+    setLoading(true);
+    setError(null);
     try {
       const created = await createCommunityComment(selectedPost.id, comment);
       setComments((current) => [...current, created]);
@@ -169,6 +179,9 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
       setComment('');
     } catch (requestError) {
       setError(messageOf(requestError, '评论失败'));
+    } finally {
+      commentSubmitting.current = false;
+      setLoading(false);
     }
   }
 
@@ -250,7 +263,7 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
           <h2>评论 {selectedPost.commentCount}</h2>
           <form className="comment-form" onSubmit={submitComment}>
             <label htmlFor="community-comment">写评论</label>
-            <div><input id="community-comment" value={comment} onChange={(event) => setComment(event.target.value)} placeholder={user ? '分享你的看法' : '登录后参与讨论'} required />{user ? <button type="submit">发布</button> : <button type="button" onClick={onRequireLogin}>登录后发布</button>}</div>
+            <div><input id="community-comment" value={comment} onChange={(event) => setComment(event.target.value)} placeholder={user ? '分享你的看法' : '登录后参与讨论'} required />{user ? <button type="submit" disabled={loading}>{loading ? '发布中…' : '发布'}</button> : <button type="button" onClick={onRequireLogin}>登录后发布</button>}</div>
           </form>
           {comments.length === 0 ? <p className="empty-state compact">还没有评论。</p> : comments.map((item) => (
             <article className="comment-card" key={item.id}>
