@@ -62,6 +62,7 @@
 | T54 | PRE_MERGE | DONE | Prevent a failed view from leaking its error into another page | AC8, AC10 | failing-then-passing Assistant-to-Catalog regression; full local `make ci BASE_REF=origin/master` passed with 47 Vitest tests |
 | T55 | PRE_MERGE | DONE | Ignore a stale reaction failure after the user leaves its post | AC4, AC8, AC10 | failing-then-passing controlled-rejection frontend regression; full local `make ci BASE_REF=origin/master` passed with 48 Vitest tests |
 | T56 | PRE_MERGE | DONE | Prevent an order-history error from leaking into the deals tab | AC5, AC6, AC10 | failing-then-passing Commerce tab regression; full local `make ci BASE_REF=origin/master` passed with 49 Vitest tests |
+| T57 | PRE_MERGE | DONE | Ignore an order-history failure completed after leaving the orders tab | AC5, AC6, AC10 | failing-then-passing controlled-rejection regression; full local `make ci BASE_REF=origin/master` passed with 50 Vitest tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent

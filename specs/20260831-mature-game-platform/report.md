@@ -37,10 +37,10 @@ Redis, background Agent, or Java runtime was introduced.
 
 | Gate | Evidence | Result |
 |---|---|---|
-| Latest local full command | T56 external `make ci BASE_REF=origin/master`: Go vet/tests/race, 49 frontend tests/build, hooks, architecture and spec drift | PASS; PostgreSQL test skipped without local database URL |
+| Latest local full command | T57 external `make ci BASE_REF=origin/master`: Go vet/tests/race, 50 frontend tests/build, hooks, architecture and spec drift | PASS; PostgreSQL test skipped without local database URL |
 | Go vet and all tests | latest local `make ci`; full GitHub Actions `33378359262` at `c2ba3fd` | PASS |
 | Go race | latest local full repository race; GitHub Actions `33378359262` | PASS |
-| Frontend | 4 files, 49 Vitest tests and Vite production build; real-contract catalog-summary purchase hydration, latest-request authentication/catalog/feed/detail/comment-page/reaction/Commerce/chat-stream state, abandoned game-detail/post-create/post-edit/post-delete navigation, cross-view and Commerce-tab error cleanup, stale-reaction failure isolation, cross-post comment submission/edit/deletion isolation, duplicate-comment prevention, coupon-claim restoration/reservation, post-claim game-filter and mid-checkout coupon-selection preservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
+| Frontend | 4 files, 50 Vitest tests and Vite production build; real-contract catalog-summary purchase hydration, latest-request authentication/catalog/feed/detail/comment-page/reaction/Commerce/chat-stream state, abandoned game-detail/post-create/post-edit/post-delete navigation, cross-view and Commerce-tab error cleanup, abandoned order-history failure isolation, stale-reaction failure isolation, cross-post comment submission/edit/deletion isolation, duplicate-comment prevention, coupon-claim restoration/reservation, post-claim game-filter and mid-checkout coupon-selection preservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
 | Architecture/spec/docs | hooks, architecture, spec drift and link checks | PASS |
 | PostgreSQL | GitHub Actions `33377050477` passed migrations plus identity, forum, promotion, available-coupon reservation, order and entitlement integration | PASS |
 | Stale-campaign order regression | New PostgreSQL case compiles; local execution skips because `XLH_TEST_DATABASE_URL` is absent | NOT RUN; clean-checkout CI required |
@@ -60,7 +60,7 @@ Redis, background Agent, or Java runtime was introduced.
 |---|---|---|
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
-| All product PRE_MERGE behavior | VERIFYING | T1-T15, T20-T38, T40-T52, and T54-T56 pass; T53 awaits PostgreSQL execution |
+| All product PRE_MERGE behavior | VERIFYING | T1-T15, T20-T38, T40-T52, and T54-T57 pass; T53 awaits PostgreSQL execution |
 | Final documentation and latest code-bearing clean-checkout CI | VERIFYING | T39; local full gate passes, latest GitHub Actions requires the new revision |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |

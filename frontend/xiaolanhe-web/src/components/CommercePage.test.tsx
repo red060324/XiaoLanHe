@@ -207,4 +207,19 @@ describe('CommercePage', () => {
     expect(screen.getByText(deal.name)).toBeInTheDocument();
     expect(screen.queryByText('订单服务暂不可用')).not.toBeInTheDocument();
   });
+
+  it('ignores an order history error after returning to deals', async () => {
+    let rejectHistory!: (reason?: unknown) => void;
+    api.listDeals.mockResolvedValue({ items: [deal] });
+    api.listOrders.mockReturnValue(new Promise((_resolve, reject) => { rejectHistory = reject; }));
+    render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '我的订单' }));
+    await waitFor(() => expect(api.listOrders).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '优惠与购买' }));
+    await act(async () => rejectHistory(new Error('废弃订单请求失败')));
+
+    expect(screen.getByText(deal.name)).toBeInTheDocument();
+    expect(screen.queryByText('废弃订单请求失败')).not.toBeInTheDocument();
+  });
 });

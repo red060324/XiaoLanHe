@@ -182,7 +182,7 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
       <div className="commerce-heading">
         <div><h1>优惠与游戏</h1><p>领取优惠券，按服务器价格创建订单，并使用沙箱支付解锁游戏。</p></div>
         <div className="commerce-tabs">
-          <button className={tab === 'deals' ? 'active' : ''} type="button" onClick={() => { setError(null); setTab('deals'); }}>优惠与购买</button>
+          <button className={tab === 'deals' ? 'active' : ''} type="button" onClick={() => { orderRequest.current++; setError(null); setTab('deals'); }}>优惠与购买</button>
           <button className={tab === 'orders' ? 'active' : ''} type="button" onClick={() => user ? setTab('orders') : onRequireLogin()}>我的订单</button>
         </div>
       </div>

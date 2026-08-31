@@ -85,6 +85,8 @@ truth.
   completed payment cannot replace the current success state with a stale error.
 - An order-history failure is cleared when the user returns to the deals tab;
   errors from one commerce view cannot be presented as failures of another.
+- An order-history request completed after the user leaves the orders tab cannot
+  write a stale error into the deals view.
 - A completed checkout consumes its captured coupon but cannot clear another
   coupon the user selected while that checkout was pending.
 - A coupon claim completed after the game filter changes cannot restore deals
