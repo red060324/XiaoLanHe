@@ -6,7 +6,7 @@ pages and `/api/` use one origin. SearXNG is optional.
 
 ## Render Blueprint
 
-The smallest hosted setup uses the repository's `render.yaml`:
+The smallest hosted demo uses the repository's `render.yaml`:
 
 1. Fork or push the repository to GitHub.
 2. In Render, create a Blueprint from the repository.
@@ -18,6 +18,20 @@ The smallest hosted setup uses the repository's `render.yaml`:
 Render supplies the `onrender.com` subdomain. Buying a custom domain is
 optional. A custom domain only changes DNS/TLS configuration and
 `XLH_PUBLIC_ORIGIN`; it does not require a code change.
+
+The checked-in Blueprint deliberately selects Render's free plans so it cannot
+silently create a paid service. This is a demo configuration, not a production
+configuration: the free Web Service sleeps after inactivity, and the free
+PostgreSQL database is limited to 1 GB, expires after 30 days, and has no
+managed backups or connection pooling. For a persistent deployment, select a
+paid Render database or another durable PostgreSQL provider that supports
+`CREATE EXTENSION vector`, and configure tested backups before accepting user
+data. See Render's public [free-plan limits](https://render.com/docs/free) and
+[supported PostgreSQL extensions](https://render.com/docs/postgresql-extensions).
+
+The Blueprint waits for repository checks to pass before automatically
+deploying and uses `/readyz` as the routing health check, so a process without a
+usable database is not treated as ready.
 
 ## Any Docker Host
 
@@ -70,7 +84,9 @@ against an account whose ownership is unknown.
 
 ## Backup, Rollback, Smoke
 
-Before migration or release, take a provider snapshot or a logical dump:
+Before migration or release, take a provider snapshot or a logical dump. Free
+Render PostgreSQL has no managed backups, so export a logical dump yourself or
+upgrade before storing data you cannot recreate:
 
 ```bash
 pg_dump --format=custom --file=xiaolanhe.dump "$XLH_DATABASE_URL"

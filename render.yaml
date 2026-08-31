@@ -4,7 +4,8 @@ services:
     runtime: docker
     plan: free
     region: singapore
-    healthCheckPath: /healthz
+    autoDeployTrigger: checksPass
+    healthCheckPath: /readyz
     envVars:
       - key: XLH_DATABASE_URL
         fromDatabase:

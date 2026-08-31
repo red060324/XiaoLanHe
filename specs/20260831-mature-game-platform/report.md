@@ -3,7 +3,7 @@
 - Status: `PRE_MERGE_COMPLETE`
 - Date: 2026-08-31
 - Branch: `codex/clean-architecture-refactor`
-- Verified implementation: `f9d0fde`
+- Verified implementation: branch HEAD; immutable evidence is listed below
 - Authoritative spec: `./spec.md`
 
 ## Outcome
@@ -55,7 +55,7 @@ Redis, background Agent, or Java runtime was introduced.
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
 | All product PRE_MERGE behavior | PASS | T1-T14 |
-| Final documentation and final clean-checkout CI | PASS | GitHub Actions `33357415080` |
+| Final documentation and final clean-checkout CI | PASS | GitHub Actions `33357654243` |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |
 | Observability | PASS | request/result/latency plus Agent route/iteration/tool/stop reason |
@@ -82,6 +82,7 @@ editing applied migrations. Use a reviewed forward migration for schema fixes.
 | Real model and optional Web output are nondeterministic/cost-bearing | T17 rollout smoke; inspect safe traces and citations |
 | No shared hosted environment has run authenticated/admin full-product smoke | T16 rollout task |
 | Login/claim rate limiting depends on deployment topology | rollout blocker before exposing an untrusted public audience |
+| Checked-in Render free database expires after 30 days and has no managed backups | demo only; choose durable PostgreSQL and tested backups before persistent rollout |
 | Streamdown keeps the initial Vite chunk near 1 MB | accepted for demo; split only when measured load time matters |
 | Sandbox payment is not a financial integration | explicit product label; real provider requires a separate spec |
 

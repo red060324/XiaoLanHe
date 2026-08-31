@@ -79,8 +79,7 @@ go run ./cmd/seed
 3. 创建完成后直接打开 Render 分配的 `onrender.com` 地址。
 
 服务启动时会幂等执行有版本记录的迁移。默认关闭 Web 搜索；接入 SearXNG 后再设置 `XLH_SEARCH_ENABLED=true` 和 `SEARXNG_BASE_URL`。
-Render 会提供可直接访问的 `onrender.com` 子域名，不购买自定义域名也能使用。Docker
-自托管、环境变量、备份、回滚和 smoke 步骤见
+Render 会提供可直接访问的 `onrender.com` 子域名，不购买自定义域名也能使用。仓库默认的免费方案仅用于演示：免费数据库 30 天后到期、无托管备份；长期部署应换成持久 PostgreSQL 方案并配置备份。Docker 自托管、环境变量、备份、回滚和 smoke 步骤见
 [`docs/guidance/public-deployment.md`](docs/guidance/public-deployment.md)。
 
 ## 验证
