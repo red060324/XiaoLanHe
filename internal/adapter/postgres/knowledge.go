@@ -47,9 +47,9 @@ func (s *KnowledgeStore) CreateDocument(ctx context.Context, document usecase.Kn
 
 func (s *KnowledgeStore) SearchKeyword(ctx context.Context, query, gameCode, regionCode string, limit int) ([]usecase.KnowledgeSnippet, error) {
 	sql := `select kc.id,kd.id,kd.title,coalesce(kd.game_code,''),coalesce(kd.region_code,''),coalesce(kd.patch_version,''),coalesce(kd.source_url,''),kc.chunk_text,
-		case when lower(kd.title) like lower($1) then 30 when lower(kc.chunk_text) like lower($1) then 20 else 10 end
-		from knowledge_chunk kc join knowledge_document kd on kd.id=kc.document_id where lower(kc.chunk_text) like lower($1)`
-	args := []any{"%" + query + "%"}
+		case when strpos(lower(kd.title),lower($1))>0 then 30 when strpos(lower(kc.chunk_text),lower($1))>0 then 20 else 10 end
+		from knowledge_chunk kc join knowledge_document kd on kd.id=kc.document_id where strpos(lower(kc.chunk_text),lower($1))>0`
+	args := []any{query}
 	if strings.TrimSpace(gameCode) != "" {
 		args = append(args, gameCode)
 		sql += fmt.Sprintf(" and kd.game_code=$%d", len(args))

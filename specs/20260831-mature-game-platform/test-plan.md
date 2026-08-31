@@ -31,6 +31,7 @@ when introduced. Compilation or an empty test selection is not evidence.
 | V15 | PRE_MERGE | frontend | game-detail loading finishes after the user leaves the catalog | returning to the catalog shows the game list, not the abandoned detail |
 | V16 | PRE_MERGE | catalog/PostgreSQL | name/slug query contains SQL wildcard characters such as `%` or `_` | characters are matched literally and do not broaden the result set |
 | V17 | PRE_MERGE | knowledge/usecase | one paragraph exceeds the 800-rune chunk target | every chunk stays within 800 runes and reconstructs the original content |
+| V18 | PRE_MERGE | knowledge/PostgreSQL | keyword query contains SQL wildcard characters such as `%` or `_` | characters are matched literally and cannot inject unrelated evidence into Assistant retrieval |
 
 Phase-one HTTP assertions use `contracts/phase1-http.md` as the wire source of
 truth.

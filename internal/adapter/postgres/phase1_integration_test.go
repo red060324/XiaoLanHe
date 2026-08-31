@@ -143,6 +143,21 @@ func TestProductPostgres(t *testing.T) {
 		t.Fatalf("anonymous owned conversation error=%v", err)
 	}
 
+	knowledgeStore := adapterpg.NewKnowledgeStore(pool)
+	if _, err := knowledgeStore.CreateDocument(ctx, assistantusecase.KnowledgeDocument{SourceType: "guide", Title: "Dragon Guide", ContentText: "dragon build guide"}, []string{"dragon build guide"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("knowledge wildcard query is literal", func(t *testing.T) {
+		items, err := knowledgeStore.SearchKeyword(ctx, "dragon", "", "", 10)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("knowledge text search=%+v err=%v", items, err)
+		}
+		items, err = knowledgeStore.SearchKeyword(ctx, "%", "", "", 10)
+		if err != nil || len(items) != 0 {
+			t.Fatalf("literal knowledge wildcard search=%+v err=%v", items, err)
+		}
+	})
+
 	catalogStore := catalogpg.NewStore(pool)
 	game, err := catalogStore.Save(ctx, 0, entity.Draft{
 		Slug: "phase-game", Name: "Phase Game",
