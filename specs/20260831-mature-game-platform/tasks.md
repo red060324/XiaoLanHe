@@ -1,6 +1,6 @@
 # Tasks
 
-- Status: `IMPLEMENTING`
+- Status: `PRE_MERGE_COMPLETE`
 - Authoritative spec: `./spec.md`
 
 | ID | Class | Status | Task | Acceptance criteria | Evidence |
@@ -32,7 +32,7 @@
 | T24 | PRE_MERGE | DONE | Prevent two orders for one user and edition from both completing payment | AC6 | GitHub Actions `33362876531` failed before fix; `33363326436` PASS after fix |
 | T25 | PRE_MERGE | DONE | Remove Web Search cache/provider surfaces that have no implementation | AC1, AC8 | failing-then-passing adapter/HTTP tests + GitHub Actions `33364425654` PASS |
 | T26 | PRE_MERGE | DONE | Keep the current chat message out of historical conversation context | AC7, AC8 | failing-then-passing Chat UseCase test + local `make ci` + GitHub Actions `33365566954` PASS |
-| T27 | PRE_MERGE | IN_PROGRESS | Deactivate prices omitted from a complete Catalog aggregate update | AC3, AC9 | failing-then-passing PostgreSQL integration test + full CI |
+| T27 | PRE_MERGE | DONE | Deactivate prices omitted from a complete Catalog aggregate update | AC3, AC9 | GitHub Actions `33366323928` failed before fix; local `make ci` and `33366575106` PASS after fix |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent
