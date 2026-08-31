@@ -33,7 +33,9 @@ func Optional(service Authenticator) app.HandlerFunc {
 			return
 		}
 		if err != nil {
-			httpx.WriteError(c, consts.StatusServiceUnavailable, "dependency_unavailable", "authentication is unavailable", nil)
+			if !httpx.WriteDeadlineError(c, err) {
+				httpx.WriteError(c, consts.StatusServiceUnavailable, "dependency_unavailable", "authentication is unavailable", nil)
+			}
 			c.Abort()
 			return
 		}
@@ -96,7 +98,9 @@ func authenticate(ctx context.Context, c *app.RequestContext, service Authentica
 		return auth.Principal{}, false
 	}
 	if err != nil {
-		httpx.WriteError(c, consts.StatusServiceUnavailable, "dependency_unavailable", "authentication is unavailable", nil)
+		if !httpx.WriteDeadlineError(c, err) {
+			httpx.WriteError(c, consts.StatusServiceUnavailable, "dependency_unavailable", "authentication is unavailable", nil)
+		}
 		c.Abort()
 		return auth.Principal{}, false
 	}

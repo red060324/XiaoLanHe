@@ -211,6 +211,9 @@ func presentGame(game entity.Game, detail bool) gameResponse {
 }
 
 func (h *HTTP) writeError(c *app.RequestContext, err error) {
+	if httpx.WriteDeadlineError(c, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, catalog.ErrInvalidInput):
 		httpx.WriteError(c, consts.StatusBadRequest, "invalid_request", "request is invalid", nil)

@@ -1,7 +1,7 @@
 # Delivery And Readiness Report
 
 - Status: `VERIFYING`
-- Date: 2026-08-31
+- Date: 2026-09-01
 - Branch: `codex/clean-architecture-refactor`
 - Verified implementation: branch HEAD; immutable evidence is listed below
 - Authoritative spec: `./spec.md`
@@ -29,7 +29,7 @@ Redis, background Agent, or Java runtime was introduced.
 | AC5 atomic coupon claim | entity/UseCase/HTTP/PostgreSQL concurrency tests | PASS |
 | AC6 order and entitlement | entity/UseCase/HTTP/PostgreSQL/frontend replay, ownership, and duplicate-edition payment tests | PASS |
 | AC7 bounded read-only Assistant | deterministic Agent/tool/allowlist/citation tests | PASS |
-| AC8 failure and cancellation | provider, Agent budget, deadline, cancellation, SSE tests | PASS |
+| AC8 failure and cancellation | provider, Agent budget, shared HTTP 504 deadline contract, cancellation, SSE tests | PASS |
 | AC9 migrations and data invariants | fresh/repeat/concurrent/checksum and migrations 001-005 | PASS |
 | AC10 delivery evidence | local `make ci`, public GitHub Actions, contracts and container smoke | PASS |
 
@@ -37,7 +37,7 @@ Redis, background Agent, or Java runtime was introduced.
 
 | Gate | Evidence | Result |
 |---|---|---|
-| Latest local full command | T62 `XLH_TEST_DATABASE_URL=<isolated PostgreSQL 17 database URL> make ci BASE_REF=origin/master`: Go vet/tests/race against PostgreSQL 17 + pgvector, 50 frontend tests/build, hooks, architecture and spec drift | PASS |
+| Latest local full command | T63 `XLH_TEST_DATABASE_URL=<isolated PostgreSQL 17 database URL> make ci BASE_REF=origin/master`: Go vet/tests/race against PostgreSQL 17 + pgvector, 50 frontend tests/build, hooks, architecture and spec drift | PASS |
 | Go vet and all tests | latest local `make ci`; full GitHub Actions `33378359262` at `c2ba3fd` | PASS |
 | Go race | latest local full repository race; GitHub Actions `33378359262` | PASS |
 | Frontend | 4 files, 50 Vitest tests and Vite production build; real-contract catalog-summary purchase hydration, latest-request authentication/catalog/feed/detail/comment-page/reaction/Commerce/chat-stream state, abandoned game-detail/post-create/post-edit/post-delete navigation, cross-view and Commerce-tab error cleanup, abandoned order-history failure isolation, stale-reaction failure isolation, cross-post comment submission/edit/deletion isolation, duplicate-comment prevention, coupon-claim restoration/reservation, post-claim game-filter and mid-checkout coupon-selection preservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
@@ -49,6 +49,7 @@ Redis, background Agent, or Java runtime was introduced.
 | Knowledge ingestion boundary | short paragraphs retain their grouping; a single long paragraph is split by Unicode rune so every embedding/retrieval chunk stays within 800 runes without content loss | PASS |
 | Request correlation | invalid client IDs replaced once and the validated ID is shared by response and REST/SSE completion logs | PASS |
 | Search input boundary | query trim/blank/100-rune checks, literal Catalog and knowledge `%`/`_` semantics, and knowledge limit 1-10; invalid requests prove zero downstream calls | PASS |
+| HTTP deadline contract | request-scoped `context.DeadlineExceeded` is mapped once to 504 `deadline_exceeded` and reused by Account, auth, Catalog, Community, Promotion, Order, Knowledge, Web Search, and Assistant entries | PASS |
 | Web Search contract | SearXNG identity is fixed to the actual adapter; nonexistent cache/provider-selection surfaces are absent | PASS |
 | Public-only scan | no private domains/platform names; dependencies resolve from public modules | PASS |
 | Java absence | no Java/Maven/Gradle source or build files | PASS |
@@ -61,7 +62,7 @@ Redis, background Agent, or Java runtime was introduced.
 |---|---|---|
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
-| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T62 pass |
+| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T63 pass |
 | Final documentation and latest code-bearing clean-checkout CI | VERIFYING | T39; local full gate passes, latest GitHub Actions requires the new revision |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |

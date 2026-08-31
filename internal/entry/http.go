@@ -114,6 +114,9 @@ func (h *HTTP) createKnowledge(ctx context.Context, c *app.RequestContext) {
 	}
 	id, count, err := h.knowledge.Create(ctx, document)
 	if err != nil {
+		if httpx.WriteDeadlineError(c, err) {
+			return
+		}
 		slog.ErrorContext(ctx, "create knowledge document", "error", err)
 		writeError(c, consts.StatusInternalServerError, "create knowledge document failed")
 		return
@@ -138,6 +141,9 @@ func (h *HTTP) searchKnowledge(ctx context.Context, c *app.RequestContext) {
 	}
 	items, err := h.knowledge.Search(ctx, query, string(c.Query("gameCode")), string(c.Query("regionCode")), limit)
 	if err != nil {
+		if httpx.WriteDeadlineError(c, err) {
+			return
+		}
 		if errors.Is(err, usecase.ErrInvalidSearchQuery) {
 			writeError(c, consts.StatusBadRequest, "query must contain 1 to 100 characters")
 			return
@@ -157,6 +163,9 @@ func (h *HTTP) searchWeb(ctx context.Context, c *app.RequestContext) {
 	}
 	result, err := h.search.Run(ctx, query)
 	if err != nil {
+		if httpx.WriteDeadlineError(c, err) {
+			return
+		}
 		if errors.Is(err, usecase.ErrInvalidSearchQuery) {
 			writeError(c, consts.StatusBadRequest, "query must contain 1 to 100 characters")
 			return
@@ -191,6 +200,10 @@ func (h *HTTP) message(ctx context.Context, c *app.RequestContext) {
 	}
 	result, err := h.chat.Run(ctx, in)
 	if err != nil {
+		if httpx.WriteDeadlineError(c, err) {
+			resultStatus = "deadline_exceeded"
+			return
+		}
 		if errors.Is(err, usecase.ErrConversationForbidden) {
 			resultStatus = "forbidden"
 			writeError(c, consts.StatusForbidden, "conversation is not accessible")
@@ -222,6 +235,10 @@ func (h *HTTP) stream(ctx context.Context, c *app.RequestContext) {
 	}
 	result, err := h.chat.Stream(ctx, in)
 	if err != nil {
+		if httpx.WriteDeadlineError(c, err) {
+			resultStatus = "deadline_exceeded"
+			return
+		}
 		if errors.Is(err, usecase.ErrConversationForbidden) {
 			resultStatus = "forbidden"
 			writeError(c, consts.StatusForbidden, "conversation is not accessible")

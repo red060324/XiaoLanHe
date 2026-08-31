@@ -11,6 +11,7 @@ import (
 	"regexp"
 
 	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/protocol/consts"
 )
 
 const requestIDKey = "xiaolanhe.request_id"
@@ -49,6 +50,14 @@ func RequestID(c *app.RequestContext) string {
 
 func WriteError(c *app.RequestContext, status int, code, message string, fields map[string]string) {
 	c.JSON(status, ErrorBody{Error: ErrorDetail{Code: code, Message: message, RequestID: RequestID(c), Fields: fields}})
+}
+
+func WriteDeadlineError(c *app.RequestContext, err error) bool {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	WriteError(c, consts.StatusGatewayTimeout, "deadline_exceeded", "request deadline exceeded", nil)
+	return true
 }
 
 func DecodeJSON(body []byte, limit int, target any) error {

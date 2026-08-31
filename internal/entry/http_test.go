@@ -113,6 +113,19 @@ func TestHTTPMessage(t *testing.T) {
 			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 		}
 	})
+
+	t.Run("maps a request deadline to the public timeout contract", func(t *testing.T) {
+		timedOut := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{findErr: context.DeadlineExceeded}, httpAssistant{}), nil, nil, httpAuthenticator{})
+		response := ut.PerformRequest(
+			timedOut.server.Engine,
+			"POST",
+			"/api/chat/message",
+			&ut.Body{Body: bytes.NewBufferString(`{"sessionId":"33333333-3333-4333-8333-333333333333","message":"hi"}`), Len: -1},
+		)
+		if response.Code != 504 || !strings.Contains(response.Body.String(), `"code":"deadline_exceeded"`) {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
 }
 
 func TestHTTPStream(t *testing.T) {

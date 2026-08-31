@@ -106,6 +106,9 @@ func (h *HTTP) pay(ctx context.Context, c *app.RequestContext) {
 }
 
 func (h *HTTP) writeError(ctx context.Context, c *app.RequestContext, operation string, err error) {
+	if httpx.WriteDeadlineError(c, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, order.ErrInvalidInput):
 		httpx.WriteError(c, consts.StatusBadRequest, "invalid_request", "request is invalid", nil)

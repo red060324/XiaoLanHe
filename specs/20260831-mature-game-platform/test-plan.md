@@ -32,6 +32,7 @@ when introduced. Compilation or an empty test selection is not evidence.
 | V16 | PRE_MERGE | catalog/PostgreSQL | name/slug query contains SQL wildcard characters such as `%` or `_` | characters are matched literally and do not broaden the result set |
 | V17 | PRE_MERGE | knowledge/usecase | one paragraph exceeds the 800-rune chunk target | every chunk stays within 800 runes and reconstructs the original content |
 | V18 | PRE_MERGE | knowledge/PostgreSQL | keyword query contains SQL wildcard characters such as `%` or `_` | characters are matched literally and cannot inject unrelated evidence into Assistant retrieval |
+| V19 | PRE_MERGE | HTTP | a product UseCase returns `context.DeadlineExceeded` before a response starts | 504 `deadline_exceeded` with the standard request-ID envelope |
 
 Phase-one HTTP assertions use `contracts/phase1-http.md` as the wire source of
 truth.

@@ -68,6 +68,7 @@
 | T60 | PRE_MERGE | DONE | Treat Catalog name/slug searches as literal substrings | AC3, AC10 | failing-then-passing PostgreSQL Store regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 | T61 | PRE_MERGE | DONE | Bound every knowledge chunk when one paragraph exceeds the target size | AC7, AC10 | failing-then-passing `TestChunkText` regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 | T62 | PRE_MERGE | DONE | Treat knowledge keyword searches as literal substrings | AC7, AC10 | failing-then-passing PostgreSQL Store regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
+| T63 | PRE_MERGE | DONE | Map request deadlines to the shared HTTP 504 contract across product modules | AC8, AC10 | failing-then-passing Assistant HTTP regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent

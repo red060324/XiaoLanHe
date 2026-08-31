@@ -83,6 +83,9 @@ func (h *HTTP) login(ctx context.Context, c *app.RequestContext) {
 
 func (h *HTTP) logout(ctx context.Context, c *app.RequestContext) {
 	if err := h.service.Logout(ctx, string(c.Cookie(httpauth.CookieName))); err != nil {
+		if httpx.WriteDeadlineError(c, err) {
+			return
+		}
 		httpx.WriteError(c, consts.StatusServiceUnavailable, "dependency_unavailable", "logout is unavailable", nil)
 		return
 	}
@@ -101,6 +104,9 @@ func (h *HTTP) setSessionCookie(c *app.RequestContext, token string, expiresAt t
 }
 
 func (h *HTTP) writeAccountError(c *app.RequestContext, err error) {
+	if httpx.WriteDeadlineError(c, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, account.ErrInvalidInput):
 		httpx.WriteError(c, consts.StatusBadRequest, "invalid_request", "request is invalid", nil)

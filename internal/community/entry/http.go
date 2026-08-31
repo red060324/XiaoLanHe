@@ -280,6 +280,9 @@ func postRequest(c *app.RequestContext) (entity.PostDraft, bool) {
 }
 
 func (h *HTTP) writeError(ctx context.Context, c *app.RequestContext, operation string, resourceID int64, err error) {
+	if httpx.WriteDeadlineError(c, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, community.ErrInvalidInput):
 		httpx.WriteError(c, consts.StatusBadRequest, "invalid_request", "request is invalid", nil)
