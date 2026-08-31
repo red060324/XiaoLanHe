@@ -1,6 +1,6 @@
 # Tasks
 
-- Status: `PHASE_4_IN_PROGRESS`
+- Status: `PRE_MERGE_COMPLETE`
 - Authoritative spec: `./spec.md`
 
 | ID | Class | Status | Task | Acceptance criteria | Evidence |
@@ -20,7 +20,7 @@
 | T12 | PRE_MERGE | DONE | Add Deals/checkout/orders/ownership UI | AC5, AC6 | 21 frontend tests + local `make ci` + GitHub Actions `33354854151` PASS |
 | T13 | PRE_MERGE | DONE | Implement Router/Answer Nodes and bounded Research Agent | AC7, AC8 | deterministic Agent-loop tests + local `make ci` + GitHub Actions `33356038295` PASS |
 | T14 | PRE_MERGE | DONE | Add knowledge/catalog/forum/Web read-only tools and citations | AC7 | tool/contract/PostgreSQL tests + local `make ci` + GitHub Actions `33356971706` PASS |
-| T15 | PRE_MERGE | TODO | Complete docs, API contracts, readiness report, and full CI | AC10 | report + `make ci` |
+| T15 | PRE_MERGE | DONE | Complete docs, API contracts, readiness report, and full CI | AC10 | public deployment guide + local `make ci` + GitHub Actions `33357415080` PASS |
 | T16 | ROLLOUT | TODO | Run isolated PostgreSQL migrations and product smoke | AC9, AC10 | rollout report |
 | T17 | ROLLOUT | TODO | Run approved real-model/Web smoke and inspect safe traces | AC7, AC8 | rollout report |
 | T18 | FOLLOW_UP | TODO | Add real payment provider, refund, tax, and abuse controls | excluded | separate security/product spec |
