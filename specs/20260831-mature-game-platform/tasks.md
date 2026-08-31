@@ -47,6 +47,7 @@
 | T39 | PRE_MERGE | IN_PROGRESS | Publish the latest audited revision and verify clean-checkout GitHub Actions | AC10 | local full `make ci` PASS; exact remote push authorization and latest GitHub Actions run pending |
 | T40 | PRE_MERGE | DONE | Ignore an abandoned game-detail response after navigation | AC3, AC10 | failing-then-passing controlled-response frontend regression; local full `make ci` PASS with 35 Vitest tests |
 | T41 | PRE_MERGE | DONE | Keep a completed comment submission scoped to its original post | AC4, AC10 | failing-then-passing controlled-response frontend regression; local full `make ci` PASS with 36 Vitest tests |
+| T42 | PRE_MERGE | DONE | Preserve the active game filter when a prior coupon claim completes | AC5, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 37 Vitest tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent

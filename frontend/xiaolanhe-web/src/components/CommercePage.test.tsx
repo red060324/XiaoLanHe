@@ -68,6 +68,31 @@ describe('CommercePage', () => {
     expect(await screen.findByText('待支付')).toBeInTheDocument();
   });
 
+  it('keeps the current game filter after an earlier coupon claim completes', async () => {
+    const filteredDeal = { ...deal, id: '5', code: 'DEMO20', name: 'Demo only' };
+    let resolveClaim!: (value: unknown) => void;
+    api.listDeals
+      .mockResolvedValueOnce({ items: [deal] })
+      .mockResolvedValueOnce({ items: [filteredDeal] })
+      .mockResolvedValueOnce({ items: [deal] });
+    api.claimCoupon.mockReturnValue(new Promise((resolve) => { resolveClaim = resolve; }));
+    render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '领取优惠券' }));
+    await waitFor(() => expect(api.claimCoupon).toHaveBeenCalledOnce());
+    fireEvent.change(screen.getByLabelText('适用游戏'), { target: { value: '3' } });
+    expect(await screen.findByText('Demo only')).toBeInTheDocument();
+
+    await act(async () => resolveClaim({
+      claim: { id: '9', couponCode: deal.code, status: 'claimed', claimedAt: '2026-08-31T08:00:00Z' },
+      replayed: false
+    }));
+
+    expect(screen.getByLabelText('适用游戏')).toHaveValue('3');
+    expect(screen.getByText('Demo only')).toBeInTheDocument();
+    expect(screen.queryByText(deal.name)).not.toBeInTheDocument();
+  });
+
   it('restores an unredeemed coupon claim after remount', async () => {
     api.listDeals.mockResolvedValue({ items: [{ ...deal, viewerClaimCount: 1 }] });
     api.listCouponClaims.mockResolvedValue({ items: [{ id: '9', couponCode: 'WELCOME20', status: 'claimed', claimedAt: '2026-08-31T08:00:00Z' }] });

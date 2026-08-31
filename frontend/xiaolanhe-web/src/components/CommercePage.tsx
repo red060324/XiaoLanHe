@@ -116,7 +116,9 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
       claimRequest.current++;
       setClaims((current) => current.some((item) => item.id === result.claim.id) ? current : [...current, result.claim]);
       setSelectedClaimId(result.claim.id);
-      await loadDeals();
+      setDeals((current) => current.map((item) => item.code === deal.code && item.viewerClaimCount < item.perUserLimit
+        ? { ...item, remainingStock: Math.max(0, item.remainingStock - 1), viewerClaimCount: item.viewerClaimCount + 1 }
+        : item));
     } catch (requestError) {
       setError(message(requestError, '领取失败，请重试'));
     } finally {
