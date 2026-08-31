@@ -42,6 +42,10 @@ truth.
   filtered posts, cursor, loading state, or error state.
 - An older detail request cannot replace a later selected post or reopen a
   detail after returning to the feed.
+- An older comment page from a prior post cannot append comments or replace the
+  cursor after another post opens.
+- A reaction response may refresh its post in the feed, but cannot reopen a
+  closed detail or replace a different selected post.
 - Repeated comment form submission while the first request is pending creates
   one comment request and exposes a disabled progress state.
 
@@ -62,6 +66,8 @@ truth.
 - Frontend Deals/checkout/orders/owned states and error recovery.
 - Available unredeemed claims reload after navigation or refresh; claims already
   attached to an order are not offered for another checkout.
+- A superseded deal or order-history request that fails after a newer filter or
+  completed payment cannot replace the current success state with a stale error.
 
 ## Phase 4: Assistant
 

@@ -165,4 +165,49 @@ describe('CommunityPage', () => {
       updatedAt: post.updatedAt
     }));
   });
+
+  it('ignores an older comment page after another post opens', async () => {
+    const secondPost = { ...post, id: '10', title: 'Second Guide' };
+    const firstComment = { id: '11', postId: post.id, content: 'First comment', status: 'published' as const, author: user, createdAt: post.createdAt, updatedAt: post.updatedAt };
+    const olderPageComment = { ...firstComment, id: '12', content: 'Older page comment' };
+    const secondComment = { ...firstComment, id: '13', postId: secondPost.id, content: 'Second post comment' };
+    let resolveOlderPage!: (value: unknown) => void;
+    api.listCommunityPosts.mockResolvedValue({ items: [post, secondPost] });
+    api.getCommunityPost.mockResolvedValueOnce(post).mockResolvedValueOnce(secondPost);
+    api.listCommunityComments
+      .mockResolvedValueOnce({ items: [firstComment], nextCursor: 'next-a' })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOlderPage = resolve; }))
+      .mockResolvedValueOnce({ items: [secondComment] });
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    expect(await screen.findByText(firstComment.content)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '加载更多评论' }));
+    await waitFor(() => expect(api.listCommunityComments).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole('button', { name: '← 返回社区' }));
+    fireEvent.click(screen.getByRole('button', { name: /Second Guide/ }));
+    expect(await screen.findByText(secondComment.content)).toBeInTheDocument();
+
+    await act(async () => resolveOlderPage({ items: [olderPageComment] }));
+    expect(screen.getByText(secondComment.content)).toBeInTheDocument();
+    expect(screen.queryByText(olderPageComment.content)).not.toBeInTheDocument();
+  });
+
+  it('keeps the community feed open when an older reaction completes', async () => {
+    let resolveReaction!: (value: unknown) => void;
+    api.setCommunityReaction.mockReturnValue(new Promise((resolve) => { resolveReaction = resolve; }));
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    await screen.findByRole('heading', { name: 'Boss Guide', level: 1 });
+    fireEvent.click(screen.getByRole('button', { name: '赞 0' }));
+    await waitFor(() => expect(api.setCommunityReaction).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '← 返回社区' }));
+    expect(await screen.findByRole('heading', { name: '游戏社区', level: 1 })).toBeInTheDocument();
+
+    await act(async () => resolveReaction({ reactionCounts: { like: 1, helpful: 0, funny: 0 }, viewerReactions: ['like'] }));
+    expect(screen.getByRole('heading', { name: '游戏社区', level: 1 })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Boss Guide', level: 1 })).not.toBeInTheDocument();
+  });
 });

@@ -212,12 +212,12 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
       onRequireLogin();
       return;
     }
+    const postId = selectedPost.id;
     const active = !selectedPost.viewerReactions.includes(type);
     try {
-      const summary = await setCommunityReaction(selectedPost.id, type, active);
-      const updated = { ...selectedPost, ...summary };
-      setSelectedPost(updated);
-      setPosts((current) => current.map((item) => item.id === updated.id ? updated : item));
+      const summary = await setCommunityReaction(postId, type, active);
+      setSelectedPost((current) => current?.id === postId ? { ...current, ...summary } : current);
+      setPosts((current) => current.map((item) => item.id === postId ? { ...item, ...summary } : item));
     } catch (requestError) {
       setError(messageOf(requestError, '反应更新失败'));
     }
@@ -225,12 +225,14 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
 
   async function loadMoreComments() {
     if (!selectedPost || !commentCursor) return;
+    const request = ++detailRequest.current;
     try {
       const page = await listCommunityComments(selectedPost.id, commentCursor);
+      if (request !== detailRequest.current) return;
       setComments((current) => [...current, ...page.items]);
       setCommentCursor(page.nextCursor ?? '');
     } catch (requestError) {
-      setError(messageOf(requestError, '评论加载失败'));
+      if (request === detailRequest.current) setError(messageOf(requestError, '评论加载失败'));
     }
   }
 

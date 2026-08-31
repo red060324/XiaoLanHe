@@ -75,7 +75,7 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
       const page = await listDeals(gameId);
       if (request === dealRequest.current) setDeals(page.items);
     } catch (requestError) {
-      setError(message(requestError, '优惠加载失败'));
+      if (request === dealRequest.current) setError(message(requestError, '优惠加载失败'));
     }
   }
 
@@ -86,7 +86,7 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
       const page = await listOrders();
       if (request === orderRequest.current) setOrders(page.items);
     } catch (requestError) {
-      setError(message(requestError, '订单加载失败'));
+      if (request === orderRequest.current) setError(message(requestError, '订单加载失败'));
     }
   }
 

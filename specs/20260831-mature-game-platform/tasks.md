@@ -1,6 +1,6 @@
 # Tasks
 
-- Status: `PRE_MERGE_COMPLETE`
+- Status: `VERIFYING`
 - Authoritative spec: `./spec.md`
 
 | ID | Class | Status | Task | Acceptance criteria | Evidence |
@@ -41,6 +41,10 @@
 | T33 | PRE_MERGE | DONE | Restore a user's available coupon claims after navigation or refresh | AC5, AC6 | failing-then-passing frontend remount/API, UseCase/HTTP/PostgreSQL reservation tests; local `make ci`; GitHub Actions `33377050477` PASS |
 | T34 | PRE_MERGE | DONE | Prevent stale catalog and community reads from overwriting newer search/filter state | AC3, AC4, AC10 | failing-then-passing controlled-response frontend regressions; 29 Vitest tests + production build PASS |
 | T35 | PRE_MERGE | DONE | Keep the latest community detail authoritative and prevent duplicate comment submission | AC4, AC10 | failing-then-passing controlled-response and pending-submit frontend regressions; 31 Vitest tests + production build PASS |
+| T36 | PRE_MERGE | DONE | Ignore stale Commerce read failures after newer filter or payment state | AC5, AC6, AC10 | failing-then-passing controlled-rejection frontend regression; local full `make ci` PASS with 34 Vitest tests |
+| T37 | PRE_MERGE | DONE | Prevent an older comment page from being appended after another post opens | AC4, AC10 | failing-then-passing controlled-response frontend regression; local full `make ci` PASS with 34 Vitest tests |
+| T38 | PRE_MERGE | DONE | Keep a completed reaction request from reopening a closed or replaced post detail | AC4, AC10 | failing-then-passing controlled-response frontend regression; local full `make ci` PASS with 34 Vitest tests |
+| T39 | PRE_MERGE | IN_PROGRESS | Publish the latest audited revision and verify clean-checkout GitHub Actions | AC10 | local full `make ci` PASS; exact remote push authorization and latest GitHub Actions run pending |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent

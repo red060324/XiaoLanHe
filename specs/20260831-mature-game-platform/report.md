@@ -1,6 +1,6 @@
 # Delivery And Readiness Report
 
-- Status: `PRE_MERGE_COMPLETE`
+- Status: `VERIFYING`
 - Date: 2026-08-31
 - Branch: `codex/clean-architecture-refactor`
 - Verified implementation: branch HEAD; immutable evidence is listed below
@@ -37,10 +37,10 @@ Redis, background Agent, or Java runtime was introduced.
 
 | Gate | Evidence | Result |
 |---|---|---|
-| Latest local full command | `make ci BASE_REF=origin/master` on the T35 code-bearing working tree: Go tests, full race, 31 frontend tests/build, hooks, architecture and spec drift | PASS |
-| Go vet and all tests | local `make ci`; full GitHub Actions `33378359262` at `c2ba3fd` | PASS |
-| Go race | local full repository race; GitHub Actions `33378359262` | PASS |
-| Frontend | 4 files, 31 Vitest tests and Vite production build; latest-request catalog/feed/detail state, duplicate-comment prevention, coupon-claim restoration/reservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
+| Latest local full command | T36-T38 external `make ci BASE_REF=origin/master`: Go vet/tests/race, 34 frontend tests/build, hooks, architecture and spec drift | PASS |
+| Go vet and all tests | latest local `make ci`; full GitHub Actions `33378359262` at `c2ba3fd` | PASS |
+| Go race | latest local full repository race; GitHub Actions `33378359262` | PASS |
+| Frontend | 4 files, 34 Vitest tests and Vite production build; latest-request catalog/feed/detail/comment-page/reaction/Commerce state, duplicate-comment prevention, coupon-claim restoration/reservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
 | Architecture/spec/docs | hooks, architecture, spec drift and link checks | PASS |
 | PostgreSQL | GitHub Actions `33377050477` passed migrations plus identity, forum, promotion, available-coupon reservation, order and entitlement integration | PASS |
 | Seed and container | GitHub Actions `33378359262`: repeated seed, health/readiness/SPA, account, admin catalog, community post/comment/reaction, coupon claim/replay/reservation, order create/replay, sandbox payment/replay, entitlement/ownership and logout | PASS |
@@ -59,8 +59,8 @@ Redis, background Agent, or Java runtime was introduced.
 |---|---|---|
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
-| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T35 |
-| Final documentation and latest code-bearing clean-checkout CI | PASS | GitHub Actions `33377050477` |
+| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T38 |
+| Final documentation and latest code-bearing clean-checkout CI | VERIFYING | T39; local full gate passes, latest GitHub Actions requires the new revision |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |
 | Observability | PASS | validated request ID, result/latency and Agent route/iteration/tool/stop reason |
@@ -95,6 +95,6 @@ editing applied migrations. Use a reviewed forward migration for schema fixes.
 
 ## Decision
 
-- Ready for review: yes.
-- Ready for merge: yes; all PRE_MERGE tasks and final clean-checkout CI pass.
+- Ready for review: yes; the latest local full gate passes.
+- Ready for merge: no; T39 requires the latest revision to pass clean-checkout GitHub Actions.
 - Ready for rollout: no; T17 and abuse protection remain explicit rollout work.

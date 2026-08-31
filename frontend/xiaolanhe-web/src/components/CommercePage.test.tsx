@@ -129,4 +129,19 @@ describe('CommercePage', () => {
     expect(screen.getByText('已拥有')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '沙箱支付' })).not.toBeInTheDocument();
   });
+
+  it('ignores an older history error after payment succeeds', async () => {
+    let rejectHistory!: (reason?: unknown) => void;
+    api.listOrders.mockReturnValue(new Promise((_resolve, reject) => { rejectHistory = reject; }));
+    api.createOrder.mockResolvedValue({ order: pendingOrder, replayed: false });
+    api.payOrder.mockResolvedValue({ order: { ...pendingOrder, status: 'paid', payment: { provider: 'sandbox', reference: 'sandbox:ord', status: 'paid', amountMinor: 1600, createdAt: pendingOrder.updatedAt } }, replayed: false });
+    render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '购买' }));
+    fireEvent.click(await screen.findByRole('button', { name: '沙箱支付' }));
+    expect(await screen.findByText('已拥有')).toBeInTheDocument();
+
+    await act(async () => rejectHistory(new Error('旧订单请求失败')));
+    expect(screen.queryByText('旧订单请求失败')).not.toBeInTheDocument();
+  });
 });
