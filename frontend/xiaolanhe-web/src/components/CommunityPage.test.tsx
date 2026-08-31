@@ -40,6 +40,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 describe('CommunityPage', () => {
@@ -104,6 +105,28 @@ describe('CommunityPage', () => {
     expect(screen.getByRole('heading', { name: '游戏社区', level: 1 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Updated Guide', level: 2 })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Updated Guide', level: 1 })).not.toBeInTheDocument();
+  });
+
+  it('does not close a newer post when an earlier delete finishes', async () => {
+    const secondPost = { ...post, id: '10', title: 'Second Guide' };
+    let resolveDelete!: () => void;
+    api.listCommunityPosts.mockResolvedValue({ items: [post, secondPost] });
+    api.getCommunityPost.mockResolvedValueOnce(post).mockResolvedValueOnce(secondPost);
+    api.deleteCommunityPost.mockReturnValue(new Promise<void>((resolve) => { resolveDelete = resolve; }));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    await screen.findByRole('heading', { name: 'Boss Guide', level: 1 });
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    await waitFor(() => expect(api.deleteCommunityPost).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '← 返回社区' }));
+    fireEvent.click(screen.getByRole('button', { name: /Second Guide/ }));
+    expect(await screen.findByRole('heading', { name: 'Second Guide', level: 1 })).toBeInTheDocument();
+
+    await act(async () => resolveDelete());
+
+    expect(screen.getByRole('heading', { name: 'Second Guide', level: 1 })).toBeInTheDocument();
   });
 
   it('sends a guest to login when they choose to publish', async () => {

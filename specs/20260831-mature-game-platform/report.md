@@ -37,10 +37,10 @@ Redis, background Agent, or Java runtime was introduced.
 
 | Gate | Evidence | Result |
 |---|---|---|
-| Latest local full command | T43 external `make ci BASE_REF=origin/master`: Go vet/tests/race, 38 frontend tests/build, hooks, architecture and spec drift | PASS |
+| Latest local full command | T44 external `make ci BASE_REF=origin/master`: Go vet/tests/race, 39 frontend tests/build, hooks, architecture and spec drift | PASS |
 | Go vet and all tests | latest local `make ci`; full GitHub Actions `33378359262` at `c2ba3fd` | PASS |
 | Go race | latest local full repository race; GitHub Actions `33378359262` | PASS |
-| Frontend | 4 files, 38 Vitest tests and Vite production build; latest-request catalog/feed/detail/comment-page/reaction/Commerce state, abandoned game-detail and post-edit navigation, cross-post comment-submission isolation, duplicate-comment prevention, coupon-claim restoration/reservation, post-claim game-filter preservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
+| Frontend | 4 files, 39 Vitest tests and Vite production build; latest-request catalog/feed/detail/comment-page/reaction/Commerce state, abandoned game-detail/post-edit/post-delete navigation, cross-post comment-submission isolation, duplicate-comment prevention, coupon-claim restoration/reservation, post-claim game-filter preservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
 | Architecture/spec/docs | hooks, architecture, spec drift and link checks | PASS |
 | PostgreSQL | GitHub Actions `33377050477` passed migrations plus identity, forum, promotion, available-coupon reservation, order and entitlement integration | PASS |
 | Seed and container | GitHub Actions `33378359262`: repeated seed, health/readiness/SPA, account, admin catalog, community post/comment/reaction, coupon claim/replay/reservation, order create/replay, sandbox payment/replay, entitlement/ownership and logout | PASS |
@@ -59,7 +59,7 @@ Redis, background Agent, or Java runtime was introduced.
 |---|---|---|
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
-| All product PRE_MERGE behavior | PASS | T1-T15, T20-T38, and T40-T43 |
+| All product PRE_MERGE behavior | PASS | T1-T15, T20-T38, and T40-T44 |
 | Final documentation and latest code-bearing clean-checkout CI | VERIFYING | T39; local full gate passes, latest GitHub Actions requires the new revision |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |

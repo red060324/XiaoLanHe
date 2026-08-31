@@ -158,13 +158,15 @@ export default function CommunityPage({ user, games, onRequireLogin }: Props) {
 
   async function removePost() {
     if (!selectedPost || !window.confirm('确定删除这篇帖子吗？')) return;
+    const postId = selectedPost.id;
     try {
-      await deleteCommunityPost(selectedPost.id);
-      setPosts((current) => current.filter((item) => item.id !== selectedPost.id));
+      await deleteCommunityPost(postId);
+      setPosts((current) => current.filter((item) => item.id !== postId));
+      if (selectedPostId.current !== postId) return;
       closePost();
       setComments([]);
     } catch (requestError) {
-      setError(messageOf(requestError, '删除失败'));
+      if (selectedPostId.current === postId) setError(messageOf(requestError, '删除失败'));
     }
   }
 

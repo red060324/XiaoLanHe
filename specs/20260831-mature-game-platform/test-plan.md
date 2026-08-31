@@ -51,6 +51,8 @@ truth.
   closed detail or replace a different selected post.
 - A completed post edit may refresh its feed item, but cannot reopen a detail
   that the user closed while the save was pending.
+- A completed post deletion removes its feed item, but cannot close a different
+  post opened while the deletion was pending.
 - Repeated comment form submission while the first request is pending creates
   one comment request and exposes a disabled progress state.
 
