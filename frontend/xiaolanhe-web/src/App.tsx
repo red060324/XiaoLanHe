@@ -95,6 +95,7 @@ export default function App() {
       catalogRequestRef.current += 1;
       setCatalogLoading(false);
     }
+    setError(null);
     setView(nextView);
   }
 

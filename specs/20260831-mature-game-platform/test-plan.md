@@ -87,6 +87,8 @@ truth.
   coupon the user selected while that checkout was pending.
 - A coupon claim completed after the game filter changes cannot restore deals
   from the filter captured when the claim started.
+- Navigating away from a failed view clears that view's error instead of
+  displaying it on the Catalog, Assistant, Account, or Commerce page.
 - An order transaction rejects a coupon quote when its campaign is paused or
   expires after quoting but before the order snapshot is written.
 

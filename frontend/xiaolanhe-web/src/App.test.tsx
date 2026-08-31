@@ -139,6 +139,20 @@ describe('App', () => {
     expect(screen.getByText('请求失败：assistant unavailable')).toBeInTheDocument();
   });
 
+  it('clears an assistant failure when navigating to the catalog', async () => {
+    api.streamChatMessage.mockRejectedValue(new Error('assistant unavailable'));
+    render(<App />);
+
+    fireEvent.change(screen.getByPlaceholderText('问攻略、版本或社区内容'), { target: { value: '攻略' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText('请求失败：assistant unavailable')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '游戏库' }));
+
+    expect(await screen.findByText('没有找到游戏。')).toBeInTheDocument();
+    expect(screen.queryByText('assistant unavailable')).not.toBeInTheDocument();
+  });
+
   it('isolates local conversations when another account signs in', async () => {
     api.getMe.mockResolvedValue({ id: '1', username: 'alice', displayName: 'Alice', role: 'user' });
     api.login.mockResolvedValue({ id: '2', username: 'bob', displayName: 'Bob', role: 'user' });

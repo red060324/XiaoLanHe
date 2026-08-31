@@ -59,6 +59,7 @@
 | T51 | PRE_MERGE | DONE | Keep an older chat stream cleanup from disabling a newer stream | AC7, AC8, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 45 Vitest tests |
 | T52 | PRE_MERGE | DONE | Preserve a newer coupon selection when an earlier checkout completes | AC6, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 46 Vitest tests |
 | T53 | PRE_MERGE | IN_PROGRESS | Revalidate coupon campaign eligibility at the final order transaction boundary | AC5, AC6, AC10 | local `make ci BASE_REF=origin/master` PASS; PostgreSQL regression compiles but skips without `XLH_TEST_DATABASE_URL`; clean-checkout database execution pending |
+| T54 | PRE_MERGE | DONE | Prevent a failed view from leaking its error into another page | AC8, AC10 | failing-then-passing Assistant-to-Catalog regression; full local `make ci BASE_REF=origin/master` passed with 47 Vitest tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent
