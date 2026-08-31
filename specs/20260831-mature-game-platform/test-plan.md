@@ -29,6 +29,7 @@ when introduced. Compilation or an empty test selection is not evidence.
 | V13 | PRE_MERGE | frontend | an initial identity lookup or earlier explicit login finishes after a newer login or logout | the latest explicit authentication result remains authoritative |
 | V14 | PRE_MERGE | frontend | initial catalog read finishes after a later search | the latest search result and loading/error state remain authoritative |
 | V15 | PRE_MERGE | frontend | game-detail loading finishes after the user leaves the catalog | returning to the catalog shows the game list, not the abandoned detail |
+| V16 | PRE_MERGE | catalog/PostgreSQL | name/slug query contains SQL wildcard characters such as `%` or `_` | characters are matched literally and do not broaden the result set |
 
 Phase-one HTTP assertions use `contracts/phase1-http.md` as the wire source of
 truth.

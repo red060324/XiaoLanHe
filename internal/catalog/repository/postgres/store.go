@@ -47,7 +47,7 @@ func (s *Store) List(ctx context.Context, filter catalog.ListFilter) ([]entity.G
 			exists(select 1 from game_entitlement ge join game_edition e on e.id=ge.edition_id where ge.user_id=$1 and ge.status='active' and e.game_id=g.id)
 		from game g
 		where g.status='active' and ($2::bigint=0 or g.id<$2)
-			and ($3='' or lower(g.name) like '%'||lower($3)||'%' or lower(g.slug) like '%'||lower($3)||'%')
+			and ($3='' or strpos(lower(g.name),lower($3))>0 or strpos(lower(g.slug),lower($3))>0)
 		order by g.id desc limit $4`, filter.ViewerID, filter.BeforeID, filter.Query, filter.Limit)
 	if err != nil {
 		return nil, err

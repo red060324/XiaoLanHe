@@ -181,6 +181,10 @@ func TestProductPostgres(t *testing.T) {
 	if offer, err := catalogStore.FindPurchaseOffer(ctx, game.Editions[0].ID, catalog.Pricing{Region: "CN", Currency: "CNY"}); !errors.Is(err, catalog.ErrNotFound) {
 		t.Fatalf("omitted offer=%+v err=%v", offer, err)
 	}
+	literalCatalogWildcard, err := catalog.NewService(catalogStore).List(ctx, catalog.ListInput{Query: "%", Limit: 10})
+	if err != nil || len(literalCatalogWildcard.Items) != 0 {
+		t.Fatalf("literal catalog wildcard search=%+v err=%v", literalCatalogWildcard, err)
+	}
 
 	communityStore := communitypg.NewStore(pool)
 	communityService := community.NewService(communityStore, catalog.NewService(catalogStore))
