@@ -126,5 +126,5 @@ order is paid returns `409 invalid_order_state`. No financial provider is
 contacted.
 
 Order errors distinguish `order_not_found`, `price_unavailable`,
-`coupon_ineligible`, `already_owned`, `invalid_order_state`, and `forbidden` without exposing SQL
-or provider details.
+`coupon_ineligible`, `already_owned`, `invalid_order_state`, and `forbidden`
+without exposing SQL or provider details.
