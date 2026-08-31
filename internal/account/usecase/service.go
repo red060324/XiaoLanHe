@@ -25,7 +25,7 @@ var (
 
 var usernamePattern = regexp.MustCompile(`^[a-z0-9_]{3,32}$`)
 
-const dummyPasswordHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+const dummyPasswordHash = "$2a$12$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 
 type Store interface {
 	Register(context.Context, string, string, string, string, time.Time) (entity.User, error)

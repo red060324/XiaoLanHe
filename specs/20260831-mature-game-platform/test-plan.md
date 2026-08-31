@@ -34,6 +34,7 @@ when introduced. Compilation or an empty test selection is not evidence.
 | V18 | PRE_MERGE | knowledge/PostgreSQL | keyword query contains SQL wildcard characters such as `%` or `_` | characters are matched literally and cannot inject unrelated evidence into Assistant retrieval |
 | V19 | PRE_MERGE | HTTP | a product UseCase returns `context.DeadlineExceeded` before a response starts | 504 `deadline_exceeded` with the standard request-ID envelope |
 | V20 | PRE_MERGE | knowledge/usecase | embedding returns request cancellation or deadline after keyword retrieval | context error reaches the Research Agent and HTTP caller; vector search is not started |
+| V21 | PRE_MERGE | account/security | login uses a missing/invalid username instead of a stored account | dummy bcrypt comparison uses the production cost so the generic 401 path does not expose a lower work factor |
 
 Phase-one HTTP assertions use `contracts/phase1-http.md` as the wire source of
 truth.

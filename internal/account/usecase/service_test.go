@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/red060324/XiaoLanHe/internal/account/entity"
 	"github.com/red060324/XiaoLanHe/internal/platform/auth"
 )
@@ -58,6 +60,18 @@ func TestServiceLogin(t *testing.T) {
 	if _, err := service.Login(context.Background(), LoginInput{Username: "player", Password: "password1"}); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("err = %v", err)
 	}
+
+	t.Run("uses the production bcrypt cost for a missing account", func(t *testing.T) {
+		hasher := &recordingHasher{}
+		service := NewService(&accountStore{credentialErr: ErrInvalidCredentials}, hasher, time.Hour)
+		if _, err := service.Login(context.Background(), LoginInput{Username: "missing", Password: "password1"}); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("err=%v", err)
+		}
+		cost, err := bcrypt.Cost([]byte(hasher.comparedHash))
+		if err != nil || cost != 12 || hasher.compareCalls != 1 {
+			t.Fatalf("cost=%d calls=%d hash=%q err=%v", cost, hasher.compareCalls, hasher.comparedHash, err)
+		}
+	})
 }
 
 func TestServiceAuthenticate(t *testing.T) {
@@ -91,6 +105,18 @@ func (accountHasher) Compare(hash, password string) error {
 		return errors.New("mismatch")
 	}
 	return nil
+}
+
+type recordingHasher struct {
+	comparedHash string
+	compareCalls int
+}
+
+func (*recordingHasher) Hash(string) (string, error) { return "", nil }
+func (h *recordingHasher) Compare(hash, _ string) error {
+	h.comparedHash = hash
+	h.compareCalls++
+	return errors.New("mismatch")
 }
 
 type accountStore struct {
