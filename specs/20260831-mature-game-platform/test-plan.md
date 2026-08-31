@@ -35,6 +35,7 @@ when introduced. Compilation or an empty test selection is not evidence.
 | V19 | PRE_MERGE | HTTP | a product UseCase returns `context.DeadlineExceeded` before a response starts | 504 `deadline_exceeded` with the standard request-ID envelope |
 | V20 | PRE_MERGE | knowledge/usecase | embedding returns request cancellation or deadline after keyword retrieval | context error reaches the Research Agent and HTTP caller; vector search is not started |
 | V21 | PRE_MERGE | account/security | login uses a missing/invalid username instead of a stored account | dummy bcrypt comparison uses the production cost so the generic 401 path does not expose a lower work factor |
+| V22 | PRE_MERGE | account/security | login uses a disabled account with a validly shaped password | stored password hash is still compared before returning the generic 401 response |
 
 Phase-one HTTP assertions use `contracts/phase1-http.md` as the wire source of
 truth.

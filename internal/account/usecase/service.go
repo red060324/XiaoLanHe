@@ -99,7 +99,8 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (Session, error) {
 		}
 		return Session{}, err
 	}
-	if user.Status != "active" || s.hasher.Compare(passwordHash, in.Password) != nil {
+	passwordErr := s.hasher.Compare(passwordHash, in.Password)
+	if user.Status != "active" || passwordErr != nil {
 		return Session{}, ErrInvalidCredentials
 	}
 	token, err := s.newToken()

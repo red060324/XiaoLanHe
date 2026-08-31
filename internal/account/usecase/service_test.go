@@ -72,6 +72,17 @@ func TestServiceLogin(t *testing.T) {
 			t.Fatalf("cost=%d calls=%d hash=%q err=%v", cost, hasher.compareCalls, hasher.comparedHash, err)
 		}
 	})
+
+	t.Run("compares the password for a disabled account", func(t *testing.T) {
+		hasher := &recordingHasher{}
+		service := NewService(&accountStore{user: entity.User{Status: "disabled"}, passwordHash: "stored-hash"}, hasher, time.Hour)
+		if _, err := service.Login(context.Background(), LoginInput{Username: "disabled", Password: "password1"}); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("err=%v", err)
+		}
+		if hasher.compareCalls != 1 || hasher.comparedHash != "stored-hash" {
+			t.Fatalf("calls=%d hash=%q", hasher.compareCalls, hasher.comparedHash)
+		}
+	})
 }
 
 func TestServiceAuthenticate(t *testing.T) {
