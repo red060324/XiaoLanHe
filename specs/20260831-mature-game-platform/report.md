@@ -38,7 +38,7 @@ Redis, background Agent, or Java runtime was introduced.
 | Gate | Evidence | Result |
 |---|---|---|
 | Latest local full command | T70 `XLH_TEST_DATABASE_URL=<isolated PostgreSQL 17 database URL> make ci BASE_REF=origin/master`: Go vet/tests/race against PostgreSQL 17 + pgvector, 50 frontend tests/build, hooks, architecture and spec drift | PASS |
-| Latest clean-clone command | committed `6af8c38`; local no-hardlink clone, lockfile `npm ci`, fresh PostgreSQL 17 + pgvector, then the same full `make ci BASE_REF=origin/master` | PASS |
+| Latest clean-clone command | committed `1b95c02`; local no-hardlink clone, lockfile `npm ci`, fresh PostgreSQL 17 + pgvector, then the same full `make ci BASE_REF=origin/master` | PASS |
 | Go vet and all tests | latest local `make ci`; full GitHub Actions `33378359262` at `c2ba3fd` | PASS |
 | Go race | latest local full repository race; GitHub Actions `33378359262` | PASS |
 | Frontend | 4 files, 50 Vitest tests and Vite production build; real-contract catalog-summary purchase hydration, latest-request authentication/catalog/feed/detail/comment-page/reaction/Commerce/chat-stream state, abandoned game-detail/post-create/post-edit/post-delete navigation, cross-view and Commerce-tab error cleanup, abandoned order-history failure isolation, stale-reaction failure isolation, cross-post comment submission/edit/deletion isolation, duplicate-comment prevention, coupon-claim restoration/reservation, post-claim game-filter and mid-checkout coupon-selection preservation, account-isolated chat history, failed-stream and mixed-edition ownership regressions | PASS |
@@ -69,7 +69,7 @@ Redis, background Agent, or Java runtime was introduced.
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
 | All product PRE_MERGE behavior | PASS | T1-T15 and T20-T69 pass |
-| Final documentation and latest code-bearing clean-checkout CI | VERIFYING | T39; committed `6af8c38` passes a clean local clone, latest GitHub Actions still requires the authorized push |
+| Final documentation and latest code-bearing clean-checkout CI | VERIFYING | T39; committed `1b95c02` passes a clean local clone, latest GitHub Actions still requires the authorized push |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |
 | Observability | PASS | validated request ID, result/latency and Agent route/iteration/tool/stop reason |
