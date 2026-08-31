@@ -37,14 +37,14 @@ Redis, background Agent, or Java runtime was introduced.
 
 | Gate | Evidence | Result |
 |---|---|---|
-| Latest local full command | `make ci` reached Go tests; sandbox denied localhost listeners used by `httptest`; all non-listener local gates passed | ENVIRONMENT BLOCKED; public CI substituted |
-| Go vet and all tests | affected packages local PASS; full GitHub Actions `33364425654` at `093f98e` | PASS |
-| Go race | targeted local race PASS; full repository race in GitHub Actions `33364425654` | PASS |
+| Latest local full command | `make ci`: Go tests, full race, frontend tests/build, hooks, architecture and spec drift | PASS |
+| Go vet and all tests | local `make ci`; full GitHub Actions `33365566954` at `0644da2` | PASS |
+| Go race | local full repository race; GitHub Actions `33365566954` | PASS |
 | Frontend | 4 files, 21 Vitest tests and Vite production build | PASS |
 | Architecture/spec/docs | hooks, architecture, spec drift and link checks | PASS |
-| PostgreSQL | GitHub Actions `33364425654`: migrations, identity, catalog, forum literal search, promotion, commerce, duplicate-edition payment concurrency | PASS |
-| Seed and container | GitHub Actions `33364425654`: repeated seed, health/readiness/catalog/community/deals/SPA | PASS |
-| Assistant | fake model/tool iteration, invalid-input classification, partial/all-failed/no-result/budget/cancellation, empty-stream fallback, four-tool allowlist, REST/SSE citations | PASS |
+| PostgreSQL | GitHub Actions `33365566954`: migrations, identity, catalog, forum literal search, promotion, commerce, duplicate-edition payment concurrency | PASS |
+| Seed and container | GitHub Actions `33365566954`: repeated seed, health/readiness/catalog/community/deals/SPA | PASS |
+| Assistant | fake model/tool iteration, historical-context boundary, invalid-input classification, partial/all-failed/no-result/budget/cancellation, empty-stream fallback, four-tool allowlist, REST/SSE citations | PASS |
 | Request correlation | invalid client IDs replaced once and the validated ID is shared by response and REST/SSE completion logs | PASS |
 | Search input boundary | query trim/blank/100-rune checks and knowledge limit 1-10; invalid requests prove zero downstream calls | PASS |
 | Web Search contract | SearXNG identity is fixed to the actual adapter; nonexistent cache/provider-selection surfaces are absent | PASS |
@@ -58,8 +58,8 @@ Redis, background Agent, or Java runtime was introduced.
 |---|---|---|
 | Human spec/design approval | PASS | T0, approved 2026-08-31 |
 | Spec/plan/tasks/test plan/data model/contracts/report | PASS | this spec directory |
-| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T25 |
-| Final documentation and latest code-bearing clean-checkout CI | PASS | GitHub Actions `33364425654` |
+| All product PRE_MERGE behavior | PASS | T1-T15 and T20-T26 |
+| Final documentation and latest code-bearing clean-checkout CI | PASS | GitHub Actions `33365566954` |
 | Migration and application rollback | PASS | additive migrations plus public deployment guide |
 | Sensitive-data review | PASS | logs omit prompts/messages/secrets; repository scan clean |
 | Observability | PASS | validated request ID, result/latency and Agent route/iteration/tool/stop reason |
