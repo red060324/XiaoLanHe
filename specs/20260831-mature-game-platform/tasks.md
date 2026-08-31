@@ -17,7 +17,7 @@
 | T9 | PRE_MERGE | DONE | Add Community UI and ownership/error states | AC4 | 13 Vitest tests + production build |
 | T10 | PRE_MERGE | DONE | Implement atomic idempotent coupon campaign/claim | AC5 | local `make ci` + GitHub Actions `33352631674` PASS |
 | T11 | PRE_MERGE | DONE | Implement order, sandbox payment, redemption, and entitlement | AC6 | local `make ci` + GitHub Actions `33354207598` PASS |
-| T12 | PRE_MERGE | TODO | Add Deals/checkout/orders/ownership UI | AC5, AC6 | frontend tests + build |
+| T12 | PRE_MERGE | IN_PROGRESS | Add Deals/checkout/orders/ownership UI | AC5, AC6 | frontend tests + build pending |
 | T13 | PRE_MERGE | TODO | Implement Router/Answer Nodes and bounded Research Agent | AC7, AC8 | deterministic Agent-loop tests |
 | T14 | PRE_MERGE | TODO | Add knowledge/catalog/forum/Web read-only tools and citations | AC7 | tool/contract tests |
 | T15 | PRE_MERGE | TODO | Complete docs, API contracts, readiness report, and full CI | AC10 | report + `make ci` |

@@ -1,5 +1,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import ChatMessageList from './components/ChatMessageList';
+import CommercePage from './components/CommercePage';
 import CommunityPage from './components/CommunityPage';
 import {
   Game,
@@ -20,7 +21,7 @@ import {
   saveConversations
 } from './lib/conversationStore';
 
-type View = 'assistant' | 'discover' | 'community' | 'account';
+type View = 'assistant' | 'discover' | 'community' | 'commerce' | 'account';
 type AuthMode = 'login' | 'register';
 
 function sanitizeChunk(chunk: string): string {
@@ -309,6 +310,9 @@ export default function App() {
           <button className={`nav-item ${view === 'community' ? 'active' : ''}`} type="button" onClick={() => setView('community')}>
             <span className="nav-icon">◎</span>{!sidebarCollapsed ? <span>游戏社区</span> : null}
           </button>
+          <button className={`nav-item ${view === 'commerce' ? 'active' : ''}`} type="button" onClick={() => setView('commerce')}>
+            <span className="nav-icon">%</span>{!sidebarCollapsed ? <span>优惠商店</span> : null}
+          </button>
           <button className={`nav-item primary ${view === 'assistant' ? 'active' : ''}`} type="button" onClick={handleNewChat}>
             <span className="nav-icon"><NewChatIcon /></span>{!sidebarCollapsed ? <span>游戏助手</span> : null}
           </button>
@@ -338,7 +342,7 @@ export default function App() {
 
       <main className="main-stage">
         <header className="topbar">
-          <div className="topbar-title">{view === 'discover' ? '发现游戏' : view === 'community' ? '游戏社区' : view === 'account' ? '账号' : '游戏助手'}</div>
+          <div className="topbar-title">{view === 'discover' ? '发现游戏' : view === 'community' ? '游戏社区' : view === 'commerce' ? '优惠商店' : view === 'account' ? '账号' : '游戏助手'}</div>
           <div className="topbar-actions">
             <button className="outline-button" type="button" onClick={() => setView('discover')}>游戏库</button>
             <button className="ghost-button" type="button" onClick={() => setView('account')}>{user?.displayName ?? '登录'}</button>
@@ -382,6 +386,8 @@ export default function App() {
         ) : null}
 
         {view === 'community' ? <CommunityPage user={user} games={games} onRequireLogin={() => setView('account')} /> : null}
+
+        {view === 'commerce' ? <CommercePage user={user} games={games} onRequireLogin={() => setView('account')} onOwned={() => void loadCatalog(catalogQuery)} /> : null}
 
         {view === 'account' ? (
           <section className="page-stage auth-stage">

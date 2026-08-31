@@ -1,5 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createCommunityPost, getMe, listCommunityPosts, logout, setCommunityReaction, listGames } from './api';
+import {
+  claimCoupon,
+  createCommunityPost,
+  createOrder,
+  getMe,
+  listCommunityPosts,
+  listDeals,
+  listGames,
+  listOrders,
+  logout,
+  payOrder,
+  setCommunityReaction
+} from './api';
 
 const fetchMock = vi.fn();
 
@@ -31,6 +43,43 @@ describe('catalog API', () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ items: [{ id: '1', slug: 'demo', name: 'Demo', summary: '', owned: false }] }), { status: 200 }));
     await expect(listGames(' demo game ')).resolves.toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledWith('/api/games?query=demo+game', expect.objectContaining({ credentials: 'include' }));
+  });
+});
+
+describe('commerce API', () => {
+  it('encodes deal and order cursors', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ items: [], nextCursor: 'deal-next' }), { status: 200 }));
+    await expect(listDeals('42', 'deal page')).resolves.toMatchObject({ nextCursor: 'deal-next' });
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/deals?gameId=42&cursor=deal+page', expect.objectContaining({ credentials: 'include' }));
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ items: [], nextCursor: 'order-next' }), { status: 200 }));
+    await expect(listOrders('order page')).resolves.toMatchObject({ nextCursor: 'order-next' });
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/orders?cursor=order+page', expect.objectContaining({ credentials: 'include' }));
+  });
+
+  it('sends idempotency keys without inventing request bodies', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ claim: { id: '9' }, replayed: false }), { status: 201 }));
+    await claimCoupon('WELCOME 20', 'claim-key.01');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/coupons/WELCOME%2020/claims', expect.objectContaining({
+      method: 'POST', headers: { 'Idempotency-Key': 'claim-key.01' }, credentials: 'include'
+    }));
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ order: { orderNo: 'ord_1' }, replayed: false }), { status: 200 }));
+    await payOrder('ord/1', 'payment-key.01');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/orders/ord%2F1/payments/sandbox', expect.objectContaining({
+      method: 'POST', headers: { 'Idempotency-Key': 'payment-key.01' }, credentials: 'include'
+    }));
+  });
+
+  it('creates an order from edition identity without a client price', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ order: { orderNo: 'ord_1' }, replayed: false }), { status: 201 }));
+    await createOrder({ editionId: '12', region: 'GLOBAL', currency: 'USD', couponClaimId: '9' }, 'order-key.01');
+    expect(fetchMock).toHaveBeenCalledWith('/api/orders', expect.objectContaining({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'order-key.01' },
+      body: JSON.stringify({ editionId: '12', region: 'GLOBAL', currency: 'USD', couponClaimId: '9' }),
+      credentials: 'include'
+    }));
   });
 });
 

@@ -38,6 +38,59 @@ export type Game = {
   editions?: Array<{ id: string; code: string; name: string; description?: string; price?: Price }>;
 };
 
+export type Deal = {
+  id: string;
+  code: string;
+  name: string;
+  discountType: 'fixed' | 'percentage';
+  fixedMinor?: number;
+  percentageBps?: number;
+  currency: string;
+  minimumMinor: number;
+  remainingStock: number;
+  perUserLimit: number;
+  gameId?: string;
+  editionId?: string;
+  startsAt: string;
+  endsAt: string;
+  viewerClaimCount: number;
+};
+
+export type CouponClaim = {
+  id: string;
+  couponCode: string;
+  status: 'claimed' | 'redeemed' | 'expired';
+  claimedAt: string;
+};
+
+export type Order = {
+  orderNo: string;
+  status: 'pending_payment' | 'paid' | 'cancelled' | 'expired';
+  currency: string;
+  subtotalMinor: number;
+  discountMinor: number;
+  totalMinor: number;
+  couponClaimId?: string;
+  item: {
+    editionId: string;
+    gameSlug: string;
+    gameName: string;
+    editionCode: string;
+    editionName: string;
+    unitPriceMinor: number;
+    region: string;
+  };
+  payment?: {
+    provider: string;
+    reference: string;
+    status: string;
+    amountMinor: number;
+    createdAt: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type CommunityAuthor = {
   id: string;
   username: string;
@@ -137,6 +190,41 @@ export async function listGames(query = ''): Promise<Game[]> {
 export async function getGame(slug: string): Promise<Game> {
   const result = await requestJSON<{ game: Game }>(`/api/games/${encodeURIComponent(slug)}`);
   return result.game;
+}
+
+export async function listDeals(gameId = '', cursor = ''): Promise<Page<Deal>> {
+  const params = new URLSearchParams();
+  if (gameId) params.set('gameId', gameId);
+  if (cursor) params.set('cursor', cursor);
+  return requestJSON<Page<Deal>>(`/api/deals?${params}`);
+}
+
+export async function claimCoupon(code: string, idempotencyKey: string): Promise<{ claim: CouponClaim; replayed: boolean }> {
+  return requestJSON<{ claim: CouponClaim; replayed: boolean }>(`/api/coupons/${encodeURIComponent(code)}/claims`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey }
+  });
+}
+
+export async function createOrder(input: { editionId: string; region: string; currency: string; couponClaimId?: string }, idempotencyKey: string): Promise<{ order: Order; replayed: boolean }> {
+  return requestJSON<{ order: Order; replayed: boolean }>('/api/orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(input)
+  });
+}
+
+export async function listOrders(cursor = ''): Promise<Page<Order>> {
+  const params = new URLSearchParams();
+  if (cursor) params.set('cursor', cursor);
+  return requestJSON<Page<Order>>(`/api/orders?${params}`);
+}
+
+export async function payOrder(orderNo: string, idempotencyKey: string): Promise<{ order: Order; replayed: boolean }> {
+  return requestJSON<{ order: Order; replayed: boolean }>(`/api/orders/${encodeURIComponent(orderNo)}/payments/sandbox`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey }
+  });
 }
 
 export async function listCommunityPosts(gameId = '', cursor = ''): Promise<Page<CommunityPost>> {

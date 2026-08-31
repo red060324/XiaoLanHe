@@ -10,6 +10,11 @@ const api = vi.hoisted(() => ({
   logout: vi.fn(),
   register: vi.fn(),
   streamChatMessage: vi.fn(),
+  claimCoupon: vi.fn(),
+  createOrder: vi.fn(),
+  listDeals: vi.fn(),
+  listOrders: vi.fn(),
+  payOrder: vi.fn(),
   createCommunityComment: vi.fn(),
   createCommunityPost: vi.fn(),
   deleteCommunityComment: vi.fn(),
@@ -29,6 +34,8 @@ beforeEach(() => {
   api.getMe.mockResolvedValue(null);
   api.listGames.mockResolvedValue([]);
   api.listCommunityPosts.mockResolvedValue({ items: [] });
+  api.listDeals.mockResolvedValue({ items: [] });
+  api.listOrders.mockResolvedValue({ items: [] });
   api.streamChatMessage.mockResolvedValue(undefined);
 });
 
@@ -50,6 +57,14 @@ describe('App', () => {
 
     expect(await screen.findByText('攻略、体验和版本讨论。')).toBeInTheDocument();
     expect(api.listCommunityPosts).toHaveBeenCalledWith('', '');
+  });
+
+  it('opens the public deals and purchase page', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /优惠商店/ }));
+
+    expect(await screen.findByText('领取优惠券，按服务器价格创建订单，并使用沙箱支付解锁游戏。')).toBeInTheDocument();
+    expect(api.listDeals).toHaveBeenCalledWith('');
   });
 
   it('cancels the active stream before starting a new chat', async () => {
