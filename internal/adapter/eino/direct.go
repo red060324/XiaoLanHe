@@ -14,19 +14,24 @@ type directStream struct {
 	model  string
 	suffix string
 	emit   bool
+	wrote  bool
 }
 
 func (s *directStream) Recv() (string, error) {
 	for {
 		message, err := s.stream.Recv()
 		if err != nil {
-			if errors.Is(err, io.EOF) && s.suffix != "" && !s.emit {
+			if errors.Is(err, io.EOF) && !s.emit && (!s.wrote || s.suffix != "") {
 				s.emit = true
+				if !s.wrote {
+					return emptyReply + s.suffix, nil
+				}
 				return s.suffix, nil
 			}
 			return "", err
 		}
 		if message.Content != "" {
+			s.wrote = true
 			return message.Content, nil
 		}
 	}

@@ -33,7 +33,8 @@ Evidence retains source, title, content, and URL through Research and Answer.
 The Answer Node deterministically appends a Markdown source list for valid
 HTTP(S) URLs and local `/api/` resource URLs, including for SSE responses.
 Unsafe schemes and credential-bearing URLs are omitted. The model is not trusted
-to reproduce citations itself.
+to reproduce citations itself. If a successful model stream contains no text,
+the SSE path emits the same explicit fallback reply as the REST path before EOF.
 
 ## Failure Semantics
 
@@ -42,6 +43,8 @@ to reproduce citations itself.
 - Every called tool fails: request fails with `all research tools failed`.
 - Tool or iteration budget reached: `bounded`; partial evidence is retained.
 - Request cancellation or deadline: propagated to model, tools, and caller.
+- Successful empty model stream: explicit fallback reply, never an empty
+  assistant message.
 
 Real model and public Web calls are rollout checks. Deterministic fake-model and
 fake-tool tests are the pre-merge evidence.

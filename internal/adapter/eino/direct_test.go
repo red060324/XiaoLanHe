@@ -43,6 +43,23 @@ func TestModelNodesStreamAnswer(t *testing.T) {
 		}
 	})
 
+	t.Run("emits a fallback for an empty model stream", func(t *testing.T) {
+		fake := &fakeChatModel{stream: func([]*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+			return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("", nil)}), nil
+		}}
+		stream, err := NewModelNodes(fake, "qwen", "route", "direct", "synthesis").StreamAnswer(context.Background(), usecase.AnswerRequest{Route: usecase.RouteDirect, Message: "hi"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Close()
+		if chunk, err := stream.Recv(); err != nil || chunk != emptyReply {
+			t.Fatalf("chunk=%q err=%v", chunk, err)
+		}
+		if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
+			t.Fatalf("err=%v", err)
+		}
+	})
+
 	t.Run("propagates stream creation error", func(t *testing.T) {
 		want := errors.New("provider failed")
 		fake := &fakeChatModel{stream: func([]*schema.Message) (*schema.StreamReader[*schema.Message], error) { return nil, want }}
