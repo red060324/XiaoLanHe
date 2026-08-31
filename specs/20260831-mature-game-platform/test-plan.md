@@ -26,7 +26,7 @@ when introduced. Compilation or an empty test selection is not evidence.
 | V10 | PRE_MERGE | frontend | auth state, catalog states, aborted/error chat stream | no no-op affordance or empty assistant message |
 | V11 | PRE_MERGE | catalog/PostgreSQL | admin aggregate update omits a previously active regional price | omitted price is no longer returned or purchasable; submitted replacement remains active |
 | V12 | PRE_MERGE | catalog/commerce | user owns one of multiple editions | owned edition is marked unavailable; another edition remains purchasable |
-| V13 | PRE_MERGE | frontend | initial identity lookup finishes after a successful login or logout | the latest explicit authentication result remains authoritative |
+| V13 | PRE_MERGE | frontend | an initial identity lookup or earlier explicit login finishes after a newer login or logout | the latest explicit authentication result remains authoritative |
 | V14 | PRE_MERGE | frontend | initial catalog read finishes after a later search | the latest search result and loading/error state remain authoritative |
 | V15 | PRE_MERGE | frontend | game-detail loading finishes after the user leaves the catalog | returning to the catalog shows the game list, not the abandoned detail |
 

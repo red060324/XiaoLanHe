@@ -52,6 +52,7 @@
 | T44 | PRE_MERGE | DONE | Keep a completed post deletion from closing a newer detail | AC4, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 39 Vitest tests |
 | T45 | PRE_MERGE | DONE | Keep a completed comment deletion scoped to its original post | AC4, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 40 Vitest tests |
 | T46 | PRE_MERGE | DONE | Keep a completed comment edit scoped to its original post | AC4, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 41 Vitest tests |
+| T47 | PRE_MERGE | DONE | Keep the latest explicit authentication attempt authoritative | AC2, AC8, AC10 | failing-then-passing controlled-response frontend regression; full local `make ci BASE_REF=origin/master` passed with 42 Vitest tests |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent

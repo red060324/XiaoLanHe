@@ -315,16 +315,19 @@ export default function App() {
 
 	async function submitAuth(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		const authStateVersion = ++authStateVersionRef.current;
 		setError(null);
 		try {
 			const nextUser = authMode === 'login' ? await login(username, password) : await register(username, displayName, password);
-			authStateVersionRef.current += 1;
+			if (authStateVersion !== authStateVersionRef.current) return;
 			setUser(nextUser);
 			switchConversationOwner(nextUser.id);
 			setPassword('');
 			navigate('assistant');
 		} catch (requestError) {
-			setError(requestError instanceof Error ? requestError.message : '认证失败');
+			if (authStateVersion === authStateVersionRef.current) {
+				setError(requestError instanceof Error ? requestError.message : '认证失败');
+			}
 		}
 	}
 

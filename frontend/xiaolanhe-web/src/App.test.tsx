@@ -136,6 +136,29 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Bob' })).toBeInTheDocument();
   });
 
+  it('keeps the latest explicit login when an earlier login finishes later', async () => {
+    let resolveAlice!: (value: { id: string; username: string; displayName: string; role: string }) => void;
+    let resolveBob!: (value: { id: string; username: string; displayName: string; role: string }) => void;
+    api.login
+      .mockReturnValueOnce(new Promise((resolve) => { resolveAlice = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveBob = resolve; }));
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: '登录 / 注册' }));
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'alice' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password123' } });
+    fireEvent.submit(screen.getByLabelText('用户名').closest('form')!);
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'bob' } });
+    fireEvent.submit(screen.getByLabelText('用户名').closest('form')!);
+
+    await act(async () => resolveBob({ id: '2', username: 'bob', displayName: 'Bob', role: 'user' }));
+    expect(await screen.findByRole('button', { name: 'Bob' })).toBeInTheDocument();
+
+    await act(async () => resolveAlice({ id: '1', username: 'alice', displayName: 'Alice', role: 'user' }));
+    expect(screen.getByRole('button', { name: 'Bob' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Alice' })).not.toBeInTheDocument();
+  });
+
   it('keeps the latest catalog search when the initial load finishes later', async () => {
     let resolveInitial!: (value: unknown[]) => void;
     let resolveSearch!: (value: unknown[]) => void;
