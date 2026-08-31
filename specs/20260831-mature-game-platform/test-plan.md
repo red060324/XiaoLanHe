@@ -75,6 +75,8 @@ truth.
   pending with no payment.
 - Cross-user order access is forbidden; history pagination remains stable.
 - Frontend Deals/checkout/orders/owned states and error recovery.
+- Catalog summaries are resolved through the detail contract before the
+  purchase list renders editions, prices, ownership, and checkout controls.
 - Available unredeemed claims reload after navigation or refresh; claims already
   attached to an order are not offered for another checkout.
 - A superseded deal or order-history request that fails after a newer filter or

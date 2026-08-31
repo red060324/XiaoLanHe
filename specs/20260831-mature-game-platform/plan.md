@@ -102,6 +102,11 @@ under unique constraints. Replays return the existing terminal result.
 Promotion exposes a discount quote capability to Order. Order never reads the
 Promotion repository directly.
 
+The Commerce view resolves the current bounded catalog page through game detail
+reads before exposing edition price, ownership, and checkout controls. Catalog
+and Community views continue to use list summaries; add a batch purchase-offers
+endpoint only when the page-bounded detail fan-out becomes measurable.
+
 ## Phase 4: Assistant Integration
 
 ```text

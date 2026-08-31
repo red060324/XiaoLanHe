@@ -67,6 +67,27 @@ describe('App', () => {
     expect(api.listDeals).toHaveBeenCalledWith('');
   });
 
+  it('loads purchasable editions for catalog summaries', async () => {
+    const summary = { id: '1', slug: 'demo', name: 'Demo Game', summary: 'Demo', owned: false };
+    api.listGames.mockResolvedValue([summary]);
+    api.getGame.mockResolvedValue({
+      ...summary,
+      editions: [{
+        id: '12',
+        code: 'standard',
+        name: 'Standard',
+        owned: false,
+        price: { amountMinor: 1999, currency: 'USD', region: 'GLOBAL' }
+      }]
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: /优惠商店/ }));
+
+    expect(await screen.findByRole('button', { name: '购买' })).toBeInTheDocument();
+    expect(api.getGame).toHaveBeenCalledWith('demo');
+  });
+
   it('cancels the active stream before starting a new chat', async () => {
     let signal: AbortSignal | undefined;
     api.streamChatMessage.mockImplementation((_payload, _onChunk, requestSignal: AbortSignal) => {

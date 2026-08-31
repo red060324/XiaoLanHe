@@ -65,6 +65,7 @@ export default function App() {
 	const [view, setView] = useState<View>('assistant');
 	const [user, setUser] = useState<User | null>(null);
 	const [games, setGames] = useState<Game[]>([]);
+	const [purchaseGames, setPurchaseGames] = useState<Game[]>([]);
 	const [selectedGame, setSelectedGame] = useState<Game | null>(null);
 	const [catalogQuery, setCatalogQuery] = useState('');
 	const [catalogLoading, setCatalogLoading] = useState(false);
@@ -128,6 +129,20 @@ export default function App() {
       setActiveConversationId(conversations[0].id);
     }
   }, [activeConversation, conversations]);
+
+	useEffect(() => {
+		if (view !== 'commerce') return;
+		let active = true;
+		setPurchaseGames([]);
+		setError(null);
+		// ponytail: bounded by the 50-item catalog page; add a batch offers endpoint when this becomes measurable.
+		void Promise.all(games.map((game) => game.editions ? game : getGame(game.slug))).then((details) => {
+			if (active) setPurchaseGames(details);
+		}).catch((requestError) => {
+			if (active) setError(requestError instanceof Error ? requestError.message : '购买信息加载失败');
+		});
+		return () => { active = false; };
+	}, [games, view]);
 
   useEffect(() => {
     const container = conversationStageRef.current;
@@ -448,7 +463,7 @@ export default function App() {
 
         {view === 'community' ? <CommunityPage user={user} games={games} onRequireLogin={() => navigate('account')} /> : null}
 
-        {view === 'commerce' ? <CommercePage user={user} games={games} onRequireLogin={() => navigate('account')} onOwned={() => void loadCatalog(catalogQuery)} /> : null}
+		{view === 'commerce' ? <>{error ? <div className="error-banner">{error}</div> : null}<CommercePage user={user} games={purchaseGames} onRequireLogin={() => navigate('account')} onOwned={() => void loadCatalog(catalogQuery)} /></> : null}
 
         {view === 'account' ? (
           <section className="page-stage auth-stage">
