@@ -49,6 +49,7 @@ type ClaimResult struct {
 type Store interface {
 	List(context.Context, ListFilter) ([]entity.Coupon, error)
 	Claim(context.Context, ClaimCommand) (ClaimResult, error)
+	FindClaimCoupon(context.Context, int64, int64) (entity.Claim, entity.Coupon, error)
 }
 
 type Service struct {
@@ -103,6 +104,27 @@ func (s *Service) Claim(ctx context.Context, principal auth.Principal, code, ide
 		return ClaimResult{}, ErrInvalidInput
 	}
 	return s.store.Claim(ctx, ClaimCommand{UserID: principal.UserID, Code: code, IdempotencyKey: idempotencyKey, Now: s.now().UTC()})
+}
+
+func (s *Service) QuoteClaim(ctx context.Context, userID, claimID, subtotal int64, currency string, gameID, editionID int64) (entity.Quote, error) {
+	if userID <= 0 || claimID <= 0 || subtotal < 0 || gameID <= 0 || editionID <= 0 {
+		return entity.Quote{}, ErrInvalidInput
+	}
+	claim, coupon, err := s.store.FindClaimCoupon(ctx, userID, claimID)
+	if err != nil {
+		return entity.Quote{}, err
+	}
+	if claim.Status != "claimed" {
+		return entity.Quote{}, entity.ErrIneligible
+	}
+	if err := coupon.ValidateUse(s.now().UTC()); err != nil {
+		return entity.Quote{}, err
+	}
+	discount, err := coupon.Discount(subtotal, currency, gameID, editionID)
+	if err != nil {
+		return entity.Quote{}, err
+	}
+	return entity.Quote{ClaimID: claim.ID, CouponID: coupon.ID, CouponCode: coupon.Code, DiscountMinor: discount}, nil
 }
 
 func decodeCursor(value string) (int64, error) {

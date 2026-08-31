@@ -41,6 +41,19 @@ func TestCouponValidateClaim(t *testing.T) {
 	}
 }
 
+func TestCouponValidateUse(t *testing.T) {
+	now := time.Date(2026, 8, 31, 8, 0, 0, 0, time.UTC)
+	active := Coupon{CampaignStatus: "active", StartsAt: now, EndsAt: now.Add(time.Hour)}
+	if err := active.ValidateUse(now); err != nil {
+		t.Fatalf("active coupon error=%v", err)
+	}
+	for _, coupon := range []Coupon{withStatus(active, "paused"), {CampaignStatus: "active", StartsAt: now.Add(time.Second), EndsAt: now.Add(time.Hour)}, {CampaignStatus: "active", StartsAt: now.Add(-time.Hour), EndsAt: now}} {
+		if err := coupon.ValidateUse(now); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("coupon=%+v error=%v", coupon, err)
+		}
+	}
+}
+
 func TestCouponDiscount(t *testing.T) {
 	percentage := Coupon{DiscountType: DiscountPercentage, PercentageBps: 2500, Currency: "USD", MinimumMinor: 1000}
 	fixed := Coupon{DiscountType: DiscountFixed, FixedMinor: 1200, Currency: "USD"}

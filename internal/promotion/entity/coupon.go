@@ -47,11 +47,18 @@ func (c Coupon) RemainingStock() int64 {
 }
 
 func (c Coupon) ValidateClaim(now time.Time) error {
-	if c.CampaignStatus != "active" || now.Before(c.StartsAt) || !now.Before(c.EndsAt) {
-		return ErrUnavailable
+	if err := c.ValidateUse(now); err != nil {
+		return err
 	}
 	if c.RemainingStock() == 0 {
 		return ErrExhausted
+	}
+	return nil
+}
+
+func (c Coupon) ValidateUse(now time.Time) error {
+	if c.CampaignStatus != "active" || now.Before(c.StartsAt) || !now.Before(c.EndsAt) {
+		return ErrUnavailable
 	}
 	return nil
 }
@@ -83,4 +90,11 @@ type Claim struct {
 	Status         string
 	IdempotencyKey string
 	ClaimedAt      time.Time
+}
+
+type Quote struct {
+	ClaimID       int64
+	CouponID      int64
+	CouponCode    string
+	DiscountMinor int64
 }

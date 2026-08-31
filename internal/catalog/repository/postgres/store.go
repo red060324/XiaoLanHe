@@ -22,6 +22,25 @@ func (s *Store) Exists(ctx context.Context, id int64) (bool, error) {
 	return exists, err
 }
 
+func (s *Store) FindPurchaseOffer(ctx context.Context, editionID int64, pricing catalog.Pricing) (entity.PurchaseOffer, error) {
+	var offer entity.PurchaseOffer
+	err := s.pool.QueryRow(ctx, `
+		select g.id,g.slug,g.name,e.id,e.code,e.name,p.amount_minor,p.currency,p.region_code
+		from game_edition e join game g on g.id=e.game_id
+		join lateral (
+			select amount_minor,currency,region_code from game_price
+			where edition_id=e.id and currency=$2 and region_code in ($3,'GLOBAL')
+				and active_from<=now() and (active_until is null or active_until>now())
+			order by case when region_code=$3 then 0 else 1 end,active_from desc limit 1
+		) p on true
+		where e.id=$1 and e.status='active' and g.status='active'`, editionID, pricing.Currency, pricing.Region).
+		Scan(&offer.GameID, &offer.GameSlug, &offer.GameName, &offer.EditionID, &offer.EditionCode, &offer.EditionName, &offer.AmountMinor, &offer.Currency, &offer.Region)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return entity.PurchaseOffer{}, catalog.ErrNotFound
+	}
+	return offer, err
+}
+
 func (s *Store) List(ctx context.Context, filter catalog.ListFilter) ([]entity.Game, error) {
 	rows, err := s.pool.Query(ctx, `
 		select g.id,g.slug,g.name,g.summary,g.cover_url,g.release_date,

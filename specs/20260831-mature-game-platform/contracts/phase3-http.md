@@ -76,10 +76,41 @@ Authenticated. Requires `Idempotency-Key`. Body:
 
 Unknown fields are rejected. The server reads the active catalog price, quotes
 the coupon, and snapshots both. New order is `201`; replay is `200`.
+Replaying the same key does not depend on the current catalog price. Reusing the
+key with a different edition, region, currency, or coupon claim returns
+`409 idempotency_conflict`.
+
+```json
+{
+  "order": {
+    "orderNo": "ord_4f8a6f...",
+    "status": "pending_payment",
+    "currency": "USD",
+    "subtotalMinor": 1999,
+    "discountMinor": 399,
+    "totalMinor": 1600,
+    "couponClaimId": "91",
+    "item": {
+      "editionId": "12",
+      "gameSlug": "xiaolanhe-demo",
+      "gameName": "小蓝盒 Demo",
+      "editionCode": "standard",
+      "editionName": "标准版",
+      "unitPriceMinor": 1999,
+      "region": "GLOBAL"
+    },
+    "createdAt": "2026-08-31T08:00:00Z",
+    "updatedAt": "2026-08-31T08:00:00Z"
+  },
+  "replayed": false
+}
+```
 
 ### `GET /api/orders?cursor=&limit=`
 
 Authenticated stable owner history. Admin access does not broaden this list.
+Returns `{"items":[<order>],"nextCursor":"..."}` using descending
+`(created_at,id)` keyset pagination. Default limit is 20; maximum is 50.
 
 ### `GET /api/orders/{orderNo}`
 
@@ -90,8 +121,10 @@ Authenticated owner or admin detail.
 Authenticated owner. Requires `Idempotency-Key` and an empty body. It confirms
 only the repository's sandbox payment: one payment row, coupon redemption, and
 entitlement are committed atomically. New confirmation is `200`; replay returns
-the same paid order. No financial provider is contacted.
+the same paid order with `"replayed": true`. A different payment key after the
+order is paid returns `409 invalid_order_state`. No financial provider is
+contacted.
 
 Order errors distinguish `order_not_found`, `price_unavailable`,
-`coupon_ineligible`, `invalid_order_state`, and `forbidden` without exposing SQL
+`coupon_ineligible`, `already_owned`, `invalid_order_state`, and `forbidden` without exposing SQL
 or provider details.

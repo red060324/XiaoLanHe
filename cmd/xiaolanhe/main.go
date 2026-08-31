@@ -24,6 +24,9 @@ import (
 	community "github.com/red060324/XiaoLanHe/internal/community/usecase"
 	"github.com/red060324/XiaoLanHe/internal/config"
 	"github.com/red060324/XiaoLanHe/internal/entry"
+	orderentry "github.com/red060324/XiaoLanHe/internal/order/entry"
+	orderpg "github.com/red060324/XiaoLanHe/internal/order/repository/postgres"
+	order "github.com/red060324/XiaoLanHe/internal/order/usecase"
 	"github.com/red060324/XiaoLanHe/internal/platform/auth"
 	"github.com/red060324/XiaoLanHe/internal/platform/httpauth"
 	promotionentry "github.com/red060324/XiaoLanHe/internal/promotion/entry"
@@ -82,7 +85,9 @@ func main() {
 	accountentry.NewHTTP(accountService, cfg.CookieSecure, cfg.PublicOrigin).Register(server.Router())
 	catalogentry.NewHTTP(catalogService, accountService, cfg.PublicOrigin).Register(server.Router())
 	communityentry.NewHTTP(community.NewService(communitypg.NewStore(pool), catalogService), accountService, cfg.PublicOrigin).Register(server.Router())
-	promotionentry.NewHTTP(promotion.NewService(promotionpg.NewStore(pool)), accountService, cfg.PublicOrigin).Register(server.Router())
+	promotionService := promotion.NewService(promotionpg.NewStore(pool))
+	promotionentry.NewHTTP(promotionService, accountService, cfg.PublicOrigin).Register(server.Router())
+	orderentry.NewHTTP(order.NewService(orderpg.NewStore(pool), catalogService, promotionService), accountService, cfg.PublicOrigin).Register(server.Router())
 	server.RegisterReadiness(pool.Ping)
 	slog.Info("xiaolanhe started", "address", cfg.Address, "model", cfg.AIModel)
 	server.Spin()

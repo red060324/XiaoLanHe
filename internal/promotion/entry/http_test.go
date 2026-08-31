@@ -87,6 +87,10 @@ func (s *httpStore) Claim(_ context.Context, command promotion.ClaimCommand) (pr
 	}, Replayed: command.IdempotencyKey == "claim-replay.01"}, nil
 }
 
+func (s *httpStore) FindClaimCoupon(context.Context, int64, int64) (entity.Claim, entity.Coupon, error) {
+	return entity.Claim{}, entity.Coupon{}, nil
+}
+
 type httpAuthenticator struct{}
 
 func (httpAuthenticator) Authenticate(_ context.Context, token string) (auth.Principal, error) {

@@ -30,6 +30,18 @@ type Price struct {
 	Region      string
 }
 
+type PurchaseOffer struct {
+	GameID      int64
+	GameSlug    string
+	GameName    string
+	EditionID   int64
+	EditionCode string
+	EditionName string
+	AmountMinor int64
+	Currency    string
+	Region      string
+}
+
 type Draft struct {
 	Slug        string
 	Name        string

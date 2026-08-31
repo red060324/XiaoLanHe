@@ -104,6 +104,29 @@ func (s *Store) Claim(ctx context.Context, command promotion.ClaimCommand) (resu
 	return promotion.ClaimResult{Claim: claim}, nil
 }
 
+func (s *Store) FindClaimCoupon(ctx context.Context, userID, claimID int64) (entity.Claim, entity.Coupon, error) {
+	var claim entity.Claim
+	var coupon entity.Coupon
+	err := s.pool.QueryRow(ctx, `
+		select cl.id,cl.coupon_id,d.code,cl.user_id,cl.status,cl.idempotency_key,cl.claimed_at,
+			d.id,d.code,d.name,d.discount_type,coalesce(d.fixed_minor,0),coalesce(d.percentage_bps,0),
+			d.currency,d.minimum_minor,d.total_stock,d.claimed_stock,d.per_user_limit,
+			coalesce(d.game_id,0),coalesce(d.edition_id,0),c.status,c.starts_at,c.ends_at
+		from coupon_claim cl
+		join coupon_definition d on d.id=cl.coupon_id
+		join coupon_campaign c on c.id=d.campaign_id
+		where cl.id=$1 and cl.user_id=$2`, claimID, userID).Scan(
+		&claim.ID, &claim.CouponID, &claim.CouponCode, &claim.UserID, &claim.Status, &claim.IdempotencyKey, &claim.ClaimedAt,
+		&coupon.ID, &coupon.Code, &coupon.Name, &coupon.DiscountType, &coupon.FixedMinor, &coupon.PercentageBps,
+		&coupon.Currency, &coupon.MinimumMinor, &coupon.TotalStock, &coupon.ClaimedStock, &coupon.PerUserLimit,
+		&coupon.GameID, &coupon.EditionID, &coupon.CampaignStatus, &coupon.StartsAt, &coupon.EndsAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return entity.Claim{}, entity.Coupon{}, promotion.ErrNotFound
+	}
+	return claim, coupon, err
+}
+
 type scanner interface{ Scan(...any) error }
 
 func scanCoupon(row scanner) (entity.Coupon, error) {

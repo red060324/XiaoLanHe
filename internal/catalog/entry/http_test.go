@@ -54,6 +54,9 @@ func (s *httpStore) List(context.Context, catalog.ListFilter) ([]entity.Game, er
 func (s *httpStore) FindBySlug(context.Context, string, catalog.Pricing, int64) (entity.Game, error) {
 	return s.game, nil
 }
+func (s *httpStore) FindPurchaseOffer(context.Context, int64, catalog.Pricing) (entity.PurchaseOffer, error) {
+	return entity.PurchaseOffer{}, nil
+}
 func (s *httpStore) Exists(context.Context, int64) (bool, error) { return true, nil }
 func (s *httpStore) Save(_ context.Context, _ int64, draft entity.Draft) (entity.Game, error) {
 	s.saved = true

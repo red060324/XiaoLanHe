@@ -88,6 +88,28 @@ func TestServiceClaim(t *testing.T) {
 	})
 }
 
+func TestServiceQuoteClaim(t *testing.T) {
+	now := time.Date(2026, 8, 31, 8, 0, 0, 0, time.UTC)
+	store := &fakeStore{
+		foundClaim:  entity.Claim{ID: 8, CouponID: 4, UserID: 9, Status: "claimed"},
+		foundCoupon: entity.Coupon{ID: 4, Code: "WELCOME20", DiscountType: entity.DiscountPercentage, PercentageBps: 2000, Currency: "USD", CampaignStatus: "active", StartsAt: now.Add(-time.Hour), EndsAt: now.Add(time.Hour)},
+	}
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+
+	quote, err := service.QuoteClaim(context.Background(), 9, 8, 1999, "USD", 3, 12)
+	if err != nil || quote.ClaimID != 8 || quote.CouponCode != "WELCOME20" || quote.DiscountMinor != 399 || store.foundUserID != 9 || store.foundClaimID != 8 {
+		t.Fatalf("quote=%+v user=%d claim=%d error=%v", quote, store.foundUserID, store.foundClaimID, err)
+	}
+	store.foundClaim.Status = "redeemed"
+	if _, err := service.QuoteClaim(context.Background(), 9, 8, 1999, "USD", 3, 12); !errors.Is(err, entity.ErrIneligible) {
+		t.Fatalf("redeemed claim error=%v", err)
+	}
+	if _, err := service.QuoteClaim(context.Background(), 0, 8, 1999, "USD", 3, 12); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid input error=%v", err)
+	}
+}
+
 type fakeStore struct {
 	listItems    []entity.Coupon
 	listErr      error
@@ -96,6 +118,11 @@ type fakeStore struct {
 	claimErr     error
 	claimCommand ClaimCommand
 	claimCalls   int
+	foundClaim   entity.Claim
+	foundCoupon  entity.Coupon
+	foundErr     error
+	foundUserID  int64
+	foundClaimID int64
 }
 
 func (s *fakeStore) List(_ context.Context, filter ListFilter) ([]entity.Coupon, error) {
@@ -107,4 +134,9 @@ func (s *fakeStore) Claim(_ context.Context, command ClaimCommand) (ClaimResult,
 	s.claimCalls++
 	s.claimCommand = command
 	return s.claimResult, s.claimErr
+}
+
+func (s *fakeStore) FindClaimCoupon(_ context.Context, userID, claimID int64) (entity.Claim, entity.Coupon, error) {
+	s.foundUserID, s.foundClaimID = userID, claimID
+	return s.foundClaim, s.foundCoupon, s.foundErr
 }

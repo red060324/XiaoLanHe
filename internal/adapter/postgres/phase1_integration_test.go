@@ -23,6 +23,9 @@ import (
 	communityentity "github.com/red060324/XiaoLanHe/internal/community/entity"
 	communitypg "github.com/red060324/XiaoLanHe/internal/community/repository/postgres"
 	community "github.com/red060324/XiaoLanHe/internal/community/usecase"
+	orderentity "github.com/red060324/XiaoLanHe/internal/order/entity"
+	orderpg "github.com/red060324/XiaoLanHe/internal/order/repository/postgres"
+	order "github.com/red060324/XiaoLanHe/internal/order/usecase"
 	"github.com/red060324/XiaoLanHe/internal/platform/auth"
 	promotionentity "github.com/red060324/XiaoLanHe/internal/promotion/entity"
 	promotionpg "github.com/red060324/XiaoLanHe/internal/promotion/repository/postgres"
@@ -80,12 +83,12 @@ func TestProductPostgres(t *testing.T) {
 		}
 	}
 	var versions int
-	if err := pool.QueryRow(ctx, `select count(*) from schema_migration`).Scan(&versions); err != nil || versions != 4 {
+	if err := pool.QueryRow(ctx, `select count(*) from schema_migration`).Scan(&versions); err != nil || versions != 5 {
 		t.Fatalf("migration versions=%d err=%v", versions, err)
 	}
 
 	changed := fstest.MapFS{}
-	for _, name := range []string{"001_initial_schema.sql", "002_account_catalog.sql", "003_community.sql", "004_promotion.sql"} {
+	for _, name := range []string{"001_initial_schema.sql", "002_account_catalog.sql", "003_community.sql", "004_promotion.sql", "005_order_payment.sql"} {
 		body, err := fs.ReadFile(migrations.Files, name)
 		if err != nil {
 			t.Fatal(err)
@@ -264,6 +267,134 @@ func TestProductPostgres(t *testing.T) {
 		t.Fatalf("last stock succeeded=%d exhausted=%d", succeeded, exhausted)
 	}
 	assertCouponCounts(t, ctx, pool, lastCouponID, 1, 1)
+
+	insertCoupon(t, ctx, pool, campaignID, "ORDER20", 1, 1, game.ID, game.Editions[0].ID)
+	orderCoupon, err := promotionService.Claim(ctx, otherPrincipal, "ORDER20", "order-coupon.01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orderService := order.NewService(orderpg.NewStore(pool), catalog.NewService(catalogStore), promotionService)
+	createInput := order.CreateInput{EditionID: game.Editions[0].ID, Region: "CN", Currency: "USD", CouponClaimID: orderCoupon.Claim.ID, IdempotencyKey: "order-create.01"}
+	orderResults := make(chan order.CreateResult, 8)
+	orderErrs := make(chan error, 8)
+	for range 8 {
+		go func() {
+			result, err := orderService.Create(ctx, otherPrincipal, createInput)
+			orderResults <- result
+			orderErrs <- err
+		}()
+	}
+	var createdOrder orderentity.Order
+	for range 8 {
+		if err := <-orderErrs; err != nil {
+			t.Fatalf("idempotent order: %v", err)
+		}
+		result := <-orderResults
+		if createdOrder.ID == 0 {
+			createdOrder = result.Order
+		} else if result.Order.ID != createdOrder.ID {
+			t.Fatalf("order ids differ: first=%d got=%d", createdOrder.ID, result.Order.ID)
+		}
+	}
+	if createdOrder.Item.Region != "CN" || createdOrder.SubtotalMinor != 1999 || createdOrder.DiscountMinor != 399 || createdOrder.TotalMinor != 1600 {
+		t.Fatalf("order snapshot=%+v", createdOrder)
+	}
+	var orderCount int
+	if err := pool.QueryRow(ctx, `select count(*) from purchase_order where user_id=$1 and idempotency_key=$2`, other.ID, createInput.IdempotencyKey).Scan(&orderCount); err != nil || orderCount != 1 {
+		t.Fatalf("order count=%d err=%v", orderCount, err)
+	}
+	if _, err := pool.Exec(ctx, `update game_price set active_until=now() where edition_id=$1 and currency='USD' and active_until is null`, game.Editions[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if replay, err := orderService.Create(ctx, otherPrincipal, createInput); err != nil || !replay.Replayed || replay.Order.ID != createdOrder.ID {
+		t.Fatalf("order replay=%+v err=%v", replay, err)
+	}
+	conflict := createInput
+	conflict.Region = "GLOBAL"
+	if _, err := orderService.Create(ctx, otherPrincipal, conflict); !errors.Is(err, order.ErrIdempotencyConflict) {
+		t.Fatalf("order idempotency conflict=%v", err)
+	}
+	if _, err := orderService.Get(ctx, owner, createdOrder.OrderNo); !errors.Is(err, order.ErrForbidden) {
+		t.Fatalf("cross-user order error=%v", err)
+	}
+
+	paymentResults := make(chan order.PayResult, 8)
+	paymentErrs := make(chan error, 8)
+	for range 8 {
+		go func() {
+			result, err := orderService.Pay(ctx, otherPrincipal, createdOrder.OrderNo, "payment-same.01")
+			paymentResults <- result
+			paymentErrs <- err
+		}()
+	}
+	for range 8 {
+		if err := <-paymentErrs; err != nil {
+			t.Fatalf("idempotent payment: %v", err)
+		}
+		result := <-paymentResults
+		if result.Order.Status != orderentity.StatusPaid || result.Order.Payment == nil {
+			t.Fatalf("payment result=%+v", result)
+		}
+	}
+	var payments, entitlements int
+	var claimStatus string
+	var redeemedOrderID int64
+	if err := pool.QueryRow(ctx, `select count(*) from payment_record where order_id=$1`, createdOrder.ID).Scan(&payments); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) from game_entitlement where user_id=$1 and edition_id=$2 and status='active'`, other.ID, game.Editions[0].ID).Scan(&entitlements); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `select status,redeemed_order_id from coupon_claim where id=$1`, orderCoupon.Claim.ID).Scan(&claimStatus, &redeemedOrderID); err != nil {
+		t.Fatal(err)
+	}
+	if payments != 1 || entitlements != 1 || claimStatus != "redeemed" || redeemedOrderID != createdOrder.ID {
+		t.Fatalf("payments=%d entitlements=%d claim=%s redeemed_order=%d", payments, entitlements, claimStatus, redeemedOrderID)
+	}
+	if _, err := orderService.Pay(ctx, otherPrincipal, createdOrder.OrderNo, "payment-other.01"); !errors.Is(err, orderentity.ErrInvalidState) {
+		t.Fatalf("different payment key error=%v", err)
+	}
+	owned, err := catalogStore.FindBySlug(ctx, "phase-game", catalog.Pricing{Region: "GLOBAL", Currency: "USD"}, other.ID)
+	if err != nil || !owned.Owned {
+		t.Fatalf("paid catalog=%+v err=%v", owned, err)
+	}
+
+	secondGame := saveGame(t, ctx, catalogStore, "order-game-two", 2999)
+	secondOrder, err := orderService.Create(ctx, otherPrincipal, order.CreateInput{EditionID: secondGame.Editions[0].ID, IdempotencyKey: "order-create.02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update purchase_order set created_at='2026-08-31T00:00:00Z' where id=$1`, createdOrder.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update purchase_order set created_at='2026-08-31T00:00:01Z' where id=$1`, secondOrder.Order.ID); err != nil {
+		t.Fatal(err)
+	}
+	orderPage, err := orderService.List(ctx, otherPrincipal, order.ListInput{Limit: 1})
+	if err != nil || len(orderPage.Items) != 1 || orderPage.Items[0].ID != secondOrder.Order.ID || orderPage.NextCursor == "" {
+		t.Fatalf("first order page=%+v err=%v", orderPage, err)
+	}
+	thirdGame := saveGame(t, ctx, catalogStore, "order-game-three", 3999)
+	thirdOrder, err := orderService.Create(ctx, otherPrincipal, order.CreateInput{EditionID: thirdGame.Editions[0].ID, IdempotencyKey: "order-create.03"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update purchase_order set created_at='2026-08-31T00:00:02Z' where id=$1`, thirdOrder.Order.ID); err != nil {
+		t.Fatal(err)
+	}
+	nextOrderPage, err := orderService.List(ctx, otherPrincipal, order.ListInput{Cursor: orderPage.NextCursor, Limit: 1})
+	if err != nil || len(nextOrderPage.Items) != 1 || nextOrderPage.Items[0].ID != createdOrder.ID {
+		t.Fatalf("next order page=%+v err=%v", nextOrderPage, err)
+	}
+}
+
+func saveGame(t *testing.T, ctx context.Context, store *catalogpg.Store, slug string, amount int64) entity.Game {
+	t.Helper()
+	game, err := store.Save(ctx, 0, entity.Draft{Slug: slug, Name: slug, Editions: []entity.EditionDraft{{Code: "standard", Name: "Standard", Prices: []entity.Price{{Region: "GLOBAL", Currency: "USD", AmountMinor: amount}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return game
 }
 
 func insertCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool, code, status string, startsAt, endsAt time.Time) int64 {

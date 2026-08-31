@@ -51,6 +51,22 @@ func TestServiceGameExists(t *testing.T) {
 	}
 }
 
+func TestServicePurchaseOffer(t *testing.T) {
+	store := &catalogStore{offer: entity.PurchaseOffer{EditionID: 12, AmountMinor: 1999, Currency: "USD", Region: "GLOBAL"}}
+	service := NewService(store)
+
+	offer, err := service.PurchaseOffer(context.Background(), 12, " cn ", " usd ")
+	if err != nil || offer.EditionID != 12 || store.pricing != (Pricing{Region: "CN", Currency: "USD"}) {
+		t.Fatalf("offer=%+v pricing=%+v error=%v", offer, store.pricing, err)
+	}
+	if _, err := service.PurchaseOffer(context.Background(), 0, "", ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("invalid edition error=%v", err)
+	}
+	if _, err := service.PurchaseOffer(context.Background(), 12, "?", "USD"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid pricing error=%v", err)
+	}
+}
+
 func TestServiceCreate(t *testing.T) {
 	store := &catalogStore{game: entity.Game{ID: 5}}
 	service := NewService(store)
@@ -91,6 +107,7 @@ type catalogStore struct {
 	existsErr    error
 	existsCalls  int
 	existsID     int64
+	offer        entity.PurchaseOffer
 }
 
 func (s *catalogStore) List(_ context.Context, filter ListFilter) ([]entity.Game, error) {
@@ -100,6 +117,10 @@ func (s *catalogStore) List(_ context.Context, filter ListFilter) ([]entity.Game
 func (s *catalogStore) FindBySlug(_ context.Context, slug string, pricing Pricing, viewerID int64) (entity.Game, error) {
 	s.slug, s.pricing, s.viewerID = slug, pricing, viewerID
 	return s.game, nil
+}
+func (s *catalogStore) FindPurchaseOffer(_ context.Context, _ int64, pricing Pricing) (entity.PurchaseOffer, error) {
+	s.pricing = pricing
+	return s.offer, nil
 }
 func (s *catalogStore) Exists(_ context.Context, id int64) (bool, error) {
 	s.existsCalls++
