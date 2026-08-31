@@ -87,7 +87,7 @@ func main() {
 		os.Exit(1)
 	}
 	assistant := usecase.NewAssistantFlow(nodes, research, nodes)
-	server := entry.NewHTTPWithServices(cfg.Address, usecase.NewChat(store, assistant), knowledge, search, httpauth.RequireOrigin(cfg.PublicOrigin), httpauth.RequireRole(accountService, auth.RoleAdmin))
+	server := entry.NewHTTPWithServices(cfg.Address, usecase.NewChat(store, assistant), knowledge, search, accountService, httpauth.RequireOrigin(cfg.PublicOrigin), httpauth.RequireRole(accountService, auth.RoleAdmin))
 	accountentry.NewHTTP(accountService, cfg.CookieSecure, cfg.PublicOrigin).Register(server.Router())
 	catalogentry.NewHTTP(catalogService, accountService, cfg.PublicOrigin).Register(server.Router())
 	communityentry.NewHTTP(communityService, accountService, cfg.PublicOrigin).Register(server.Router())

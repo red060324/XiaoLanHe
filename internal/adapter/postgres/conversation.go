@@ -2,10 +2,14 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/red060324/XiaoLanHe/internal/usecase"
 )
 
 type ConversationStore struct {
@@ -56,14 +60,21 @@ func NewConversationStore(pool *pgxpool.Pool) *ConversationStore {
 	return &ConversationStore{pool: pool}
 }
 
-func (s *ConversationStore) FindOrCreateSession(ctx context.Context, sessionKey string) (int64, error) {
+func (s *ConversationStore) FindOrCreateSession(ctx context.Context, sessionKey string, userID int64) (int64, error) {
 	const query = `
-		insert into conversation_session(session_key, metadata)
-		values ($1, '{}'::jsonb)
-		on conflict (session_key) do update set updated_at = now()
+		insert into conversation_session(session_key, user_id, metadata)
+		values ($1, nullif($2, 0), '{}'::jsonb)
+		on conflict (session_key) do update set
+			user_id = coalesce(conversation_session.user_id, excluded.user_id),
+			updated_at = now()
+		where conversation_session.user_id is null
+			or conversation_session.user_id = excluded.user_id
 		returning id`
 	var id int64
-	if err := s.pool.QueryRow(ctx, query, sessionKey).Scan(&id); err != nil {
+	if err := s.pool.QueryRow(ctx, query, sessionKey, userID).Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, usecase.ErrConversationForbidden
+		}
 		return 0, fmt.Errorf("upsert conversation session: %w", err)
 	}
 	return id, nil

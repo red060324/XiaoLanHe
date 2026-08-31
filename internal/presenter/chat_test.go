@@ -15,7 +15,7 @@ func TestChatRequestInput(t *testing.T) {
 		request ChatRequest
 		wantErr error
 	}{
-		{name: "valid", request: ChatRequest{SessionID: "s", Message: " hello "}},
+		{name: "valid", request: ChatRequest{SessionID: "f47ac10b-58cc-4372-a567-0e02b2c3d479", Message: " hello "}},
 		{name: "blank", request: ChatRequest{Message: " \n\t "}, wantErr: ErrInvalidMessage},
 		{name: "too long", request: ChatRequest{Message: strings.Repeat("a", MaxMessageLength+1)}, wantErr: ErrMessageTooLong},
 	}
@@ -30,6 +30,12 @@ func TestChatRequestInput(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("rejects a predictable session id", func(t *testing.T) {
+		if _, err := (ChatRequest{SessionID: "shared", Message: "hello"}).Input(); !errors.Is(err, ErrInvalidSessionID) {
+			t.Fatalf("err=%v want=%v", err, ErrInvalidSessionID)
+		}
+	})
 }
 
 func TestPresentChat(t *testing.T) {

@@ -30,6 +30,7 @@ import (
 	promotionentity "github.com/red060324/XiaoLanHe/internal/promotion/entity"
 	promotionpg "github.com/red060324/XiaoLanHe/internal/promotion/repository/postgres"
 	promotion "github.com/red060324/XiaoLanHe/internal/promotion/usecase"
+	assistantusecase "github.com/red060324/XiaoLanHe/internal/usecase"
 	"github.com/red060324/XiaoLanHe/migrations"
 )
 
@@ -117,6 +118,30 @@ func TestProductPostgres(t *testing.T) {
 	if principal, err := accountStore.FindSession(ctx, strings.Repeat("c", 64), time.Now()); err != nil || principal.UserID != user.ID {
 		t.Fatalf("new session principal=%+v err=%v", principal, err)
 	}
+	other, err := accountStore.Register(ctx, "phase_other", "Phase Other", strings.Repeat("q", 60), strings.Repeat("d", 64), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conversationStore := adapterpg.NewConversationStore(pool)
+	const conversationKey = "11111111-1111-4111-8111-111111111111"
+	guestSessionID, err := conversationStore.FindOrCreateSession(ctx, conversationKey, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimedSessionID, err := conversationStore.FindOrCreateSession(ctx, conversationKey, user.ID)
+	if err != nil || claimedSessionID != guestSessionID {
+		t.Fatalf("claimed session=%d guest=%d err=%v", claimedSessionID, guestSessionID, err)
+	}
+	if sameOwnerID, err := conversationStore.FindOrCreateSession(ctx, conversationKey, user.ID); err != nil || sameOwnerID != guestSessionID {
+		t.Fatalf("same owner session=%d guest=%d err=%v", sameOwnerID, guestSessionID, err)
+	}
+	if _, err := conversationStore.FindOrCreateSession(ctx, conversationKey, other.ID); !errors.Is(err, assistantusecase.ErrConversationForbidden) {
+		t.Fatalf("cross-user conversation error=%v", err)
+	}
+	if _, err := conversationStore.FindOrCreateSession(ctx, conversationKey, 0); !errors.Is(err, assistantusecase.ErrConversationForbidden) {
+		t.Fatalf("anonymous owned conversation error=%v", err)
+	}
 
 	catalogStore := catalogpg.NewStore(pool)
 	game, err := catalogStore.Save(ctx, 0, entity.Draft{
@@ -157,10 +182,6 @@ func TestProductPostgres(t *testing.T) {
 		t.Fatalf("omitted offer=%+v err=%v", offer, err)
 	}
 
-	other, err := accountStore.Register(ctx, "phase_other", "Phase Other", strings.Repeat("q", 60), strings.Repeat("d", 64), time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
 	communityStore := communitypg.NewStore(pool)
 	communityService := community.NewService(communityStore, catalog.NewService(catalogStore))
 	owner := auth.Principal{UserID: user.ID, Role: auth.RoleUser}

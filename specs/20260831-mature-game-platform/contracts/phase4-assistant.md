@@ -7,6 +7,19 @@ Conversation context contains only history that predates the current request.
 The current user message is persisted before model execution, but is passed to
 Router/Answer exactly once through the dedicated message field.
 
+## Conversation Identity
+
+`sessionId` is optional. When absent, the server returns a UUIDv4 identifier;
+when supplied, it must be a UUIDv4 value or the request returns `400
+invalid_request` before storage or model work.
+
+Authentication is optional for chat. A new authenticated conversation is bound
+to the trusted session user's ID. An existing guest conversation may be claimed
+by the first authenticated request that presents its unguessable key. After a
+conversation is bound, only that user may continue it; another user or an
+anonymous request receives `403 conversation_forbidden` without loading or
+writing conversation messages.
+
 ## Tool Allowlist
 
 | Tool | Input | Evidence source | Citation URL |

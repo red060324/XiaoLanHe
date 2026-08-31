@@ -11,10 +11,12 @@ import (
 )
 
 type ConversationStore interface {
-	FindOrCreateSession(context.Context, string) (int64, error)
+	FindOrCreateSession(context.Context, string, int64) (int64, error)
 	SaveMessage(context.Context, int64, string, string, string) error
 	LoadContext(context.Context, int64, int) (string, error)
 }
+
+var ErrConversationForbidden = errors.New("conversation forbidden")
 
 type Assistant interface {
 	Generate(context.Context, AssistantInput) (Answer, error)
@@ -38,6 +40,7 @@ type Answer struct {
 type ChatInput struct {
 	SessionID string
 	Message   string
+	UserID    int64
 }
 
 type ChatResult struct {
@@ -115,7 +118,7 @@ func (c *Chat) prepare(ctx context.Context, in ChatInput) (string, int64, string
 			return "", 0, "", fmt.Errorf("create session id: %w", err)
 		}
 	}
-	sessionDBID, err := c.store.FindOrCreateSession(ctx, sessionID)
+	sessionDBID, err := c.store.FindOrCreateSession(ctx, sessionID, in.UserID)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("find or create session: %w", err)
 	}

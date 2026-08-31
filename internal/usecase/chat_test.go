@@ -20,14 +20,14 @@ func TestChatRun(t *testing.T) {
 		now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 		chat.now = func() time.Time { return now }
 
-		result, err := chat.Run(context.Background(), ChatInput{SessionID: "session", Message: "hi"})
+		result, err := chat.Run(context.Background(), ChatInput{SessionID: "session", Message: "hi", UserID: 42})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if result != (ChatResult{SessionID: "session", Answer: "hello", CreatedAt: now}) {
 			t.Fatalf("unexpected result: %#v", result)
 		}
-		want := []string{"find:session", "context:8", "save:user:hi:", "generate:hi:", "save:assistant:hello:model"}
+		want := []string{"find:session:42", "context:8", "save:user:hi:", "generate:hi:", "save:assistant:hello:model"}
 		if !slices.Equal(calls, want) {
 			t.Fatalf("calls = %v, want %v", calls, want)
 		}
@@ -66,6 +66,19 @@ func TestChatRun(t *testing.T) {
 		}
 		if assistant.generateCalls != 0 {
 			t.Fatalf("generate calls = %d", assistant.generateCalls)
+		}
+	})
+
+	t.Run("stops before loading context when conversation access is forbidden", func(t *testing.T) {
+		store := &fakeStore{findErr: ErrConversationForbidden}
+		assistant := &fakeAssistant{}
+
+		_, err := NewChat(store, assistant).Run(context.Background(), ChatInput{SessionID: "session", Message: "hi", UserID: 42})
+		if !errors.Is(err, ErrConversationForbidden) {
+			t.Fatalf("err = %v", err)
+		}
+		if assistant.generateCalls != 0 || len(store.saved) != 0 {
+			t.Fatalf("generate calls=%d saved=%#v", assistant.generateCalls, store.saved)
 		}
 	})
 
@@ -192,9 +205,9 @@ func (s *fakeStore) LoadContext(_ context.Context, _ int64, limit int) (string, 
 	return s.contextText, nil
 }
 
-func (s *fakeStore) FindOrCreateSession(_ context.Context, key string) (int64, error) {
+func (s *fakeStore) FindOrCreateSession(_ context.Context, key string, userID int64) (int64, error) {
 	if s.calls != nil {
-		*s.calls = append(*s.calls, "find:"+key)
+		*s.calls = append(*s.calls, fmt.Sprintf("find:%s:%d", key, userID))
 	}
 	return s.sessionID, s.findErr
 }

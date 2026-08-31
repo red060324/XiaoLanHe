@@ -55,6 +55,10 @@ truth.
 
 ## Phase 4: Assistant
 
+- Client-supplied conversation IDs must be UUIDv4 values. Authenticated
+  conversations bind to the trusted user ID; a guest conversation may be
+  claimed on login, while another user or an anonymous request cannot reuse a
+  bound conversation.
 - Router structured direct/clarify/research decisions and deterministic fallback.
 - Research one/multiple/refined tool calls, no result, partial failure, all
   failure, max iterations, max tool calls, deadline, and cancellation.

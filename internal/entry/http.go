@@ -16,6 +16,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/cloudwego/hertz/pkg/protocol/sse"
 
+	"github.com/red060324/XiaoLanHe/internal/platform/httpauth"
 	"github.com/red060324/XiaoLanHe/internal/platform/httpx"
 	"github.com/red060324/XiaoLanHe/internal/presenter"
 	"github.com/red060324/XiaoLanHe/internal/usecase"
@@ -36,13 +37,18 @@ func NewHTTP(address string, chat *usecase.Chat) *HTTP {
 	return NewHTTPWithServices(address, chat, nil, nil, nil)
 }
 
-func NewHTTPWithServices(address string, chat *usecase.Chat, knowledge *usecase.Knowledge, search *usecase.WebSearch, knowledgeWriteMiddleware ...app.HandlerFunc) *HTTP {
+func NewHTTPWithServices(address string, chat *usecase.Chat, knowledge *usecase.Knowledge, search *usecase.WebSearch, chatAuthenticator httpauth.Authenticator, knowledgeWriteMiddleware ...app.HandlerFunc) *HTTP {
 	h := &HTTP{server: server.Default(server.WithHostPorts(address)), chat: chat, knowledge: knowledge, search: search}
 	h.server.Use(httpx.RequestIDMiddleware)
 	h.server.GET("/healthz", h.health)
 	h.server.GET("/api/system/ping", h.ping)
-	h.server.POST("/api/chat/message", h.message)
-	h.server.POST("/api/chat/stream", h.stream)
+	if chatAuthenticator == nil {
+		h.server.POST("/api/chat/message", h.message)
+		h.server.POST("/api/chat/stream", h.stream)
+	} else {
+		h.server.POST("/api/chat/message", httpauth.Optional(chatAuthenticator), h.message)
+		h.server.POST("/api/chat/stream", httpauth.Optional(chatAuthenticator), h.stream)
+	}
 	if knowledge != nil {
 		if len(knowledgeWriteMiddleware) == 0 {
 			h.server.POST("/api/knowledge/documents", h.createKnowledge)
@@ -185,6 +191,11 @@ func (h *HTTP) message(ctx context.Context, c *app.RequestContext) {
 	}
 	result, err := h.chat.Run(ctx, in)
 	if err != nil {
+		if errors.Is(err, usecase.ErrConversationForbidden) {
+			resultStatus = "forbidden"
+			writeError(c, consts.StatusForbidden, "conversation is not accessible")
+			return
+		}
 		resultStatus = "error"
 		slog.ErrorContext(ctx, "chat failed", "error", err)
 		writeError(c, consts.StatusInternalServerError, "chat failed")
@@ -211,6 +222,11 @@ func (h *HTTP) stream(ctx context.Context, c *app.RequestContext) {
 	}
 	result, err := h.chat.Stream(ctx, in)
 	if err != nil {
+		if errors.Is(err, usecase.ErrConversationForbidden) {
+			resultStatus = "forbidden"
+			writeError(c, consts.StatusForbidden, "conversation is not accessible")
+			return
+		}
 		resultStatus = "error"
 		slog.ErrorContext(ctx, "chat stream failed", "error", err)
 		writeError(c, consts.StatusInternalServerError, "chat failed")
@@ -253,6 +269,9 @@ func bind(c *app.RequestContext) (usecase.ChatInput, bool) {
 		writeError(c, consts.StatusBadRequest, err.Error())
 		return usecase.ChatInput{}, false
 	}
+	if principal, ok := httpauth.Principal(c); ok {
+		in.UserID = principal.UserID
+	}
 	return in, true
 }
 
@@ -263,6 +282,8 @@ func writeError(c *app.RequestContext, status int, message string) {
 		code = "invalid_request"
 	case consts.StatusNotFound:
 		code = "not_found"
+	case consts.StatusForbidden:
+		code = "conversation_forbidden"
 	case consts.StatusServiceUnavailable:
 		code = "dependency_unavailable"
 	}

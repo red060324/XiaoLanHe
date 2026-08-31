@@ -24,14 +24,14 @@ import (
 
 func TestHTTPMessage(t *testing.T) {
 	store := &httpStore{}
-	h := NewHTTP(":0", usecase.NewChat(store, httpAssistant{}))
+	h := NewHTTPWithServices(":0", usecase.NewChat(store, httpAssistant{}), nil, nil, httpAuthenticator{})
 
 	t.Run("keeps the REST response contract", func(t *testing.T) {
 		response := ut.PerformRequest(
 			h.server.Engine,
 			"POST",
 			"/api/chat/message",
-			&ut.Body{Body: bytes.NewBufferString(`{"sessionId":"s","message":"hi"}`), Len: -1},
+			&ut.Body{Body: bytes.NewBufferString(`{"sessionId":"f47ac10b-58cc-4372-a567-0e02b2c3d479","message":"hi"}`), Len: -1},
 			ut.Header{Key: "Content-Type", Value: "application/json"},
 		)
 		if response.Code != 200 {
@@ -41,7 +41,7 @@ func TestHTTPMessage(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
 		}
-		if body["sessionId"] != "s" || body["answer"] != "hello" || body["createdAt"] == "" {
+		if body["sessionId"] != "f47ac10b-58cc-4372-a567-0e02b2c3d479" || body["answer"] != "hello" || body["createdAt"] == "" {
 			t.Fatalf("body = %#v", body)
 		}
 	})
@@ -58,6 +58,19 @@ func TestHTTPMessage(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects a predictable session id before storage", func(t *testing.T) {
+		before := len(store.userIDs)
+		response := ut.PerformRequest(
+			h.server.Engine,
+			"POST",
+			"/api/chat/message",
+			&ut.Body{Body: bytes.NewBufferString(`{"sessionId":"shared","message":"hi"}`), Len: -1},
+		)
+		if response.Code != 400 || len(store.userIDs) != before {
+			t.Fatalf("status=%d body=%s user_ids=%v", response.Code, response.Body.String(), store.userIDs)
+		}
+	})
+
 	t.Run("logs the validated request ID", func(t *testing.T) {
 		logs, restore := captureDefaultLogger()
 		defer restore()
@@ -65,12 +78,39 @@ func TestHTTPMessage(t *testing.T) {
 			h.server.Engine,
 			"POST",
 			"/api/chat/message",
-			&ut.Body{Body: bytes.NewBufferString(`{"sessionId":"s","message":"hi"}`), Len: -1},
+			&ut.Body{Body: bytes.NewBufferString(`{"sessionId":"f47ac10b-58cc-4372-a567-0e02b2c3d479","message":"hi"}`), Len: -1},
 			ut.Header{Key: "X-Request-ID", Value: "unsafe id"},
 		)
 		requestID := string(response.Header().Peek("X-Request-ID"))
 		if requestID == "" || requestID == "unsafe id" || !strings.Contains(logs.String(), "request_id="+requestID) {
 			t.Fatalf("request ID=%q logs=%q", requestID, logs.String())
+		}
+	})
+
+	t.Run("passes authenticated identity to the conversation boundary", func(t *testing.T) {
+		response := ut.PerformRequest(
+			h.server.Engine,
+			"POST",
+			"/api/chat/message",
+			&ut.Body{Body: bytes.NewBufferString(`{"sessionId":"11111111-1111-4111-8111-111111111111","message":"hi"}`), Len: -1},
+			ut.Header{Key: "Cookie", Value: httpauth.CookieName + "=admin"},
+		)
+		if response.Code != 200 || len(store.userIDs) == 0 || store.userIDs[len(store.userIDs)-1] != 1 {
+			t.Fatalf("status=%d body=%s user_ids=%v", response.Code, response.Body.String(), store.userIDs)
+		}
+	})
+
+	t.Run("returns forbidden when the conversation owner does not match", func(t *testing.T) {
+		blocked := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{findErr: usecase.ErrConversationForbidden}, httpAssistant{}), nil, nil, httpAuthenticator{})
+		response := ut.PerformRequest(
+			blocked.server.Engine,
+			"POST",
+			"/api/chat/message",
+			&ut.Body{Body: bytes.NewBufferString(`{"sessionId":"22222222-2222-4222-8222-222222222222","message":"hi"}`), Len: -1},
+			ut.Header{Key: "Cookie", Value: httpauth.CookieName + "=admin"},
+		)
+		if response.Code != 403 || !strings.Contains(response.Body.String(), `"code":"conversation_forbidden"`) {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 		}
 	})
 }
@@ -79,7 +119,7 @@ func TestHTTPStream(t *testing.T) {
 	upstream := &httpStream{chunks: []string{"first", "second"}}
 	h := NewHTTP(":0", usecase.NewChat(&httpStore{}, httpAssistant{stream: upstream}))
 	c := app.NewContext(0)
-	c.Request.SetBodyString(`{"sessionId":"s","message":"hi"}`)
+	c.Request.SetBodyString(`{"sessionId":"f47ac10b-58cc-4372-a567-0e02b2c3d479","message":"hi"}`)
 	w := &captureWriter{}
 	c.Response.HijackWriter(w)
 	h.stream(context.Background(), c)
@@ -98,12 +138,24 @@ func TestHTTPStream(t *testing.T) {
 		t.Fatal("upstream stream was not closed")
 	}
 
+	t.Run("returns forbidden before starting an unauthorized stream", func(t *testing.T) {
+		h := NewHTTP(":0", usecase.NewChat(&httpStore{findErr: usecase.ErrConversationForbidden}, httpAssistant{}))
+		c := app.NewContext(0)
+		c.Request.SetBodyString(`{"sessionId":"22222222-2222-4222-8222-222222222222","message":"hi"}`)
+
+		h.stream(context.Background(), c)
+
+		if c.Response.StatusCode() != 403 || !strings.Contains(string(c.Response.Body()), `"code":"conversation_forbidden"`) {
+			t.Fatalf("status=%d body=%s", c.Response.StatusCode(), c.Response.Body())
+		}
+	})
+
 	t.Run("disconnect closes upstream without saving a partial assistant message", func(t *testing.T) {
 		store := &httpStore{}
 		upstream := &httpStream{chunks: []string{"first", "second"}}
 		h := NewHTTP(":0", usecase.NewChat(store, httpAssistant{stream: upstream}))
 		c := app.NewContext(0)
-		c.Request.SetBodyString(`{"sessionId":"s","message":"hi"}`)
+		c.Request.SetBodyString(`{"sessionId":"f47ac10b-58cc-4372-a567-0e02b2c3d479","message":"hi"}`)
 		c.Response.HijackWriter(&captureWriter{writeErr: errors.New("client disconnected")})
 
 		h.stream(context.Background(), c)
@@ -123,7 +175,7 @@ func TestHTTPStream(t *testing.T) {
 		c := app.NewContext(0)
 		c.Request.Header.Set("X-Request-ID", "unsafe id")
 		httpx.RequestIDMiddleware(context.Background(), c)
-		c.Request.SetBodyString(`{"sessionId":"s","message":"hi"}`)
+		c.Request.SetBodyString(`{"sessionId":"f47ac10b-58cc-4372-a567-0e02b2c3d479","message":"hi"}`)
 		c.Response.HijackWriter(&captureWriter{})
 		h.stream(context.Background(), c)
 		requestID := httpx.RequestID(c)
@@ -164,7 +216,7 @@ func TestHTTPServesWebAndSPAFallback(t *testing.T) {
 func TestHTTPKnowledge(t *testing.T) {
 	store := &httpKnowledgeStore{items: []usecase.KnowledgeSnippet{{ChunkID: 1, DocumentID: 2, Title: "Guide", Text: "fact", Score: 30}}}
 	knowledge := usecase.NewKnowledge(store, einoDisabledEmbedder{})
-	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), knowledge, usecase.NewWebSearch(httpSearchClient{}), httpauth.RequireRole(httpAuthenticator{}, auth.RoleAdmin))
+	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), knowledge, usecase.NewWebSearch(httpSearchClient{}), httpAuthenticator{}, httpauth.RequireRole(httpAuthenticator{}, auth.RoleAdmin))
 
 	anonymous := ut.PerformRequest(h.server.Engine, "POST", "/api/knowledge/documents", &ut.Body{Body: bytes.NewBufferString(`{"sourceType":"note","title":"Guide","contentText":"body"}`), Len: -1})
 	if anonymous.Code != 401 {
@@ -207,7 +259,7 @@ func (httpAuthenticator) Authenticate(_ context.Context, token string) (auth.Pri
 }
 
 func TestHTTPWebSearchAndPing(t *testing.T) {
-	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), nil, usecase.NewWebSearch(httpSearchClient{}))
+	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), nil, usecase.NewWebSearch(httpSearchClient{}), nil)
 	searched := ut.PerformRequest(h.server.Engine, "GET", "/api/search/web?query=guide", nil)
 	if searched.Code != 200 || !strings.Contains(searched.Body.String(), `"provider":"searxng"`) || !strings.Contains(searched.Body.String(), `"title":"A"`) || strings.Contains(searched.Body.String(), `"cacheHit"`) {
 		t.Fatalf("status=%d body=%s", searched.Code, searched.Body.String())
@@ -225,11 +277,17 @@ func TestHTTPWebSearchAndPing(t *testing.T) {
 }
 
 type httpStore struct {
-	id    int64
-	roles []string
+	id      int64
+	roles   []string
+	userIDs []int64
+	findErr error
 }
 
-func (s *httpStore) FindOrCreateSession(context.Context, string) (int64, error) {
+func (s *httpStore) FindOrCreateSession(_ context.Context, _ string, userID int64) (int64, error) {
+	s.userIDs = append(s.userIDs, userID)
+	if s.findErr != nil {
+		return 0, s.findErr
+	}
 	if s.id == 0 {
 		s.id = 1
 	}
