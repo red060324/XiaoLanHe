@@ -3,6 +3,7 @@ package entity
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestCalculateTotals(t *testing.T) {
@@ -24,6 +25,17 @@ func TestCalculateTotals(t *testing.T) {
 				t.Fatalf("total=%d error=%v want=%d,%v", got, err, test.want, test.wantErr)
 			}
 		})
+	}
+}
+
+func TestOrderValidatePayAt(t *testing.T) {
+	deadline := time.Date(2026, 9, 3, 10, 15, 0, 0, time.UTC)
+	order := Order{Status: StatusPendingPayment, PaymentExpiresAt: deadline}
+	if err := order.ValidatePayAt(deadline.Add(-time.Nanosecond)); err != nil {
+		t.Fatalf("before deadline error=%v", err)
+	}
+	if err := order.ValidatePayAt(deadline); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("deadline error=%v", err)
 	}
 }
 

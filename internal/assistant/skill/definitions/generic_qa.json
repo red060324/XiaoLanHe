@@ -1,0 +1,14 @@
+{
+  "id": "generic_qa",
+  "version": "1.0.0",
+  "promptVersion": "generic_qa_v1",
+  "intents": ["greeting", "clarification", "generic_qa"],
+  "routes": ["DIRECT", "CLARIFY", "RESEARCH"],
+  "delegates": ["research"],
+  "tools": ["search_lightrag", "search_catalog", "search_forum", "search_web"],
+  "lightragModes": ["local", "global", "hybrid", "mix"],
+  "budget": {"modelCalls": 8, "toolCalls": 8, "delegations": 1, "timeoutMilliseconds": 45000},
+  "outputContract": "evidence_answer_v1",
+  "citations": true,
+  "evalCases": ["generic_qa_direct", "generic_qa_evidence"]
+}

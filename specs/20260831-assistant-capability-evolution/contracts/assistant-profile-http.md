@@ -1,6 +1,7 @@
 # Assistant Profile HTTP Contract
 
-- Status: `DRAFT`
+- Status: `SUPERSEDED`
+- Superseded by: `../../20260904-advanced-ai-architecture/contracts/assistant-profile-http.md`
 - Authoritative spec: `../spec.md`
 
 All routes require `xlh_session`. Mutations also require the existing

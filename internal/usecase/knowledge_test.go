@@ -7,14 +7,43 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/red060324/XiaoLanHe/internal/platform/auth"
 )
 
 func TestKnowledgeCreate(t *testing.T) {
 	document := KnowledgeDocument{SourceType: "note", Title: "title", ContentText: "content"}
+	admin := auth.Principal{UserID: 1, Role: auth.RoleAdmin}
+	t.Run("rejects a direct unauthenticated write before dependencies", func(t *testing.T) {
+		store := &knowledgeStoreFake{id: 7}
+		embedCalls := 0
+		knowledge := NewKnowledge(store, embedderFunc(func(context.Context, []string) ([][]float32, error) {
+			embedCalls++
+			return nil, ErrEmbeddingUnavailable
+		}))
+
+		_, _, err := knowledge.Create(context.Background(), auth.Principal{}, document)
+		if !errors.Is(err, auth.ErrUnauthenticated) || embedCalls != 0 || store.createCalls != 0 {
+			t.Fatalf("embed calls=%d store calls=%d err=%v", embedCalls, store.createCalls, err)
+		}
+	})
+	t.Run("rejects an authenticated non-admin write before dependencies", func(t *testing.T) {
+		store := &knowledgeStoreFake{id: 7}
+		embedCalls := 0
+		knowledge := NewKnowledge(store, embedderFunc(func(context.Context, []string) ([][]float32, error) {
+			embedCalls++
+			return nil, ErrEmbeddingUnavailable
+		}))
+
+		id, count, err := knowledge.Create(context.Background(), auth.Principal{UserID: 2, Role: auth.RoleUser}, document)
+		if id != 0 || count != 0 || !errors.Is(err, ErrKnowledgeForbidden) || embedCalls != 0 || store.createCalls != 0 {
+			t.Fatalf("id=%d count=%d embed calls=%d store calls=%d err=%v", id, count, embedCalls, store.createCalls, err)
+		}
+	})
 	t.Run("falls back to chunks without embeddings", func(t *testing.T) {
 		store := &knowledgeStoreFake{id: 7}
 		knowledge := NewKnowledge(store, embedderFunc(func(context.Context, []string) ([][]float32, error) { return nil, ErrEmbeddingUnavailable }))
-		id, count, err := knowledge.Create(context.Background(), document)
+		id, count, err := knowledge.Create(context.Background(), admin, document)
 		if err != nil || id != 7 || count != 1 || store.createCalls != 1 || len(store.embeddings) != 0 {
 			t.Fatalf("id=%d count=%d calls=%d embeddings=%d err=%v", id, count, store.createCalls, len(store.embeddings), err)
 		}
@@ -22,7 +51,7 @@ func TestKnowledgeCreate(t *testing.T) {
 	t.Run("does not persist after request cancellation", func(t *testing.T) {
 		store := &knowledgeStoreFake{id: 7}
 		knowledge := NewKnowledge(store, embedderFunc(func(context.Context, []string) ([][]float32, error) { return nil, context.Canceled }))
-		_, _, err := knowledge.Create(context.Background(), document)
+		_, _, err := knowledge.Create(context.Background(), admin, document)
 		if !errors.Is(err, context.Canceled) || store.createCalls != 0 {
 			t.Fatalf("calls=%d err=%v", store.createCalls, err)
 		}

@@ -1,6 +1,7 @@
 # Data Model
 
-- Status: `DRAFT`
+- Status: `SUPERSEDED`
+- Superseded by: `../20260904-advanced-ai-architecture/data-model.md`
 - Authoritative spec: `./spec.md`
 
 Migration 006 is additive. Existing migration files remain immutable.

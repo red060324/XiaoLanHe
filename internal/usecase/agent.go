@@ -28,6 +28,18 @@ type Evidence struct {
 	Score                       float64
 }
 
+// AssistantProfile is a typed, explicit preference projection. It is kept
+// separate from conversation text so routing and query planning do not receive
+// profile data implicitly.
+type AssistantProfile struct {
+	FavoriteGenres     []string `json:"favoriteGenres,omitempty"`
+	PreferredPlatforms []string `json:"preferredPlatforms,omitempty"`
+	DefaultRegion      string   `json:"defaultRegion,omitempty"`
+	PreferredLanguages []string `json:"preferredLanguages,omitempty"`
+	MaxPriceMinor      *int64   `json:"maxPriceMinor,omitempty"`
+	Currency           string   `json:"currency,omitempty"`
+}
+
 type ResearchStatus string
 
 const (
@@ -56,6 +68,8 @@ type AnswerRequest struct {
 	Route                          Route
 	Evidence                       []Evidence
 	Notes                          []string
+	Plan                           string
+	Profile                        AssistantProfile
 }
 
 type RouterNode interface {

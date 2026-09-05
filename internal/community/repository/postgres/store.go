@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
@@ -108,24 +109,37 @@ func (s *Store) ModeratePost(ctx context.Context, id int64, status entity.Status
 
 func (s *Store) ListComments(ctx context.Context, filter community.CommentFilter) ([]entity.Comment, error) {
 	rows, err := s.pool.Query(ctx, `
-		select c.id,c.post_id,c.author_id,u.user_name,coalesce(u.display_name,''),c.content,c.status,c.created_at,c.updated_at
-		from community_comment c join user_account u on u.id=c.author_id
-		where c.post_id=$1 and c.status='published'
+		select p.id,c.id,c.post_id,c.author_id,u.user_name,u.display_name,c.content,c.status,c.created_at,c.updated_at
+		from community_post p
+		left join community_comment c on c.post_id=p.id and c.status='published'
 			and ($2::bigint=0 or (c.created_at,c.id)>($3,$2))
+		left join user_account u on u.id=c.author_id
+		where p.id=$1 and p.status='published'
 		order by c.created_at,c.id limit $4`, filter.PostID, filter.Cursor.ID, filter.Cursor.CreatedAt, filter.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	items := make([]entity.Comment, 0, filter.Limit)
+	parentFound := false
 	for rows.Next() {
-		item, err := scanComment(rows)
+		var parentID int64
+		item, present, err := scanNullableComment(rows, &parentID)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, item)
+		parentFound = true
+		if present {
+			items = append(items, item)
+		}
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if !parentFound {
+		return nil, community.ErrNotFound
+	}
+	return items, nil
 }
 
 func (s *Store) GetComment(ctx context.Context, id int64, includeNonPublic bool) (entity.Comment, error) {
@@ -262,6 +276,38 @@ func scanComment(row scanner) (entity.Comment, error) {
 	err := row.Scan(&comment.ID, &comment.PostID, &comment.Author.ID, &comment.Author.Username, &comment.Author.DisplayName, &comment.Content, &status, &comment.CreatedAt, &comment.UpdatedAt)
 	comment.Status = entity.Status(status)
 	return comment, err
+}
+
+func scanNullableComment(row scanner, parentID *int64) (entity.Comment, bool, error) {
+	var (
+		id, postID, authorID  sql.NullInt64
+		username, displayName sql.NullString
+		content, status       sql.NullString
+		createdAt, updatedAt  sql.NullTime
+	)
+	if err := row.Scan(
+		parentID, &id, &postID, &authorID, &username, &displayName,
+		&content, &status, &createdAt, &updatedAt,
+	); err != nil {
+		return entity.Comment{}, false, err
+	}
+	if !id.Valid {
+		return entity.Comment{}, false, nil
+	}
+	comment := entity.Comment{
+		ID:     id.Int64,
+		PostID: postID.Int64,
+		Author: entity.Author{
+			ID:          authorID.Int64,
+			Username:    username.String,
+			DisplayName: displayName.String,
+		},
+		Content:   content.String,
+		Status:    entity.Status(status.String),
+		CreatedAt: createdAt.Time,
+		UpdatedAt: updatedAt.Time,
+	}
+	return comment, true, nil
 }
 
 func newReactionSummary(like, helpful, funny int64, viewerLike, viewerHelpful, viewerFunny bool) entity.ReactionSummary {

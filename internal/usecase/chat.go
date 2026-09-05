@@ -16,6 +16,10 @@ type ConversationStore interface {
 	LoadContext(context.Context, int64, int) (string, error)
 }
 
+type MemoryRefresher interface {
+	Refresh(context.Context, int64) error
+}
+
 var ErrConversationForbidden = errors.New("conversation forbidden")
 
 type Assistant interface {
@@ -23,7 +27,10 @@ type Assistant interface {
 	Stream(context.Context, AssistantInput) (AnswerStream, error)
 }
 
-type AssistantInput struct{ Message, Context string }
+type AssistantInput struct {
+	Message, Context string
+	UserID           int64
+}
 
 type AnswerStream interface {
 	Recv() (string, error)
@@ -61,10 +68,16 @@ type Chat struct {
 	assistant Assistant
 	now       func() time.Time
 	newID     func() (string, error)
+	memory    MemoryRefresher
 }
 
 func NewChat(store ConversationStore, assistant Assistant) *Chat {
 	return &Chat{store: store, assistant: assistant, now: time.Now, newID: newSessionID}
+}
+
+func (c *Chat) WithMemory(memory MemoryRefresher) *Chat {
+	c.memory = memory
+	return c
 }
 
 func (c *Chat) Run(ctx context.Context, in ChatInput) (ChatResult, error) {
@@ -73,13 +86,14 @@ func (c *Chat) Run(ctx context.Context, in ChatInput) (ChatResult, error) {
 		return ChatResult{}, err
 	}
 
-	answer, err := c.assistant.Generate(ctx, AssistantInput{Message: in.Message, Context: contextText})
+	answer, err := c.assistant.Generate(ctx, AssistantInput{Message: in.Message, Context: contextText, UserID: in.UserID})
 	if err != nil {
 		return ChatResult{}, fmt.Errorf("generate answer: %w", err)
 	}
 	if err := c.store.SaveMessage(ctx, sessionDBID, "assistant", answer.Text, answer.Model); err != nil {
 		return ChatResult{}, fmt.Errorf("save assistant message: %w", err)
 	}
+	c.refreshMemory(ctx, sessionDBID)
 	return ChatResult{SessionID: sessionID, Answer: answer.Text, CreatedAt: c.now(), Route: answer.Route}, nil
 }
 
@@ -89,7 +103,7 @@ func (c *Chat) Stream(ctx context.Context, in ChatInput) (ChatStream, error) {
 		return ChatStream{}, err
 	}
 
-	stream, err := c.assistant.Stream(ctx, AssistantInput{Message: in.Message, Context: contextText})
+	stream, err := c.assistant.Stream(ctx, AssistantInput{Message: in.Message, Context: contextText, UserID: in.UserID})
 	if err != nil {
 		return ChatStream{}, fmt.Errorf("start answer stream: %w", err)
 	}
@@ -105,8 +119,18 @@ func (c *Chat) Stream(ctx context.Context, in ChatInput) (ChatStream, error) {
 			ctx:          ctx,
 			store:        c.store,
 			sessionDBID:  sessionDBID,
+			memory:       c.memory,
 		},
 	}, nil
+}
+
+func (c *Chat) refreshMemory(ctx context.Context, sessionID int64) {
+	if c.memory == nil {
+		return
+	}
+	if err := c.memory.Refresh(ctx, sessionID); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// Summary refresh is best-effort and must never turn a successful answer into an error.
+	}
 }
 
 func (c *Chat) prepare(ctx context.Context, in ChatInput) (string, int64, string, error) {
@@ -139,6 +163,7 @@ type persistingStream struct {
 	sessionDBID int64
 	answer      []byte
 	done        bool
+	memory      MemoryRefresher
 }
 
 func (s *persistingStream) Recv() (string, error) {
@@ -153,6 +178,9 @@ func (s *persistingStream) Recv() (string, error) {
 	s.done = true
 	if err := s.store.SaveMessage(s.ctx, s.sessionDBID, "assistant", string(s.answer), s.Model()); err != nil {
 		return "", fmt.Errorf("save streamed assistant message: %w", err)
+	}
+	if s.memory != nil {
+		_ = s.memory.Refresh(s.ctx, s.sessionDBID)
 	}
 	return "", io.EOF
 }

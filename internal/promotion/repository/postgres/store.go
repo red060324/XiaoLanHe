@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -108,20 +109,24 @@ func (s *Store) Claim(ctx context.Context, command promotion.ClaimCommand) (resu
 	if err != nil {
 		return promotion.ClaimResult{}, err
 	}
-	if err := coupon.ValidateClaim(command.Now); err != nil {
+	var effectiveNow time.Time
+	if err := tx.QueryRow(ctx, `select statement_timestamp()`).Scan(&effectiveNow); err != nil {
+		return promotion.ClaimResult{}, err
+	}
+	if err := coupon.ValidateClaim(effectiveNow); err != nil {
 		return promotion.ClaimResult{}, err
 	}
 	if coupon.ViewerClaimCount >= coupon.PerUserLimit {
 		return promotion.ClaimResult{}, promotion.ErrClaimLimit
 	}
 
-	claim := entity.Claim{CouponID: coupon.ID, CouponCode: coupon.Code, UserID: command.UserID, Status: "claimed", IdempotencyKey: command.IdempotencyKey, ClaimedAt: command.Now}
+	claim := entity.Claim{CouponID: coupon.ID, CouponCode: coupon.Code, UserID: command.UserID, Status: "claimed", IdempotencyKey: command.IdempotencyKey, ClaimedAt: effectiveNow}
 	if err := tx.QueryRow(ctx, `
 		insert into coupon_claim(coupon_id,user_id,status,idempotency_key,claimed_at)
 		values ($1,$2,'claimed',$3,$4) returning id`, claim.CouponID, claim.UserID, claim.IdempotencyKey, claim.ClaimedAt).Scan(&claim.ID); err != nil {
 		return promotion.ClaimResult{}, err
 	}
-	if _, err := tx.Exec(ctx, `update coupon_definition set claimed_stock=claimed_stock+1,updated_at=$2 where id=$1`, coupon.ID, command.Now); err != nil {
+	if _, err := tx.Exec(ctx, `update coupon_definition set claimed_stock=claimed_stock+1,updated_at=$2 where id=$1`, coupon.ID, effectiveNow); err != nil {
 		return promotion.ClaimResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

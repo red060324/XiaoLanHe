@@ -193,9 +193,6 @@ func (s *Service) ListComments(ctx context.Context, in ListCommentsInput) (Comme
 	if err != nil {
 		return CommentPage{}, ErrInvalidInput
 	}
-	if _, err := s.store.GetPost(ctx, in.PostID, 0, false); err != nil {
-		return CommentPage{}, err
-	}
 	items, err := s.store.ListComments(ctx, CommentFilter{PostID: in.PostID, Cursor: cursor, Limit: limit + 1})
 	if err != nil {
 		return CommentPage{}, err

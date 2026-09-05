@@ -18,6 +18,59 @@ export type User = {
   role: 'user' | 'admin';
 };
 
+export type AssistantProfile = {
+  favoriteGenres: string[];
+  preferredPlatforms: string[];
+  defaultRegion: string;
+  preferredLanguages: string[];
+  maxPriceMinor?: number;
+  currency?: string;
+  updatedAt?: string;
+};
+
+export type KnowledgeDocumentDraft = {
+  sourceType: string;
+  title: string;
+  sourceUrl: string;
+  gameCode: string;
+  regionCode: string;
+  patchVersion: string;
+  contentText: string;
+};
+
+export type KnowledgeAccepted = {
+  trackId: string;
+  sourceKey: string;
+  status: string;
+  replayed?: boolean;
+};
+
+export type KnowledgeDocument = {
+  documentId: string;
+  sourceKey: string;
+  status: string;
+  contentLength: number;
+  chunksCount: number;
+  createdAt?: string;
+  updatedAt?: string;
+  failureCode?: string | null;
+};
+
+export type KnowledgeTrack = {
+  trackId: string;
+  documents: KnowledgeDocument[];
+  totalCount: number;
+  statusCounts: Record<string, number>;
+};
+
+export type KnowledgeDocumentPage = {
+  items: KnowledgeDocument[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+};
+
 export type Price = {
   amountMinor: number;
   currency: string;
@@ -91,6 +144,31 @@ export type Order = {
   updatedAt: string;
 };
 
+export type FlashSale = {
+  id: string;
+  code: string;
+  gameSlug: string;
+  gameName: string;
+  editionId: string;
+  editionName: string;
+  region: string;
+  currency: string;
+  salePriceMinor: number;
+  status: 'draft' | 'active' | 'ended' | 'cancelled';
+  startsAt: string;
+  endsAt: string;
+  availability: 'upcoming' | 'available' | 'exhausted' | 'ended' | 'cancelled' | 'unavailable';
+};
+
+export type FlashSaleRequest = {
+  requestId: string;
+  activityId: string;
+  status: 'queued' | 'processing' | 'order_ready' | 'failed' | 'expired';
+  orderNo: string;
+  failureCode: string;
+  paymentExpiresAt: string;
+};
+
 export type CommunityAuthor = {
   id: string;
   username: string;
@@ -133,7 +211,7 @@ async function requestJSON<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-class APIError extends Error {
+export class APIError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
   }
@@ -190,6 +268,45 @@ export async function logout(): Promise<void> {
   await request('/api/auth/logout', { method: 'POST' });
 }
 
+export async function getAssistantProfile(): Promise<AssistantProfile> {
+  const result = await requestJSON<{ profile: AssistantProfile }>('/api/me/assistant-profile');
+  return result.profile;
+}
+
+export async function replaceAssistantProfile(profile: AssistantProfile): Promise<AssistantProfile> {
+  const result = await requestJSON<{ profile: AssistantProfile }>('/api/me/assistant-profile', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(profile)
+  });
+  return result.profile;
+}
+
+export async function clearAssistantProfile(): Promise<void> {
+  await request('/api/me/assistant-profile', { method: 'DELETE' });
+}
+
+export async function createKnowledgeDocument(draft: KnowledgeDocumentDraft): Promise<KnowledgeAccepted> {
+  return requestJSON<KnowledgeAccepted>('/api/knowledge/documents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(draft)
+  });
+}
+
+export async function getKnowledgeTrack(trackId: string, signal?: AbortSignal): Promise<KnowledgeTrack> {
+  return requestJSON<KnowledgeTrack>(`/api/admin/knowledge/tracks/${encodeURIComponent(trackId)}`, { signal });
+}
+
+export async function listKnowledgeDocuments(page = 1): Promise<KnowledgeDocumentPage> {
+  const params = new URLSearchParams({ page: String(page), pageSize: '20', sortField: 'updatedAt', sortDirection: 'desc' });
+  return requestJSON<KnowledgeDocumentPage>(`/api/admin/knowledge/documents?${params}`);
+}
+
+export async function deleteKnowledgeDocument(documentId: string): Promise<void> {
+  await request(`/api/admin/knowledge/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' });
+}
+
 export async function listGames(query = ''): Promise<Game[]> {
   const params = new URLSearchParams();
   if (query.trim()) params.set('query', query.trim());
@@ -234,6 +351,24 @@ export async function listOrders(cursor = ''): Promise<Page<Order>> {
   const params = new URLSearchParams();
   if (cursor) params.set('cursor', cursor);
   return requestJSON<Page<Order>>(`/api/orders?${params}`);
+}
+
+export async function listFlashSales(cursor = ''): Promise<Page<FlashSale>> {
+  const params = new URLSearchParams();
+  if (cursor) params.set('cursor', cursor);
+  return requestJSON<Page<FlashSale>>(`/api/flash-sales?${params}`);
+}
+
+export async function reserveFlashSale(activityId: string, idempotencyKey: string): Promise<{ request: FlashSaleRequest; replayed: boolean }> {
+  return requestJSON<{ request: FlashSaleRequest; replayed: boolean }>(`/api/flash-sales/${encodeURIComponent(activityId)}/reservations`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey }
+  });
+}
+
+export async function getFlashSaleRequest(requestId: string, signal?: AbortSignal): Promise<FlashSaleRequest> {
+  const result = await requestJSON<{ request: FlashSaleRequest }>(`/api/flash-sale-requests/${encodeURIComponent(requestId)}`, { signal });
+  return result.request;
 }
 
 export async function payOrder(orderNo: string, idempotencyKey: string): Promise<{ order: Order; replayed: boolean }> {
@@ -330,7 +465,7 @@ export async function streamChatMessage(
   payload: ChatMessageRequest,
   onChunk: (chunk: string) => void,
   signal?: AbortSignal
-): Promise<void> {
+): Promise<{ conversationId?: string }> {
   const response = await fetch(`${resolveApiBaseUrl()}/api/chat/stream`, {
     method: 'POST',
     headers: {
@@ -342,31 +477,54 @@ export async function streamChatMessage(
     body: JSON.stringify(payload)
   });
 
-  if (!response.ok || !response.body) {
+  if (!response.ok) {
     throw new Error(await responseErrorMessage(response, `Stream request failed with status ${response.status}`));
+  }
+  if (!response.body) {
+    throw new Error('assistant stream returned no content');
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let receivedMessageContent = false;
   const eventSeparatorPattern = /\r?\n\r?\n/;
 
   function flushEventBlock(block: string) {
     const lines = block.split(/\r?\n/);
+    let eventType = 'message';
     const dataLines: string[] = [];
 
     for (const line of lines) {
-      if (line.startsWith('data:')) {
+      if (line.startsWith('event:')) {
+        eventType = (line.startsWith('event: ') ? line.slice(7) : line.slice(6)).trim();
+      } else if (line.startsWith('data:')) {
         dataLines.push(line.startsWith('data: ') ? line.slice(6) : line.slice(5));
       }
     }
 
-    if (dataLines.length === 0) {
+    if (eventType === 'error') {
+      const fallback = 'assistant stream failed';
+      let message = fallback;
+      try {
+        const body = JSON.parse(dataLines.join('\n')) as { error?: { message?: unknown } } | null;
+        const envelopeMessage = body?.error?.message;
+        if (typeof envelopeMessage === 'string' && envelopeMessage.trim().length > 0) {
+          message = envelopeMessage;
+        }
+      } catch {
+        // Do not expose malformed or non-envelope stream error payloads.
+      }
+      throw new Error(message);
+    }
+
+    if (eventType !== 'message' || dataLines.length === 0) {
       return;
     }
 
-    const chunk = dataLines.join('\n').replace(/^data:\s?/gm, '');
+    const chunk = dataLines.join('\n');
     if (chunk.length > 0) {
+      receivedMessageContent = true;
       onChunk(chunk);
     }
   }
@@ -394,4 +552,11 @@ export async function streamChatMessage(
   if (finalBlock.length > 0) {
     flushEventBlock(finalBlock);
   }
+
+  if (!receivedMessageContent) {
+    throw new Error('assistant stream returned no content');
+  }
+
+  const conversationId = response.headers.get('X-Conversation-ID')?.trim();
+  return conversationId ? { conversationId } : {};
 }

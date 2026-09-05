@@ -1,0 +1,14 @@
+{
+  "id": "build_team",
+  "version": "1.0.0",
+  "promptVersion": "build_team_v1",
+  "intents": ["team_build", "party_composition"],
+  "routes": ["PLANNING", "CLARIFY"],
+  "delegates": ["research", "planning"],
+  "tools": ["search_lightrag", "search_forum", "search_web", "read_catalog", "score_constraints"],
+  "lightragModes": ["local", "global", "hybrid", "mix"],
+  "budget": {"modelCalls": 12, "toolCalls": 12, "delegations": 2, "timeoutMilliseconds": 45000},
+  "outputContract": "team_plan_v1",
+  "citations": true,
+  "evalCases": ["build_team_roles", "build_team_evidence"]
+}

@@ -13,12 +13,48 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
+	assistantentity "github.com/red060324/XiaoLanHe/internal/assistant/entity"
+	assistantuc "github.com/red060324/XiaoLanHe/internal/assistant/usecase"
 	catalogentity "github.com/red060324/XiaoLanHe/internal/catalog/entity"
 	catalog "github.com/red060324/XiaoLanHe/internal/catalog/usecase"
 	communityentity "github.com/red060324/XiaoLanHe/internal/community/entity"
 	community "github.com/red060324/XiaoLanHe/internal/community/usecase"
 	"github.com/red060324/XiaoLanHe/internal/usecase"
 )
+
+func TestResearchAgentTypedTaskEnforcesPlanAndBudget(t *testing.T) {
+	knowledge := &modeKnowledgeStore{}
+	model := scriptedResearchModel(
+		schema.AssistantMessage("", []schema.ToolCall{
+			{ID: "1", Function: schema.FunctionCall{Name: "search_lightrag", Arguments: `{"query":"rpg","mode":"hybrid"}`}},
+			{ID: "2", Function: schema.FunctionCall{Name: "search_catalog", Arguments: `{"query":"forbidden"}`}},
+		}),
+	)
+	agent, err := NewResearchAgent(context.Background(), model, "research", ResearchCapabilities{Knowledge: knowledge, Catalog: &researchCatalog{}, Forum: &researchForum{}}, ResearchLimits{TotalTimeout: time.Second, ToolTimeout: time.Second, MaxIterations: 6, MaxToolCalls: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := assistantentity.ResearchTask{Envelope: assistantentity.Envelope{SchemaVersion: 1, RunID: "12345678-1234-4123-8123-123456789abc", Sequence: 1, SkillID: "research_guide", SkillVersion: "1.0.0"}, Objective: "research rpg", QueryUnitIDs: []string{"q1"}, RequiredFacets: []string{"genre"}, AllowedTools: []string{"search_lightrag", "search_catalog"}}
+	plan := assistantentity.QueryPlan{SchemaVersion: 1, Units: []assistantentity.QueryUnit{{ID: "q1", Text: "rpg", Sources: []assistantentity.QuerySource{assistantentity.SourceLightRAG}, LightRAGMode: assistantentity.LightRAGHybrid, Freshness: "stable", RequiredFacets: []string{"genre"}}}}
+	budget, _ := assistantuc.NewBudget(assistantentity.BudgetLimit{ModelCalls: 6, ToolCalls: 8, Delegations: 1, TimeoutMilliseconds: 2000})
+	result, err := agent.RunResearch(context.Background(), task, plan, budget)
+	if err != nil || len(result.Evidence) != 1 || knowledge.calls != 1 || knowledge.mode != "hybrid" || result.Artifact.Status != assistantentity.StatusPartial || !slices.Equal(result.Artifact.CoveredFacets, []string{"genre"}) || budget.Usage().ToolCalls != 1 {
+		t.Fatalf("result=%+v knowledge=%+v usage=%+v err=%v", result, knowledge, budget.Usage(), err)
+	}
+}
+
+func TestResearchAgentTypedTaskRejectsUnplannedMode(t *testing.T) {
+	knowledge := &modeKnowledgeStore{}
+	model := scriptedResearchModel(researchToolCall("1", "search_lightrag", `{"query":"rpg","mode":"global"}`), schema.AssistantMessage("done", nil))
+	agent, _ := NewResearchAgent(context.Background(), model, "research", ResearchCapabilities{Knowledge: knowledge, Catalog: &researchCatalog{}, Forum: &researchForum{}}, ResearchLimits{TotalTimeout: time.Second, ToolTimeout: time.Second, MaxIterations: 6, MaxToolCalls: 8})
+	task := assistantentity.ResearchTask{Envelope: assistantentity.Envelope{SchemaVersion: 1, RunID: "12345678-1234-4123-8123-123456789abc", Sequence: 1, SkillID: "research_guide", SkillVersion: "1.0.0"}, Objective: "research rpg", QueryUnitIDs: []string{"q1"}, RequiredFacets: []string{"genre"}, AllowedTools: []string{"search_lightrag"}}
+	plan := assistantentity.QueryPlan{SchemaVersion: 1, Units: []assistantentity.QueryUnit{{ID: "q1", Text: "rpg", Sources: []assistantentity.QuerySource{assistantentity.SourceLightRAG}, LightRAGMode: assistantentity.LightRAGHybrid, Freshness: "stable", RequiredFacets: []string{"genre"}}}}
+	budget, _ := assistantuc.NewBudget(assistantentity.BudgetLimit{ModelCalls: 6, ToolCalls: 8, Delegations: 1, TimeoutMilliseconds: 2000})
+	result, err := agent.RunResearch(context.Background(), task, plan, budget)
+	if err != nil || knowledge.calls != 0 || len(result.Evidence) != 0 || result.Artifact.Status != assistantentity.StatusNoResult {
+		t.Fatalf("result=%+v knowledge=%+v err=%v", result, knowledge, err)
+	}
+}
 
 func TestResearchAgentResearch(t *testing.T) {
 	t.Run("observes evidence and refines the query", func(t *testing.T) {
@@ -29,12 +65,12 @@ func TestResearchAgentResearch(t *testing.T) {
 		model := &fakeChatModel{generateContext: func(_ context.Context, messages []*schema.Message) (*schema.Message, error) {
 			switch modelCalls.Add(1) {
 			case 1:
-				return researchToolCall("1", "search_knowledge", `{"query":"first"}`), nil
+				return researchToolCall("1", "search_lightrag", `{"query":"first"}`), nil
 			case 2:
 				if !messagesContain(messages, "first fact") {
 					return nil, errors.New("tool observation was not returned to the model")
 				}
-				return researchToolCall("2", "search_knowledge", `{"query":"refined"}`), nil
+				return researchToolCall("2", "search_lightrag", `{"query":"refined"}`), nil
 			default:
 				return schema.AssistantMessage("done", nil), nil
 			}
@@ -57,7 +93,7 @@ func TestResearchAgentResearch(t *testing.T) {
 		}}
 		model := scriptedResearchModel(
 			schema.AssistantMessage("", []schema.ToolCall{
-				{ID: "1", Function: schema.FunctionCall{Name: "search_knowledge", Arguments: `{"query":"guide"}`}},
+				{ID: "1", Function: schema.FunctionCall{Name: "search_lightrag", Arguments: `{"query":"guide"}`}},
 				{ID: "2", Function: schema.FunctionCall{Name: "search_web", Arguments: `{"query":"latest"}`}},
 			}),
 			schema.AssistantMessage("done", nil),
@@ -86,7 +122,7 @@ func TestResearchAgentResearch(t *testing.T) {
 	})
 
 	t.Run("distinguishes a successful empty search", func(t *testing.T) {
-		model := scriptedResearchModel(researchToolCall("1", "search_knowledge", `{"query":"missing"}`), schema.AssistantMessage("done", nil))
+		model := scriptedResearchModel(researchToolCall("1", "search_lightrag", `{"query":"missing"}`), schema.AssistantMessage("done", nil))
 		agent := newTestResearchAgent(t, model, &researchKnowledgeStore{}, nil, false, ResearchLimits{TotalTimeout: time.Second, ToolTimeout: time.Second, MaxIterations: 6, MaxToolCalls: 8})
 
 		result, err := agent.Research(context.Background(), usecase.RouteDecision{Queries: []string{"question"}, NeedLocalKnowledge: true})
@@ -101,9 +137,9 @@ func TestResearchAgentResearch(t *testing.T) {
 			return []usecase.KnowledgeSnippet{{ChunkID: int64(len(query)), Title: query, Text: "fact"}}, nil
 		}}
 		model := scriptedResearchModel(schema.AssistantMessage("", []schema.ToolCall{
-			{ID: "1", Function: schema.FunctionCall{Name: "search_knowledge", Arguments: `{"query":"one"}`}},
-			{ID: "2", Function: schema.FunctionCall{Name: "search_knowledge", Arguments: `{"query":"two"}`}},
-			{ID: "3", Function: schema.FunctionCall{Name: "search_knowledge", Arguments: `{"query":"three"}`}},
+			{ID: "1", Function: schema.FunctionCall{Name: "search_lightrag", Arguments: `{"query":"one"}`}},
+			{ID: "2", Function: schema.FunctionCall{Name: "search_lightrag", Arguments: `{"query":"two"}`}},
+			{ID: "3", Function: schema.FunctionCall{Name: "search_lightrag", Arguments: `{"query":"three"}`}},
 		}))
 		agent := newTestResearchAgent(t, model, store, nil, false, ResearchLimits{TotalTimeout: time.Second, ToolTimeout: time.Second, MaxIterations: 6, MaxToolCalls: 2})
 
@@ -118,7 +154,7 @@ func TestResearchAgentResearch(t *testing.T) {
 		var calls atomic.Int32
 		model := &fakeChatModel{generateContext: func(context.Context, []*schema.Message) (*schema.Message, error) {
 			call := calls.Add(1)
-			return researchToolCall(fmt.Sprint(call), "search_knowledge", fmt.Sprintf(`{"query":"q%d"}`, call)), nil
+			return researchToolCall(fmt.Sprint(call), "search_lightrag", fmt.Sprintf(`{"query":"q%d"}`, call)), nil
 		}}
 		store := &researchKnowledgeStore{search: func(context.Context, string) ([]usecase.KnowledgeSnippet, error) {
 			return []usecase.KnowledgeSnippet{{ChunkID: 1, Text: "fact"}}, nil
@@ -140,7 +176,7 @@ func TestResearchAgentResearch(t *testing.T) {
 			<-ctx.Done()
 			return nil, ctx.Err()
 		}}
-		model := scriptedResearchModel(researchToolCall("1", "search_knowledge", `{"query":"slow"}`))
+		model := scriptedResearchModel(researchToolCall("1", "search_lightrag", `{"query":"slow"}`))
 		agent := newTestResearchAgent(t, model, store, nil, false, ResearchLimits{TotalTimeout: time.Second, ToolTimeout: time.Second, MaxIterations: 6, MaxToolCalls: 8})
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
@@ -306,6 +342,17 @@ type researchKnowledgeStore struct {
 	mu     sync.Mutex
 	seen   []string
 	search func(context.Context, string) ([]usecase.KnowledgeSnippet, error)
+}
+
+type modeKnowledgeStore struct {
+	calls int
+	mode  string
+}
+
+func (s *modeKnowledgeStore) SearchEvidence(_ context.Context, _, _, _, mode string, _ int) ([]usecase.Evidence, error) {
+	s.calls++
+	s.mode = mode
+	return []usecase.Evidence{{Source: "lightrag", Title: "RPG genre", Content: "genre fact"}}, nil
 }
 
 func (*researchKnowledgeStore) CreateDocument(context.Context, usecase.KnowledgeDocument, []string, [][]float32) (int64, error) {

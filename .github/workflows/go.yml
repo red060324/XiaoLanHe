@@ -29,6 +29,10 @@ jobs:
           --health-retries 10
     env:
       XLH_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/xiaolanhe_test?sslmode=disable
+      XLH_TEST_REDIS_URL: redis://:integration-password@127.0.0.1:6379/15
+      XLH_TEST_ROCKETMQ_NAMESERVERS: 127.0.0.1:9876
+      XLH_TEST_ROCKETMQ_BROKER_ADDR: 127.0.0.1:10911
+      XLH_REDIS_PASSWORD: integration-password
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,11 +46,32 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/xiaolanhe-web/package-lock.json
+      - name: Start Redis and RocketMQ integration services
+        run: docker compose -f deploy/docker-compose.middleware.yml up --detach --wait redis rmqnamesrv rmqbroker
       - run: npm --prefix frontend/xiaolanhe-web ci
-      - name: Repository gates
+      - name: Validate official LightRAG native-store manifest
+        run: make lightrag-static
+      - name: Official LightRAG image and runtime contract
         env:
-          BASE_REF: origin/${{ github.base_ref || 'master' }}
-        run: make ci BASE_REF="$BASE_REF"
+          XLH_LIGHTRAG_API_KEY: ci-lightrag-private-key-at-least-32-chars
+          XLH_LIGHTRAG_LLM_API_KEY: ci-placeholder
+          XLH_LIGHTRAG_EMBEDDING_API_KEY: ci-placeholder
+          XLH_LIGHTRAG_LLM_BASE_URL: http://127.0.0.1:9/v1
+          XLH_LIGHTRAG_EMBEDDING_BASE_URL: http://127.0.0.1:9/v1
+        run: |
+          trap 'docker compose -f deploy/docker-compose.lightrag.yml logs --no-color lightrag; docker compose -f deploy/docker-compose.lightrag.yml down --volumes' EXIT
+          docker compose -f deploy/docker-compose.lightrag.yml up --detach --wait lightrag
+          bash deploy/check-lightrag-live.sh http://127.0.0.1:9621 "$XLH_LIGHTRAG_API_KEY"
+      - name: Repository gates
+        run: |
+          if [ -n "${{ github.base_ref }}" ] && git rev-parse --verify "origin/${{ github.base_ref }}" >/dev/null 2>&1; then
+            base_ref="origin/${{ github.base_ref }}"
+          elif git rev-parse --verify origin/master >/dev/null 2>&1; then
+            base_ref=origin/master
+          else
+            base_ref=HEAD^
+          fi
+          make ci BASE_REF="$base_ref"
       - name: Seed idempotency
         env:
           XLH_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/xiaolanhe_test?sslmode=disable
@@ -75,3 +100,11 @@ jobs:
           XLH_SMOKE_ADMIN_PASSWORD=integration-password \
             XLH_SMOKE_RUN_ID="${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}" \
             bash scripts/smoke-product.sh
+      - name: Middleware logs
+        if: failure()
+        run: docker compose -f deploy/docker-compose.middleware.yml logs --no-color redis rmqnamesrv rmqbroker
+      - name: Stop integration services
+        if: always()
+        run: |
+          docker compose -f deploy/docker-compose.lightrag.yml down --volumes
+          docker compose -f deploy/docker-compose.middleware.yml down --volumes

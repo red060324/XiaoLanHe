@@ -1,20 +1,24 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import CommercePage from './CommercePage';
-import { Deal, Game, Order, User } from '../lib/api';
+import { Deal, FlashSale, FlashSaleRequest, Game, Order, User } from '../lib/api';
 
 const api = vi.hoisted(() => ({
   claimCoupon: vi.fn(),
   createOrder: vi.fn(),
+  getFlashSaleRequest: vi.fn(),
   listDeals: vi.fn(),
+  listFlashSales: vi.fn(),
   listCouponClaims: vi.fn(),
   listOrders: vi.fn(),
-  payOrder: vi.fn()
+  payOrder: vi.fn(),
+  reserveFlashSale: vi.fn()
 }));
 
 vi.mock('../lib/api', () => api);
 
 const user: User = { id: '7', username: 'player', displayName: 'Player', role: 'user' };
+const otherUser: User = { id: '8', username: 'other', displayName: 'Other', role: 'user' };
 const games: Game[] = [{
   id: '3', slug: 'demo', name: 'Demo', summary: '', owned: false,
   editions: [{ id: '12', code: 'standard', name: 'Standard', owned: false, price: { amountMinor: 1999, currency: 'USD', region: 'GLOBAL' } }]
@@ -30,9 +34,18 @@ const pendingOrder: Order = {
   item: { editionId: '12', gameSlug: 'demo', gameName: 'Demo', editionCode: 'standard', editionName: 'Standard', unitPriceMinor: 1999, region: 'GLOBAL' },
   createdAt: '2026-08-31T08:00:00Z', updatedAt: '2026-08-31T08:00:00Z'
 };
+const flashSale: FlashSale = {
+  id: '41', code: 'AUTUMN-DEMO', gameSlug: 'demo', gameName: 'Demo', editionId: '12', editionName: 'Standard',
+  region: 'GLOBAL', currency: 'USD', salePriceMinor: 999, status: 'active', startsAt: '2026-09-02T00:00:00Z',
+  endsAt: '2026-09-30T00:00:00Z', availability: 'available'
+};
+const queuedFlashRequest: FlashSaleRequest = {
+  requestId: 'fsr_15_0123456789abcdef0123456789abcdef', activityId: '41', status: 'queued', orderNo: '', failureCode: '', paymentExpiresAt: ''
+};
 
 beforeEach(() => {
   api.listDeals.mockResolvedValue({ items: [] });
+  api.listFlashSales.mockResolvedValue({ items: [] });
   api.listCouponClaims.mockResolvedValue({ items: [] });
   api.listOrders.mockResolvedValue({ items: [] });
 });
@@ -43,6 +56,70 @@ afterEach(() => {
 });
 
 describe('CommercePage', () => {
+  it('reserves once, polls asynchronously, and opens the created order', async () => {
+    api.listFlashSales.mockResolvedValue({ items: [flashSale] });
+    api.reserveFlashSale.mockResolvedValue({ request: queuedFlashRequest, replayed: false });
+    api.getFlashSaleRequest.mockResolvedValue({ ...queuedFlashRequest, status: 'order_ready', orderNo: pendingOrder.orderNo });
+    api.listOrders.mockResolvedValue({ items: [pendingOrder] });
+    render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '立即抢购' }));
+
+    await waitFor(() => expect(api.reserveFlashSale).toHaveBeenCalledWith('41', expect.stringMatching(/^flash-sale:/)));
+    expect(await screen.findByText('抢购成功，订单已创建')).toBeInTheDocument();
+    expect(api.getFlashSaleRequest).toHaveBeenCalledWith(queuedFlashRequest.requestId, expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole('button', { name: '查看订单' }));
+    expect(await screen.findByText(pendingOrder.orderNo)).toBeInTheDocument();
+  });
+
+  it('reuses the flash-sale key after a recoverable reservation error', async () => {
+    api.listFlashSales.mockResolvedValue({ items: [flashSale] });
+    api.reserveFlashSale
+      .mockRejectedValueOnce(new Error('抢购服务繁忙'))
+      .mockResolvedValueOnce({ request: { ...queuedFlashRequest, status: 'failed', failureCode: 'final_stock_exhausted' }, replayed: true });
+    render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '立即抢购' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('抢购服务繁忙');
+    fireEvent.click(screen.getByRole('button', { name: '立即抢购' }));
+
+    await waitFor(() => expect(api.reserveFlashSale).toHaveBeenCalledTimes(2));
+    expect(api.reserveFlashSale.mock.calls[1][1]).toBe(api.reserveFlashSale.mock.calls[0][1]);
+    expect(await screen.findByText('抢购未完成，库存将自动释放')).toBeInTheDocument();
+  });
+
+  it('cancels flash-sale polling when the signed-in user changes', async () => {
+    api.listFlashSales.mockResolvedValue({ items: [flashSale] });
+    api.reserveFlashSale.mockResolvedValue({ request: queuedFlashRequest, replayed: false });
+    api.getFlashSaleRequest.mockImplementation((_requestId: string, signal: AbortSignal) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    }));
+    const view = render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '立即抢购' }));
+    await waitFor(() => expect(api.getFlashSaleRequest).toHaveBeenCalledOnce());
+    const signal = api.getFlashSaleRequest.mock.calls[0][1] as AbortSignal;
+    view.rerender(<CommercePage user={otherUser} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    expect(signal.aborted).toBe(true);
+    expect(screen.queryByText('抢购成功，订单已创建')).not.toBeInTheDocument();
+    expect(screen.queryByText('已排队，等待订单服务处理')).not.toBeInTheDocument();
+  });
+
+  it('exposes the selected commerce view to assistive technology', async () => {
+    render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    const deals = screen.getByRole('button', { name: '优惠与购买' });
+    const orders = screen.getByRole('button', { name: '我的订单' });
+    expect(deals).toHaveAttribute('aria-pressed', 'true');
+    expect(orders).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(orders);
+
+    expect(deals).toHaveAttribute('aria-pressed', 'false');
+    expect(orders).toHaveAttribute('aria-pressed', 'true');
+  });
+
   it('requires login before claiming a public deal', async () => {
     api.listDeals.mockResolvedValue({ items: [deal] });
     const onRequireLogin = vi.fn();
@@ -140,7 +217,7 @@ describe('CommercePage', () => {
     render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole('button', { name: '购买' }));
-    expect(await screen.findByText('暂时不可用')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('暂时不可用');
     fireEvent.click(screen.getByRole('button', { name: '购买' }));
     await waitFor(() => expect(api.createOrder).toHaveBeenCalledTimes(2));
     expect(api.createOrder.mock.calls[1][1]).toBe(api.createOrder.mock.calls[0][1]);
@@ -221,5 +298,78 @@ describe('CommercePage', () => {
 
     expect(screen.getByText(deal.name)).toBeInTheDocument();
     expect(screen.queryByText('废弃订单请求失败')).not.toBeInTheDocument();
+  });
+
+  it('reloads viewer-specific deals when the signed-in user changes', async () => {
+    api.listDeals
+      .mockResolvedValueOnce({ items: [{ ...deal, viewerClaimCount: 1 }] })
+      .mockResolvedValueOnce({ items: [deal] });
+    const view = render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    expect(await screen.findByRole('button', { name: '已领取' })).toBeDisabled();
+    view.rerender(<CommercePage user={otherUser} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    await waitFor(() => expect(api.listDeals).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('button', { name: '领取优惠券' })).toBeEnabled();
+  });
+
+  it('clears the previous user order history while the next user loads', async () => {
+    let resolveOtherHistory!: (value: { items: Order[] }) => void;
+    api.listOrders
+      .mockResolvedValueOnce({ items: [pendingOrder] })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOtherHistory = resolve; }));
+    const view = render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '我的订单' }));
+    expect(await screen.findByText(pendingOrder.orderNo)).toBeInTheDocument();
+
+    view.rerender(<CommercePage user={otherUser} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+    await waitFor(() => expect(api.listOrders).toHaveBeenCalledTimes(2));
+
+    expect(screen.queryByText(pendingOrder.orderNo)).not.toBeInTheDocument();
+    await act(async () => resolveOtherHistory({ items: [] }));
+  });
+
+  it('ignores a deal mutation error after switching to the orders tab', async () => {
+    let rejectClaim!: (reason?: unknown) => void;
+    api.listDeals.mockResolvedValue({ items: [deal] });
+    api.claimCoupon.mockReturnValue(new Promise((_resolve, reject) => { rejectClaim = reject; }));
+    render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '领取优惠券' }));
+    await waitFor(() => expect(api.claimCoupon).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '我的订单' }));
+    await act(async () => rejectClaim(new Error('旧优惠请求失败')));
+
+    expect(screen.getByRole('button', { name: '我的订单' })).toHaveClass('active');
+    expect(screen.queryByText('旧优惠请求失败')).not.toBeInTheDocument();
+  });
+
+  it('makes a claim selectable when it succeeds after switching tabs', async () => {
+    const claimedCoupon = {
+      id: '9',
+      couponCode: 'WELCOME20',
+      status: 'claimed' as const,
+      claimedAt: '2026-08-31T08:00:00Z'
+    };
+    let resolveClaim!: (value: { claim: typeof claimedCoupon; replayed: boolean }) => void;
+    api.listDeals.mockResolvedValue({ items: [deal] });
+    api.listCouponClaims
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValue({ items: [claimedCoupon] });
+    api.claimCoupon.mockReturnValue(new Promise((resolve) => { resolveClaim = resolve; }));
+    render(<CommercePage user={user} games={games} onRequireLogin={vi.fn()} onOwned={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '领取优惠券' }));
+    await waitFor(() => expect(api.claimCoupon).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '我的订单' }));
+
+    await act(async () => resolveClaim({ claim: claimedCoupon, replayed: false }));
+    fireEvent.click(screen.getByRole('button', { name: '优惠与购买' }));
+
+    const selector = screen.getByLabelText('本次结算优惠券');
+    await screen.findByRole('option', { name: 'WELCOME20 · #9' });
+    fireEvent.change(selector, { target: { value: '9' } });
+    expect(selector).toHaveValue('9');
   });
 });

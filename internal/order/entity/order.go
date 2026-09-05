@@ -40,19 +40,22 @@ type Payment struct {
 }
 
 type Order struct {
-	ID            int64
-	OrderNo       string
-	UserID        int64
-	Status        Status
-	Currency      string
-	SubtotalMinor int64
-	DiscountMinor int64
-	TotalMinor    int64
-	CouponClaimID int64
-	Item          Item
-	Payment       *Payment
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID               int64
+	OrderNo          string
+	UserID           int64
+	Status           Status
+	Currency         string
+	SubtotalMinor    int64
+	DiscountMinor    int64
+	TotalMinor       int64
+	CouponClaimID    int64
+	SourceType       string
+	SourceReference  string
+	PaymentExpiresAt time.Time
+	Item             Item
+	Payment          *Payment
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 func CalculateTotals(subtotal, discount int64) (int64, error) {
@@ -64,6 +67,16 @@ func CalculateTotals(subtotal, discount int64) (int64, error) {
 
 func (o Order) ValidatePay() error {
 	if o.Status != StatusPendingPayment {
+		return ErrInvalidState
+	}
+	return nil
+}
+
+func (o Order) ValidatePayAt(now time.Time) error {
+	if err := o.ValidatePay(); err != nil {
+		return err
+	}
+	if !o.PaymentExpiresAt.IsZero() && !now.UTC().Before(o.PaymentExpiresAt) {
 		return ErrInvalidState
 	}
 	return nil

@@ -31,10 +31,11 @@ var (
 )
 
 var (
-	idempotencyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{8,128}$`)
-	regionPattern      = regexp.MustCompile(`^[A-Z0-9-]{2,16}$`)
-	currencyPattern    = regexp.MustCompile(`^[A-Z]{3}$`)
-	orderNoPattern     = regexp.MustCompile(`^ord_[a-f0-9]{32}$`)
+	idempotencyPattern  = regexp.MustCompile(`^[A-Za-z0-9._:-]{8,128}$`)
+	flashRequestPattern = regexp.MustCompile(`^fsr_[1-9a-z][0-9a-z]{0,12}_[a-f0-9]{32}$`)
+	regionPattern       = regexp.MustCompile(`^[A-Z0-9-]{2,16}$`)
+	currencyPattern     = regexp.MustCompile(`^[A-Z]{3}$`)
+	orderNoPattern      = regexp.MustCompile(`^ord_[a-f0-9]{32}$`)
 )
 
 type Catalog interface {
@@ -71,6 +72,15 @@ type CreateResult struct {
 	Replayed bool
 }
 
+type FlashSaleCreateCommand struct {
+	OrderNo          string
+	RequestID        string
+	UserID           int64
+	Offer            catalogentity.PurchaseOffer
+	SalePriceMinor   int64
+	PaymentExpiresAt time.Time
+}
+
 type PayCommand struct {
 	OrderNo           string
 	UserID            int64
@@ -87,6 +97,7 @@ type PayResult struct {
 type Store interface {
 	FindByIdempotency(context.Context, int64, string) (entity.Order, error)
 	Create(context.Context, CreateCommand) (CreateResult, error)
+	CreateFromFlashSale(context.Context, FlashSaleCreateCommand) (CreateResult, error)
 	List(context.Context, ListFilter) ([]entity.Order, error)
 	Get(context.Context, string) (entity.Order, error)
 	Pay(context.Context, PayCommand) (PayResult, error)
@@ -158,6 +169,29 @@ func (s *Service) Create(ctx context.Context, principal auth.Principal, in Creat
 		return CreateResult{}, err
 	}
 	return s.store.Create(ctx, CreateCommand{OrderNo: orderNo, UserID: principal.UserID, IdempotencyKey: in.IdempotencyKey, Offer: offer, Quote: quote, TotalMinor: total, Now: s.now().UTC()})
+}
+
+type FlashSaleCreateInput struct {
+	RequestID        string
+	UserID           int64
+	Offer            catalogentity.PurchaseOffer
+	SalePriceMinor   int64
+	PaymentExpiresAt time.Time
+}
+
+func (s *Service) CreateFromFlashSale(ctx context.Context, in FlashSaleCreateInput) (CreateResult, error) {
+	if in.UserID <= 0 || !flashRequestPattern.MatchString(in.RequestID) ||
+		in.Offer.EditionID <= 0 || in.SalePriceMinor < 0 || in.PaymentExpiresAt.IsZero() {
+		return CreateResult{}, ErrInvalidInput
+	}
+	orderNo, err := s.newOrderNo()
+	if err != nil {
+		return CreateResult{}, err
+	}
+	return s.store.CreateFromFlashSale(ctx, FlashSaleCreateCommand{
+		OrderNo: orderNo, RequestID: in.RequestID, UserID: in.UserID, Offer: in.Offer,
+		SalePriceMinor: in.SalePriceMinor, PaymentExpiresAt: in.PaymentExpiresAt.UTC(),
+	})
 }
 
 type ListInput struct {

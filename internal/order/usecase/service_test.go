@@ -132,17 +132,38 @@ func TestServicePay(t *testing.T) {
 	}
 }
 
+func TestCreateFromFlashSale(t *testing.T) {
+	deadline := time.Date(2026, 9, 3, 10, 15, 0, 0, time.UTC)
+	store := &orderStore{}
+	service := NewService(store, &catalogClient{}, &promotionClient{})
+	service.newOrderNo = func() (string, error) { return testOrderNo, nil }
+	store.flashCreateFn = func(command FlashSaleCreateCommand) (CreateResult, error) {
+		store.flashCreated = command
+		return CreateResult{Order: entity.Order{OrderNo: command.OrderNo, SourceType: "flash_sale", SourceReference: command.RequestID}}, nil
+	}
+	result, err := service.CreateFromFlashSale(context.Background(), FlashSaleCreateInput{
+		RequestID: "fsr_15_0123456789abcdef0123456789abcdef", UserID: 9,
+		Offer:          catalogentity.PurchaseOffer{EditionID: 12, Currency: "USD", Region: "GLOBAL"},
+		SalePriceMinor: 999, PaymentExpiresAt: deadline,
+	})
+	if err != nil || result.Order.SourceReference == "" || store.flashCreated.PaymentExpiresAt != deadline {
+		t.Fatalf("result=%+v command=%+v err=%v", result, store.flashCreated, err)
+	}
+}
+
 type orderStore struct {
-	existing entity.Order
-	findErr  error
-	created  CreateCommand
-	createFn func(CreateCommand) (CreateResult, error)
-	list     []entity.Order
-	filter   ListFilter
-	got      entity.Order
-	getErr   error
-	paid     PayCommand
-	payFn    func(PayCommand) (PayResult, error)
+	existing      entity.Order
+	findErr       error
+	created       CreateCommand
+	createFn      func(CreateCommand) (CreateResult, error)
+	flashCreated  FlashSaleCreateCommand
+	flashCreateFn func(FlashSaleCreateCommand) (CreateResult, error)
+	list          []entity.Order
+	filter        ListFilter
+	got           entity.Order
+	getErr        error
+	paid          PayCommand
+	payFn         func(PayCommand) (PayResult, error)
 }
 
 func (s *orderStore) FindByIdempotency(context.Context, int64, string) (entity.Order, error) {
@@ -150,6 +171,9 @@ func (s *orderStore) FindByIdempotency(context.Context, int64, string) (entity.O
 }
 func (s *orderStore) Create(_ context.Context, command CreateCommand) (CreateResult, error) {
 	return s.createFn(command)
+}
+func (s *orderStore) CreateFromFlashSale(_ context.Context, command FlashSaleCreateCommand) (CreateResult, error) {
+	return s.flashCreateFn(command)
 }
 func (s *orderStore) List(_ context.Context, filter ListFilter) ([]entity.Order, error) {
 	s.filter = filter

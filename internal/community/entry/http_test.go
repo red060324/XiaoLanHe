@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
@@ -48,6 +49,38 @@ func TestHTTP(t *testing.T) {
 		t.Fatalf("created status=%d body=%s created=%v", created.Code, created.Body.String(), store.created)
 	}
 
+	t.Run("accepts surrogate escaped emoji boundaries", func(t *testing.T) {
+		escapedEmoji := `\uD83D\uDE00`
+		payload := `{"title":"` + strings.Repeat(escapedEmoji, 160) + `","content":"` + strings.Repeat(escapedEmoji, 10000) + `"}`
+		store.created = false
+		body := &ut.Body{Body: bytes.NewBufferString(payload), Len: -1}
+		response := ut.PerformRequest(router.Engine, "POST", "/api/community/posts", body,
+			ut.Header{Key: "Cookie", Value: httpauth.CookieName + "=user"},
+			ut.Header{Key: "Origin", Value: "https://play.example"})
+		if response.Code != 201 || !store.created {
+			t.Fatalf("status=%d created=%v", response.Code, store.created)
+		}
+		if got := utf8.RuneCountInString(store.createdDraft.Title); got != 160 {
+			t.Fatalf("title runes=%d", got)
+		}
+		if got := utf8.RuneCountInString(store.createdDraft.Content); got != 10000 {
+			t.Fatalf("content runes=%d", got)
+		}
+	})
+
+	t.Run("rejects content over rune limit", func(t *testing.T) {
+		escapedEmoji := `\uD83D\uDE00`
+		payload := `{"title":"` + escapedEmoji + `","content":"` + strings.Repeat(escapedEmoji, 10001) + `"}`
+		store.created = false
+		body := &ut.Body{Body: bytes.NewBufferString(payload), Len: -1}
+		response := ut.PerformRequest(router.Engine, "POST", "/api/community/posts", body,
+			ut.Header{Key: "Cookie", Value: httpauth.CookieName + "=user"},
+			ut.Header{Key: "Origin", Value: "https://play.example"})
+		if response.Code != 400 || store.created {
+			t.Fatalf("status=%d created=%v", response.Code, store.created)
+		}
+	})
+
 	body = &ut.Body{Body: bytes.NewBufferString(`{"title":"Changed","content":"Route"}`), Len: -1}
 	forbidden := ut.PerformRequest(router.Engine, "PUT", "/api/community/posts/9", body,
 		ut.Header{Key: "Cookie", Value: httpauth.CookieName + "=other"},
@@ -58,8 +91,9 @@ func TestHTTP(t *testing.T) {
 }
 
 type httpStore struct {
-	post    entity.Post
-	created bool
+	post         entity.Post
+	created      bool
+	createdDraft entity.PostDraft
 }
 
 func (s *httpStore) ListPosts(context.Context, community.PostFilter) ([]entity.Post, error) {
@@ -73,6 +107,7 @@ func (s *httpStore) GetPost(_ context.Context, id, _ int64, _ bool) (entity.Post
 }
 func (s *httpStore) CreatePost(_ context.Context, authorID int64, draft entity.PostDraft) (entity.Post, error) {
 	s.created = true
+	s.createdDraft = draft
 	result := s.post
 	result.Author.ID, result.Title, result.Content = authorID, draft.Title, draft.Content
 	return result, nil

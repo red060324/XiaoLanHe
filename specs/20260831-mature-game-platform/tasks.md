@@ -75,7 +75,27 @@
 | T69 | PRE_MERGE | DONE | Bound SearXNG provider response bodies | AC7, AC8, AC10 | failing-then-passing Web Search adapter regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 | T70 | PRE_MERGE | DONE | Bound Embedding provider response bodies per requested input | AC7, AC8, AC10 | failing-then-passing Embedding adapter regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 50 Vitest tests |
 | T71 | PRE_MERGE | DONE | Present shared REST/SSE Assistant error messages instead of raw JSON | AC8, AC10 | failing-then-passing frontend API regression; full local `make ci BASE_REF=origin/master` passed against PostgreSQL 17 + pgvector with 51 Vitest tests |
+| T72 | PRE_MERGE | DONE | Enforce trusted admin authorization inside the knowledge write UseCase | AC2, AC7, AC10 | failing-then-passing direct UseCase and unprotected-HTTP regressions; focused Knowledge and HTTP packages PASS |
+| T73 | PRE_MERGE | DONE | Bound streamed request bodies and promptly close rejected standard/netpoll connections | AC8, AC10 | six real-socket standard-transport cases, active-sender default-netpoll regression, and failing-then-passing absolute-deadline semantic test; focused HTTP package PASS |
+| T74 | PRE_MERGE | DONE | Preserve the canonical SSE conversation and decoded message/error contract end to end | AC7, AC8, AC10 | Go SSE header/error/cancellation tests plus frontend canonical-ID, error-event, empty-stream, and literal `data:` regressions; 65 Vitest tests + production build PASS |
+| T75 | PRE_MERGE | DONE | Render untrusted citation titles without injected Markdown structure | AC7, AC8, AC10 | failing-then-passing whitespace/delimiter and credential-bearing URL regressions; focused Eino adapter package PASS |
+| T76 | PRE_MERGE | DONE | Make comment visibility lookup atomic and accept valid escaped-Unicode post boundaries | AC4, AC8, AC10 | UseCase delegation and HTTP rune-boundary regressions plus real PostgreSQL published/hidden comment-list cases PASS |
+| T77 | PRE_MERGE | DONE | Revalidate and snapshot current catalog and coupon state in the final order transaction | AC3, AC5, AC6, AC10 | real PostgreSQL stale campaign, coupon-definition, and edition-price regressions PASS without inserting stale orders |
+| T78 | PRE_MERGE | DONE | Complete responsive destination navigation and isolate authentication/chat async ownership | AC2, AC7, AC8, AC10 | failing-then-passing navigation, auth single-flight, stream cancellation, canonical-session, and account-isolation regressions; 65 Vitest tests + production build PASS |
+| T79 | PRE_MERGE | DONE | Preserve Commerce idempotency and reconcile requests across navigation, tabs, and users | AC5, AC6, AC8, AC10 | failing-then-passing App/Commerce navigation retry, cross-tab claim, viewer ownership, and stale request regressions; 65 Vitest tests + production build PASS |
+| T80 | PRE_MERGE | DONE | Bind Community async state to viewer and detail generations, including same-post ABA | AC4, AC8, AC10 | failing-then-passing detail cleanup, same-post reaction ABA, viewer ownership, and mutation single-flight regressions; 65 Vitest tests + production build PASS |
+| T81 | PRE_MERGE | DONE | Use database time after lock acquisition for final coupon-claim and order validity decisions | AC3, AC5, AC6, AC10 | three failing-then-passing PostgreSQL expiry-under-lock regressions; no expired claim/order side effects |
+| T82 | PRE_MERGE | DONE | Expose async and selected UI state and keep Commerce under one scroll owner | AC4, AC5, AC7, AC8, AC10 | failing-then-passing alert/live-status/pressed-state/single-stage regressions; 69 Vitest tests + production build PASS |
+| T83 | PRE_MERGE | DONE | Serialize logout with login/register and keep stale auth completions non-authoritative | AC2, AC8, AC10 | failing-then-passing same-tick logout single-flight regression; both logout controls expose disabled state |
+| T84 | PRE_MERGE | DONE | Enforce route-specific chat body limits and cancel blocked upstream streams on real client disconnect | AC7, AC8, AC10 | failing-then-passing real-socket standard-transport chat-limit cases plus default-netpoll disconnect regression |
+| T85 | PRE_MERGE | DONE | Remove the heavy Assistant renderer from the initial route and prevent entry-size regression | AC8, AC10 | React lazy/Suspense boundary; production build enforces a 500 KiB entry budget and reports about 246 kB / 76 kB gzip |
 
 Implementation proceeds by completed vertical slice. T3-T7 form Phase 1;
 T8-T9 form Phase 2; T10-T12 form Phase 3. Phase 4 started after Research Agent
-revision `41847fe` passed GitHub Actions against PostgreSQL.
+revision `41847fe` passed GitHub Actions against PostgreSQL. T72-T85 record the
+2026-09-02 final cross-cutting audit; T39 remains open because no push or new
+GitHub Actions run is authorized. The last recorded dirty-worktree gate was
+`XLH_TEST_DATABASE_URL=<isolated PostgreSQL 17 database URL> make ci
+BASE_REF=e34338e585e5a3cdeaea784fac0b4f1ceb49d947`, including Go race, 69
+Vitest tests, production build, architecture, hooks, and spec drift. This local
+evidence is distinct from the historical clean-clone run at committed `75c8a03`.

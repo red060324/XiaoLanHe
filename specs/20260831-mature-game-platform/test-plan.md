@@ -36,6 +36,14 @@ when introduced. Compilation or an empty test selection is not evidence.
 | V20 | PRE_MERGE | knowledge/usecase | embedding returns request cancellation or deadline after keyword retrieval | context error reaches the Research Agent and HTTP caller; vector search is not started |
 | V21 | PRE_MERGE | account/security | login uses a missing/invalid username instead of a stored account | dummy bcrypt comparison uses the production cost so the generic 401 path does not expose a lower work factor |
 | V22 | PRE_MERGE | account/security | login uses a disabled account with a validly shaped password | stored password hash is still compared before returning the generic 401 response |
+| V23 | PRE_MERGE | knowledge/usecase | a caller invokes knowledge creation without the HTTP role middleware | the UseCase rejects an anonymous or non-admin principal before embedding or storage; an admin principal retains the approved write path |
+| V24 | PRE_MERGE | HTTP/standard transport | fixed-length and chunked bodies are exactly at or one byte above the 1 MiB application limit; an oversized request uses `Expect: 100-continue`; a chunked body terminates early | exact-limit bodies reach the handler; oversized bodies return the standard 413 envelope and request ID then close; malformed streams return the standard 400 envelope and close |
+| V25 | PRE_MERGE | HTTP/default netpoll | an oversized sender remains active while the server rejects the request, and rejected-stream cleanup is inspected with a recording connection | the 413 response and connection close occur before the declared body is drained; cleanup sets an absolute read deadline rather than a relative timeout |
+| V26 | PRE_MERGE | HTTP/chat transport | REST or SSE chat declares or streams more than `MaxMessageLength + 1024` bytes | reject at the route-specific transport boundary with correlated 413 and connection close, including before `100 Continue` |
+| V27 | PRE_MERGE | frontend/accessibility | async failures, streaming Assistant output, Commerce view selection, Community reactions, and Commerce loading failure layout | errors are alerts; only the current stream is a polite busy status; selected buttons expose `aria-pressed`; App and Commerce share one scroll owner |
+| V28 | PRE_MERGE | PostgreSQL/time | claim/order waits on a lock while campaign or selected price crosses its exclusive end time | post-lock database time rejects the operation and no claim, stock increment, or order is committed |
+| V29 | PRE_MERGE | frontend/auth | logout is activated twice in the same tick or overlaps another auth mutation | exactly one cookie mutation runs; both logout controls remain disabled while it owns the gate |
+| V30 | PRE_MERGE | frontend/performance | production build with heavy Assistant Markdown/diagram renderer | renderer is lazy-loaded; module entry referenced by `dist/index.html` stays at or below 500 KiB |
 
 Phase-one HTTP assertions use `contracts/phase1-http.md` as the wire source of
 truth.
@@ -71,6 +79,16 @@ truth.
 - Community repository writes revalidate that the target post is published;
   moderation racing with a new comment or reaction cannot create engagement on
   hidden or deleted content.
+- Comment listing validates parent visibility and reads published comments in one
+  PostgreSQL statement: a published post with no comments returns an empty page,
+  while a hidden or missing post returns `not_found` without a check/read race.
+- Post JSON whose valid title/content reaches the rune limit through escaped
+  surrogate pairs is accepted; one decoded rune above the limit is rejected.
+- Feed/detail/comment/reaction completions remain bound to the initiating viewer
+  and view generation. Closing and reopening the same post is a new generation,
+  so an older reaction failure cannot leak into it, and one post cannot start a
+  second reaction mutation while the first remains pending.
+- Reaction buttons expose their selected state independently of color or CSS.
 
 ## Phase 3: Promotion And Commerce
 
@@ -109,6 +127,21 @@ truth.
   expires after quoting but before the order snapshot is written.
 - An order transaction rejects a quoted edition price when the active catalog
   price changes or becomes unavailable before the order snapshot is written.
+- The final order transaction locks and revalidates the current coupon definition
+  as well as campaign, claim, edition, game, and regional price state. A changed
+  discount or price rejects the stale quote without inserting an order, while an
+  accepted order stores the locked catalog and money snapshots.
+- Claim/order/payment idempotency keys survive leaving and re-entering Commerce
+  so a retry after an ambiguous response reuses the original key; successful
+  completion consumes its key, and an authenticated user change clears all keys.
+- A coupon claim that succeeds after switching to Orders is accepted only for the
+  same user. It does not mutate the inactive tab, and returning to Deals reloads
+  authoritative claims so the new claim becomes selectable.
+- Coupon claim revalidates campaign availability after acquiring its user and
+  coupon locks. A campaign that expires while the claimant waits returns
+  unavailable, inserts no claim, and does not increment `claimed_stock`.
+- Commerce and its App-owned loading error share one `.page-stage` scroll owner;
+  its selected view is exposed with button pressed state.
 
 ## Phase 4: Assistant
 
@@ -151,8 +184,17 @@ truth.
   with an explicit failure state while retaining any partial response.
 - REST and SSE Assistant failures extract the shared server error message and
   never expose the raw JSON error envelope as user-facing text.
+- The SSE response exposes the canonical conversation ID. The browser parses
+  event framing exactly once, rejects error events and successful empty streams,
+  and preserves decoded assistant content that legitimately begins with `data:`.
 - After a stopped chat is replaced by a new request, completion cleanup from
   the older stream cannot clear the newer stream's loading or cancellation state.
+- Changing conversation/history cancels the owned stream and releases loading;
+  late chunks and cleanup are scoped to the originating conversation/message.
+- Only the latest in-progress Assistant response is a polite live status with
+  `aria-busy=true`; completed and historical messages are not live regions.
+- Citation titles collapse attacker-controlled whitespace and escape Markdown link
+  delimiters; credential-bearing URLs remain omitted from rendered citations.
 - Logs/traces exclude full messages, prompts, tokens, cookies, and passwords.
 - Real model/Web calls remain ROLLOUT and never substitute for deterministic
   PRE_MERGE tests.
@@ -164,6 +206,31 @@ truth.
 - Frontend tests and production build.
 - Docker image build after lifecycle/deployment changes.
 - Search for Java/Maven runtime files; expected none.
+
+## Recorded Verification — 2026-09-02
+
+- Focused frontend: `perl -e 'alarm shift; exec @ARGV' 120 npm --prefix
+  frontend/xiaolanhe-web test -- src/App.test.tsx
+  src/components/ChatMessageList.test.tsx
+  src/components/CommercePage.test.tsx
+  src/components/CommunityPage.test.tsx src/lib/api.test.ts` — 5 files / 69
+  tests PASS after the final accessibility review.
+- Lock-expiry integration: `XLH_TEST_DATABASE_URL=<isolated PostgreSQL 17 URL>
+  go test -run '^TestProductPostgres$/(coupon_claim_rejects_a_campaign|order_create_rejects_a_(price|coupon_campaign))_that_expires_while_waiting_for_its_lock$'
+  -count=1 -v ./internal/adapter/postgres` — 3/3 PASS.
+- HTTP transport: `go test -run
+  '^(TestHTTPOversizedRequestContract|TestHTTPStreamCancelsOnClientDisconnect)$'
+  -count=1 -v ./internal/entry` — route-specific standard-transport body
+  limits and default-netpoll disconnect cancellation PASS.
+- Full local dirty-worktree gate: `XLH_TEST_DATABASE_URL=<isolated PostgreSQL 17
+  URL> BASE_REF=e34338e585e5a3cdeaea784fac0b4f1ceb49d947 make ci` —
+  formatting, vet, all Go tests, full race, 69 Vitest tests, hooks,
+  architecture, spec drift, TypeScript, and Vite build PASS.
+- Incremental coverage gate: SKIPPED because neither the repository nor the
+  request defines a coverage threshold and this run is not a Flux report run.
+- In-app visual browser smoke: NOT RUN because the local browser-control
+  session could not initialize; DOM regressions and the production build passed,
+  but no visual result is inferred.
 
 ## Rollout
 

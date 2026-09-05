@@ -69,7 +69,7 @@ describe('CommunityPage', () => {
     expect(api.createCommunityComment).toHaveBeenCalledWith('9', 'That worked.');
 
     fireEvent.click(screen.getByRole('button', { name: '赞 0' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: '赞 1' })).toHaveClass('active'));
+    await waitFor(() => expect(screen.getByRole('button', { name: '赞 1' })).toHaveAttribute('aria-pressed', 'true'));
     expect(api.setCommunityReaction).toHaveBeenCalledWith('9', 'like', true);
   });
 
@@ -127,6 +127,22 @@ describe('CommunityPage', () => {
     expect(screen.getByRole('heading', { name: '游戏社区', level: 1 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Updated Guide', level: 2 })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Updated Guide', level: 1 })).not.toBeInTheDocument();
+  });
+
+  it('clears a detail error when returning to the community feed', async () => {
+    api.updateCommunityPost.mockRejectedValue(new Error('保存失败详情'));
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    await screen.findByRole('heading', { name: 'Boss Guide', level: 1 });
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('保存失败详情');
+
+    fireEvent.click(screen.getByRole('button', { name: '← 返回社区' }));
+
+    expect(screen.getByRole('heading', { name: '游戏社区', level: 1 })).toBeInTheDocument();
+    expect(screen.queryByText('保存失败详情')).not.toBeInTheDocument();
   });
 
   it('does not close a newer post when an earlier delete finishes', async () => {
@@ -367,5 +383,23 @@ describe('CommunityPage', () => {
 
     expect(screen.getByRole('heading', { name: '游戏社区', level: 1 })).toBeInTheDocument();
     expect(screen.queryByText('reaction unavailable')).not.toBeInTheDocument();
+  });
+
+  it('ignores an older reaction failure after the same post is reopened', async () => {
+    let rejectReaction!: (reason?: unknown) => void;
+    api.setCommunityReaction.mockReturnValue(new Promise((_resolve, reject) => { rejectReaction = reject; }));
+    render(<CommunityPage user={user} games={[]} onRequireLogin={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Boss Guide/ }));
+    await screen.findByRole('heading', { name: 'Boss Guide', level: 1 });
+    fireEvent.click(screen.getByRole('button', { name: '赞 0' }));
+    await waitFor(() => expect(api.setCommunityReaction).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: '← 返回社区' }));
+    fireEvent.click(screen.getByRole('button', { name: /Boss Guide/ }));
+    await screen.findByRole('heading', { name: 'Boss Guide', level: 1 });
+
+    await act(async () => rejectReaction(new Error('old reaction failed')));
+
+    expect(screen.queryByText('old reaction failed')).not.toBeInTheDocument();
   });
 });

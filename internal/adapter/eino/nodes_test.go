@@ -55,3 +55,33 @@ func TestModelNodesGenerateAnswer(t *testing.T) {
 		t.Fatalf("answer=%#v err=%v", answer, err)
 	}
 }
+
+func TestCitationSuffix(t *testing.T) {
+	t.Run("renders verified LightRAG source without fabricating a link", func(t *testing.T) {
+		got := citationSuffix([]usecase.Evidence{{Source: "lightrag", Title: "xlh-abc.txt"}})
+		if got != "\n\n来源：\n- xlh-abc.txt（LightRAG source）" || strings.Contains(got, "/api/admin/") {
+			t.Fatalf("citation suffix=%q", got)
+		}
+	})
+
+	t.Run("sanitizes untrusted title structure", func(t *testing.T) {
+		got := citationSuffix([]usecase.Evidence{{
+			Source: "web",
+			Title:  "Official\r\n- [Fake](https://evil.example)",
+			URL:    "https://good.example/guide",
+		}})
+		const want = "\n\n来源：\n- [Official - \\[Fake\\]\\(https://evil.example\\)](https://good.example/guide)"
+		if got != want {
+			t.Fatalf("citation suffix=%q want=%q", got, want)
+		}
+		if strings.Count(got, "\n- [") != 1 || strings.ContainsAny(got, "\r\t") {
+			t.Fatalf("citation title retained Markdown structure: %q", got)
+		}
+	})
+
+	t.Run("omits credential-bearing URLs", func(t *testing.T) {
+		if got := citationSuffix([]usecase.Evidence{{Title: "secret", URL: "https://user:pass@example.com/guide"}}); got != "" {
+			t.Fatalf("credential-bearing citation=%q", got)
+		}
+	})
+}

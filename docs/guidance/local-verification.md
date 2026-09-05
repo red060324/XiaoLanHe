@@ -10,6 +10,7 @@ Run from the repository root. `Makefile` is the canonical command interface.
 | `make vet` | Go static analysis |
 | `make test` | Go unit/integration tests that need no external service |
 | `make test-race` | Race detector for concurrent/streaming/Agent work |
+| `make eval` | Run the versioned deterministic Assistant baseline/candidate quality and safety gate |
 | `make web-test` | Frontend Vitest behavior tests |
 | `make web-build` | TypeScript and Vite production build |
 | `make architecture` | Clean Architecture import boundary check |
@@ -17,6 +18,9 @@ Run from the repository root. `Makefile` is the canonical command interface.
 | `make verify` | Normal local Go/frontend/architecture gate |
 | `make ci BASE_REF=origin/master` | Full repository CI gate |
 | `make docker-build` | Deployment image build when deployment files change |
+| `make lightrag-static` | Verify the immutable native-store manifest and lifecycle script syntax |
+| `make lightrag-live` | Verify auth, public-health redaction, version, topology, stores and pipeline contract on a running service |
+| `make lightrag-lifecycle` | Explicitly acknowledged isolated real-provider ingest/query/restart/backup/restore/delete gate |
 
 Use an exact package/test first during development:
 
@@ -26,6 +30,9 @@ go test ./internal/assistant/... -run '^TestName$' -count=1
 
 The final pre-merge signal is `make ci` plus GitHub Actions on a clean Linux
 checkout.
+`make lightrag-lifecycle` is intentionally outside routine CI because it performs
+real provider calls and destroys its own disposable test volume. It refuses to run
+without `XLH_LIGHTRAG_LIFECYCLE_ACK=isolated-destructive-test`.
 
 ## Change-To-Check Matrix
 

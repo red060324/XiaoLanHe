@@ -1,0 +1,73 @@
+services:
+  lightrag:
+    image: ghcr.io/hkuds/lightrag:v1.5.7@sha256:5bdbd524931b011df246fe20888d110cef691e6804c12cde636a2b746d7de27e
+    # The image default starts single-process Uvicorn and intentionally ignores
+    # WORKERS>1. Use the official Gunicorn entry point so both configured workers
+    # actually run inside this one (and only one) service replica.
+    command: ["lightrag-gunicorn"]
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    environment:
+      HOST: 0.0.0.0
+      PORT: "9621"
+      WORKERS: "2"
+      WORKSPACE: xiaolanhe_v1
+      WORKING_DIR: /app/data/rag_storage
+      INPUT_DIR: /app/data/inputs
+      LIGHTRAG_API_KEY: ${XLH_LIGHTRAG_API_KEY:?XLH_LIGHTRAG_API_KEY is required}
+      WHITELIST_PATHS: /health
+      ENABLE_API_DOCS: "false"
+      LIGHTRAG_KV_STORAGE: JsonKVStorage
+      LIGHTRAG_VECTOR_STORAGE: NanoVectorDBStorage
+      LIGHTRAG_GRAPH_STORAGE: NetworkXStorage
+      LIGHTRAG_DOC_STATUS_STORAGE: JsonDocStatusStorage
+      MAX_PENDING_DOCUMENTS: "100"
+      # Keep MAX_REQUEST_BODY_BYTES unset. Official 1.5.7 then applies its 1 MiB
+      # ordinary-route limit and separate 50 MiB /documents/text limit. Setting
+      # it globally would shrink ingestion and reject valid escaped JSON payloads.
+      LLM_BINDING: openai
+      LLM_BINDING_HOST: ${XLH_LIGHTRAG_LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      LLM_BINDING_API_KEY: ${XLH_LIGHTRAG_LLM_API_KEY:?XLH_LIGHTRAG_LLM_API_KEY is required}
+      LLM_MODEL: ${XLH_LIGHTRAG_LLM_MODEL:-qwen3.5-flash}
+      EMBEDDING_BINDING: openai
+      EMBEDDING_BINDING_HOST: ${XLH_LIGHTRAG_EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      EMBEDDING_BINDING_API_KEY: ${XLH_LIGHTRAG_EMBEDDING_API_KEY:?XLH_LIGHTRAG_EMBEDDING_API_KEY is required}
+      EMBEDDING_MODEL: ${XLH_LIGHTRAG_EMBEDDING_MODEL:-text-embedding-v4}
+      EMBEDDING_DIM: ${XLH_LIGHTRAG_EMBEDDING_DIM:-1024}
+      RERANK_BINDING: ${XLH_LIGHTRAG_RERANK_BINDING:-null}
+    ports:
+      # Host-run XiaoLanHe can reach LightRAG, while the API remains unreachable
+      # from other hosts. Container deployments should use the private DNS name.
+      - "127.0.0.1:9621:9621"
+    volumes:
+      - xlh-lightrag-data:/app/data/rag_storage
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=3)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+    mem_limit: 2g
+    cpus: 2.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - xlh-private
+
+networks:
+  xlh-private:
+    # No public listener is bound. Normal bridge egress is required for the
+    # configured LLM and embedding APIs.
+    driver: bridge
+
+volumes:
+  xlh-lightrag-data:

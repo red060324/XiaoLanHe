@@ -1,6 +1,6 @@
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
-import ChatMessageList from './components/ChatMessageList';
-import CommercePage from './components/CommercePage';
+import { FormEvent, KeyboardEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import AccountSettings from './components/AccountSettings';
+import CommercePage, { createCommerceIdempotencyKeys } from './components/CommercePage';
 import CommunityPage from './components/CommunityPage';
 import {
   Game,
@@ -21,12 +21,15 @@ import {
   saveConversations
 } from './lib/conversationStore';
 
-type View = 'assistant' | 'discover' | 'community' | 'commerce' | 'account';
-type AuthMode = 'login' | 'register';
+const ChatMessageList = lazy(() => import('./components/ChatMessageList'));
 
-function sanitizeChunk(chunk: string): string {
-  return chunk.replace(/^data:\s?/gm, '');
-}
+type View = 'assistant' | 'discover' | 'community' | 'commerce' | 'orders' | 'account';
+type AuthMode = 'login' | 'register';
+type ActiveStream = {
+  controller: AbortController;
+  conversationId: string;
+  assistantMessageId: string;
+};
 
 function formatPrice(game: Game): string {
 	const price = game.editions?.find((edition) => edition.price)?.price;
@@ -73,22 +76,23 @@ export default function App() {
 	const [username, setUsername] = useState('');
 	const [displayName, setDisplayName] = useState('');
 	const [password, setPassword] = useState('');
+	const [authBusy, setAuthBusy] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversations, setConversations] = useState<ConversationRecord[]>(() => {
     const existing = loadConversations();
     return existing.length > 0 ? existing : [createConversation()];
   });
-  const [activeConversationId, setActiveConversationId] = useState<string>(() => {
-    const existing = loadConversations();
-    return existing[0]?.id ?? createConversation().id;
-  });
+  const [activeConversationId, setActiveConversationId] = useState<string>(() => conversations[0].id);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const conversationStageRef = useRef<HTMLElement | null>(null);
-	const abortRef = useRef<AbortController | null>(null);
+	const activeStreamRef = useRef<ActiveStream | null>(null);
 	const authStateVersionRef = useRef(0);
+	const authRequestPendingRef = useRef<number | null>(null);
 	const catalogRequestRef = useRef(0);
+  const commerceKeysRef = useRef(createCommerceIdempotencyKeys());
+  const commerceKeysOwnerRef = useRef<User['id'] | null>(null);
 
   function navigate(nextView: View) {
     if (view === 'discover' && nextView !== 'discover') {
@@ -110,19 +114,29 @@ export default function App() {
     saveConversations(conversations, user?.id);
   }, [conversations, user?.id]);
 
+  useEffect(() => {
+    const userId = user?.id ?? null;
+    if (commerceKeysOwnerRef.current === userId) return;
+    commerceKeysOwnerRef.current = userId;
+    commerceKeysRef.current.claims.clear();
+    commerceKeysRef.current.orders.clear();
+    commerceKeysRef.current.payments.clear();
+    commerceKeysRef.current.flashSales.clear();
+  }, [user?.id]);
+
 	useEffect(() => {
 		const authStateVersion = authStateVersionRef.current;
 		void getMe().then((nextUser) => {
 			if (authStateVersion !== authStateVersionRef.current) return;
 			setUser(nextUser);
-			switchConversationOwner(nextUser?.id);
+			if (nextUser) switchConversationOwner(nextUser.id);
 		}).catch((requestError) => {
 			if (authStateVersion === authStateVersionRef.current) {
 				setError(requestError instanceof Error ? requestError.message : '账号状态加载失败');
 			}
 		});
 		void loadCatalog('');
-		return () => abortRef.current?.abort();
+		return () => activeStreamRef.current?.controller.abort();
 	}, []);
 
   useEffect(() => {
@@ -132,7 +146,7 @@ export default function App() {
   }, [activeConversation, conversations]);
 
 	useEffect(() => {
-		if (view !== 'commerce') return;
+		if (view !== 'commerce' && view !== 'orders') return;
 		let active = true;
 		setPurchaseGames([]);
 		setError(null);
@@ -167,7 +181,7 @@ export default function App() {
   ]);
 
   function handleNewChat() {
-		abortRef.current?.abort();
+		cancelActiveStream();
 		navigate('assistant');
     const next = createConversation();
     setConversations((current) => [next, ...current]);
@@ -178,7 +192,7 @@ export default function App() {
   }
 
   function switchConversationOwner(userId?: string) {
-		abortRef.current?.abort();
+		cancelActiveStream();
     const existing = loadConversations(userId);
     const next = existing.length > 0 ? existing : [createConversation()];
     setConversations(next);
@@ -188,21 +202,55 @@ export default function App() {
     setLoading(false);
   }
 
+  function cancelActiveStream() {
+    const stream = activeStreamRef.current;
+    activeStreamRef.current = null;
+    stream?.controller.abort();
+    if (stream) {
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === stream.conversationId
+            ? {
+                ...conversation,
+                messages: conversation.messages.map((message) =>
+                  message.id === stream.assistantMessageId && message.content === ''
+                    ? { ...message, content: '已停止生成。' }
+                    : message
+                )
+              }
+            : conversation
+        )
+      );
+    }
+    setLoading(false);
+  }
+
+  function selectConversation(conversationId: string) {
+    cancelActiveStream();
+    if (conversationId === activeConversation?.id) {
+      return;
+    }
+    setActiveConversationId(conversationId);
+    setInput('');
+    setError(null);
+  }
+
   async function submitMessage() {
     const content = input.trim();
     if (!content || loading || !activeConversation) {
       return;
     }
 
+    const localConversationId = activeConversation.id;
     const assistantId = crypto.randomUUID();
     const title =
       activeConversation.messages.length === 0 ? buildConversationTitle(content) : activeConversation.title;
     const now = new Date().toISOString();
-    const resolvedSessionId = activeConversation.sessionId ?? activeConversation.id;
+    const resolvedSessionId = activeConversation.sessionId ?? localConversationId;
 
     setConversations((current) =>
       current.map((conversation) =>
-        conversation.id === activeConversation.id
+        conversation.id === localConversationId
           ? {
               ...conversation,
               title,
@@ -230,25 +278,27 @@ export default function App() {
     setError(null);
     setLoading(true);
 		const controller = new AbortController();
-		abortRef.current = controller;
+		activeStreamRef.current = { controller, conversationId: localConversationId, assistantMessageId: assistantId };
 
     try {
-      await streamChatMessage(
+      const result = await streamChatMessage(
         {
           sessionId: resolvedSessionId,
           message: content
         },
         (chunk) => {
-          const normalizedChunk = sanitizeChunk(chunk);
+          if (controller.signal.aborted || activeStreamRef.current?.controller !== controller) {
+            return;
+          }
           setConversations((current) =>
             current.map((conversation) =>
-              conversation.id === activeConversation.id
+              conversation.id === localConversationId
                 ? {
                     ...conversation,
                     updatedAt: new Date().toISOString(),
                     messages: conversation.messages.map((message) =>
                       message.id === assistantId
-                        ? { ...message, content: message.content + normalizedChunk }
+                        ? { ...message, content: message.content + chunk }
                         : message
                     )
                   }
@@ -258,27 +308,28 @@ export default function App() {
 			},
 			controller.signal
       );
+      const canonicalConversationId = result?.conversationId?.trim();
+      if (canonicalConversationId && !controller.signal.aborted && activeStreamRef.current?.controller === controller) {
+        setConversations((current) =>
+          current.map((conversation) =>
+            conversation.id === localConversationId
+              ? { ...conversation, sessionId: canonicalConversationId }
+              : conversation
+          )
+        );
+      }
     } catch (requestError) {
-		if (requestError instanceof DOMException && requestError.name === 'AbortError') {
-			setConversations((current) =>
-				current.map((conversation) =>
-					conversation.id === activeConversation.id
-						? {
-								...conversation,
-								messages: conversation.messages.map((message) =>
-									message.id === assistantId && message.content === '' ? { ...message, content: '已停止生成。' } : message
-								)
-							}
-						: conversation
-				)
-			);
+		if (controller.signal.aborted || (requestError instanceof DOMException && requestError.name === 'AbortError')) {
 			return;
 		}
+      if (activeStreamRef.current?.controller !== controller) {
+        return;
+      }
       const message = requestError instanceof Error ? requestError.message : '请求失败';
       setError(message);
       setConversations((current) =>
         current.map((conversation) =>
-          conversation.id === activeConversation.id
+          conversation.id === localConversationId
             ? {
                 ...conversation,
                 messages: conversation.messages.map((message) =>
@@ -291,8 +342,8 @@ export default function App() {
         )
       );
     } finally {
-      if (abortRef.current === controller) {
-        abortRef.current = null;
+      if (activeStreamRef.current?.controller === controller) {
+        activeStreamRef.current = null;
         setLoading(false);
       }
     }
@@ -333,7 +384,10 @@ export default function App() {
 
 	async function submitAuth(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		if (authRequestPendingRef.current !== null) return;
 		const authStateVersion = ++authStateVersionRef.current;
+		authRequestPendingRef.current = authStateVersion;
+		setAuthBusy(true);
 		setError(null);
 		try {
 			const nextUser = authMode === 'login' ? await login(username, password) : await register(username, displayName, password);
@@ -346,18 +400,35 @@ export default function App() {
 			if (authStateVersion === authStateVersionRef.current) {
 				setError(requestError instanceof Error ? requestError.message : '认证失败');
 			}
+		} finally {
+			if (authRequestPendingRef.current === authStateVersion) {
+				authRequestPendingRef.current = null;
+				setAuthBusy(false);
+			}
 		}
 	}
 
 	async function signOut() {
+		if (authRequestPendingRef.current !== null) return;
+		const authStateVersion = ++authStateVersionRef.current;
+		authRequestPendingRef.current = authStateVersion;
+		setAuthBusy(true);
+		setError(null);
 		try {
 			await logout();
-			authStateVersionRef.current += 1;
+			if (authStateVersion !== authStateVersionRef.current) return;
 			setUser(null);
 			switchConversationOwner();
 			navigate('assistant');
 		} catch (requestError) {
-			setError(requestError instanceof Error ? requestError.message : '退出登录失败');
+			if (authStateVersion === authStateVersionRef.current) {
+				setError(requestError instanceof Error ? requestError.message : '退出登录失败');
+			}
+		} finally {
+			if (authRequestPendingRef.current === authStateVersion) {
+				authRequestPendingRef.current = null;
+				setAuthBusy(false);
+			}
 		}
 	}
 
@@ -383,24 +454,32 @@ export default function App() {
               <SidebarToggleIcon collapsed={sidebarCollapsed} />
             </button>
           </div>
-          <button className={`nav-item ${view === 'discover' ? 'active' : ''}`} type="button" onClick={() => navigate('discover')}>
-            <span className="nav-icon">⌕</span>{!sidebarCollapsed ? <span>发现游戏</span> : null}
-          </button>
-          <button className={`nav-item ${view === 'community' ? 'active' : ''}`} type="button" onClick={() => navigate('community')}>
-            <span className="nav-icon">◎</span>{!sidebarCollapsed ? <span>游戏社区</span> : null}
-          </button>
-          <button className={`nav-item ${view === 'commerce' ? 'active' : ''}`} type="button" onClick={() => navigate('commerce')}>
-            <span className="nav-icon">%</span>{!sidebarCollapsed ? <span>优惠商店</span> : null}
-          </button>
-          <button className={`nav-item primary ${view === 'assistant' ? 'active' : ''}`} type="button" onClick={handleNewChat}>
-            <span className="nav-icon"><NewChatIcon /></span>{!sidebarCollapsed ? <span>游戏助手</span> : null}
-          </button>
+          <nav className="primary-navigation" aria-label="主要导航">
+            <button className={`nav-item ${view === 'discover' ? 'active' : ''}`} type="button" aria-label="发现游戏" onClick={() => navigate('discover')}>
+              <span className="nav-icon">⌕</span><span className="nav-label">发现游戏</span>
+            </button>
+            <button className={`nav-item ${view === 'community' ? 'active' : ''}`} type="button" aria-label="游戏社区" onClick={() => navigate('community')}>
+              <span className="nav-icon">◎</span><span className="nav-label">游戏社区</span>
+            </button>
+            <button className={`nav-item ${view === 'commerce' ? 'active' : ''}`} type="button" aria-label="优惠商店" onClick={() => navigate('commerce')}>
+              <span className="nav-icon">%</span><span className="nav-label">优惠商店</span>
+            </button>
+            <button className={`nav-item primary ${view === 'assistant' ? 'active' : ''}`} type="button" aria-label="游戏助手" onClick={handleNewChat}>
+              <span className="nav-icon"><NewChatIcon /></span><span className="nav-label">游戏助手</span>
+            </button>
+            <button className={`nav-item ${view === 'orders' ? 'active' : ''}`} type="button" aria-label="我的订单" onClick={() => navigate('orders')}>
+              <span className="nav-icon">▤</span><span className="nav-label">我的订单</span>
+            </button>
+            <button className={`nav-item ${view === 'account' ? 'active' : ''}`} type="button" aria-label="账号" onClick={() => navigate('account')}>
+              <span className="nav-icon">○</span><span className="nav-label">账号</span>
+            </button>
+          </nav>
           {!sidebarCollapsed && view === 'assistant' ? (
             <section className="history-panel">
               <div className="history-title">最近</div>
               <div className="history-list">
                 {conversations.map((conversation) => (
-                  <button key={conversation.id} type="button" className={`history-item ${conversation.id === activeConversation?.id ? 'active' : ''}`} onClick={() => setActiveConversationId(conversation.id)}>
+                  <button key={conversation.id} type="button" className={`history-item ${conversation.id === activeConversation?.id ? 'active' : ''}`} onClick={() => selectConversation(conversation.id)}>
                     <span className="history-item-title">{conversation.title}</span>
                   </button>
                 ))}
@@ -413,7 +492,7 @@ export default function App() {
             <div className="login-card">
               <p className="login-title">{user ? user.displayName : '游客模式'}</p>
               <p className="login-copy">{user ? `@${user.username} · ${user.role}` : '登录后可以领取优惠、购买游戏并查看已拥有内容。'}</p>
-              <button className="login-primary" type="button" onClick={() => user ? void signOut() : navigate('account')}>{user ? '退出登录' : '登录 / 注册'}</button>
+              <button className="login-primary" type="button" disabled={authBusy} onClick={() => user ? void signOut() : navigate('account')}>{user ? '退出登录' : '登录 / 注册'}</button>
             </div>
           </div>
         ) : null}
@@ -421,25 +500,29 @@ export default function App() {
 
       <main className="main-stage">
         <header className="topbar">
-          <div className="topbar-title">{view === 'discover' ? '发现游戏' : view === 'community' ? '游戏社区' : view === 'commerce' ? '优惠商店' : view === 'account' ? '账号' : '游戏助手'}</div>
+          <div className="topbar-title">{view === 'discover' ? '发现游戏' : view === 'community' ? '游戏社区' : view === 'commerce' ? '优惠商店' : view === 'orders' ? '我的订单' : view === 'account' ? '账号' : '游戏助手'}</div>
           <div className="topbar-actions">
             <button className="outline-button" type="button" onClick={() => navigate('discover')}>游戏库</button>
-            <button className="ghost-button" type="button" onClick={() => navigate('account')}>{user?.displayName ?? '登录'}</button>
+            <button className="ghost-button" type="button" aria-label={user?.displayName ?? '打开账号'} onClick={() => navigate('account')}>{user?.displayName ?? '登录'}</button>
           </div>
         </header>
 
         {view === 'assistant' ? (
           <>
             <section className="conversation-stage" ref={conversationStageRef}>
-              {activeConversation?.messages.length ? <ChatMessageList messages={activeConversation.messages} loading={loading} /> : <div className="welcome-block"><h1>想查哪款游戏？</h1><p>攻略、版本信息和社区内容都可以问我。</p></div>}
+              {activeConversation?.messages.length ? (
+                <Suspense fallback={<div className="message-render-loading" role="status">正在加载消息渲染器...</div>}>
+                  <ChatMessageList messages={activeConversation.messages} loading={loading} />
+                </Suspense>
+              ) : <div className="welcome-block"><h1>想查哪款游戏？</h1><p>攻略、版本信息和社区内容都可以问我。</p></div>}
             </section>
             <section className="composer-shell">
               <form className="composer-card" onSubmit={handleSubmit}>
                 <button className="composer-add" type="button" aria-label="打开游戏目录" onClick={() => navigate('discover')}>+</button>
                 <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="问攻略、版本或社区内容" rows={1} />
-                {loading ? <button className="composer-send" type="button" onClick={() => abortRef.current?.abort()}>停止</button> : <button className="composer-send" type="submit" disabled={!canSubmit}>发送</button>}
+                {loading ? <button className="composer-send" type="button" onClick={cancelActiveStream}>停止</button> : <button className="composer-send" type="submit" disabled={!canSubmit}>发送</button>}
               </form>
-              {error ? <div className="error-banner">请求失败：{error}</div> : null}
+              {error ? <div className="error-banner" role="alert">请求失败：{error}</div> : null}
             </section>
           </>
         ) : null}
@@ -450,7 +533,7 @@ export default function App() {
               <label htmlFor="catalog-query">搜索游戏</label>
               <div><input id="catalog-query" value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="游戏名称或标识" /><button type="submit">搜索</button></div>
             </form>
-            {error ? <div className="error-banner">{error}</div> : null}
+            {error ? <div className="error-banner" role="alert">{error}</div> : null}
             {selectedGame ? (
               <article className="game-detail">
                 <button type="button" onClick={() => setSelectedGame(null)}>← 返回目录</button>
@@ -466,19 +549,19 @@ export default function App() {
 
         {view === 'community' ? <CommunityPage user={user} games={games} onRequireLogin={() => navigate('account')} /> : null}
 
-		{view === 'commerce' ? <>{error ? <div className="error-banner">{error}</div> : null}<CommercePage user={user} games={purchaseGames} onRequireLogin={() => navigate('account')} onOwned={() => void loadCatalog(catalogQuery)} /></> : null}
+		{view === 'commerce' || view === 'orders' ? <section className="page-stage commerce-route-stage">{error ? <div className="error-banner" role="alert">{error}</div> : null}<CommercePage initialTab={view === 'orders' ? 'orders' : 'deals'} user={user} games={purchaseGames} idempotencyKeys={commerceKeysRef.current} onRequireLogin={() => navigate('account')} onOwned={() => void loadCatalog(catalogQuery)} onTabChange={(tab) => setView(tab === 'orders' ? 'orders' : 'commerce')} /></section> : null}
 
         {view === 'account' ? (
           <section className="page-stage auth-stage">
-            {user ? <div className="account-card"><h1>{user.displayName}</h1><p>@{user.username}</p><p>角色：{user.role}</p><button type="button" onClick={() => void signOut()}>退出登录</button></div> : (
-              <form className="auth-card" onSubmit={submitAuth}>
+            {user ? <AccountSettings user={user} authBusy={authBusy} onSignOut={() => void signOut()} /> : (
+              <form className="auth-card" aria-busy={authBusy} onSubmit={submitAuth}>
                 <h1>{authMode === 'login' ? '登录小蓝盒' : '注册小蓝盒'}</h1>
                 <label>用户名<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required /></label>
                 {authMode === 'register' ? <label>显示名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label> : null}
                 <label>密码<input type="password" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} minLength={8} maxLength={72} value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
-                <button type="submit">{authMode === 'login' ? '登录' : '创建账号'}</button>
-                <button className="text-button" type="button" onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}>{authMode === 'login' ? '没有账号？立即注册' : '已有账号？返回登录'}</button>
-                {error ? <div className="error-banner">{error}</div> : null}
+                <button type="submit" disabled={authBusy}>{authMode === 'login' ? '登录' : '创建账号'}</button>
+                <button className="text-button" type="button" disabled={authBusy} onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}>{authMode === 'login' ? '没有账号？立即注册' : '已有账号？返回登录'}</button>
+                {error ? <div className="error-banner" role="alert">{error}</div> : null}
               </form>
             )}
           </section>

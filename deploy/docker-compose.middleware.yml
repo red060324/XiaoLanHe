@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: xiaolanhe
+      POSTGRES_USER: xlh
+      POSTGRES_PASSWORD: ${XLH_POSTGRES_PASSWORD:-local-only-change-me}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - xlh-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xlh -d xiaolanhe"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4
+    restart: unless-stopped
+    environment:
+      REDISCLI_AUTH: ${XLH_REDIS_PASSWORD:-local-only-change-me}
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--requirepass", "${XLH_REDIS_PASSWORD:-local-only-change-me}"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - xlh-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  rmqnamesrv:
+    image: apache/rocketmq:5.3.2
+    restart: unless-stopped
+    environment:
+      JAVA_OPT_EXT: "-server -Xms256m -Xmx256m -Xmn128m"
+    command: sh mqnamesrv
+    ports:
+      - "127.0.0.1:9876:9876"
+    volumes:
+      - xlh-rocketmq-namesrv-logs:/home/rocketmq/logs
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin getNamesrvConfig -n 127.0.0.1:9876 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  rmqbroker:
+    image: apache/rocketmq:5.3.2
+    restart: unless-stopped
+    user: "0:0"
+    depends_on:
+      rmqnamesrv:
+        condition: service_healthy
+    environment:
+      NAMESRV_ADDR: rmqnamesrv:9876
+      JAVA_OPT_EXT: "-server -Xms512m -Xmx512m -Xmn256m"
+    command: sh mqbroker -c /home/rocketmq/conf/xlh-broker.conf
+    ports:
+      - "127.0.0.1:10909:10909"
+      - "127.0.0.1:10911:10911"
+      - "127.0.0.1:10912:10912"
+    volumes:
+      - ./rocketmq/broker.conf:/home/rocketmq/conf/xlh-broker.conf:ro
+      - xlh-rocketmq-broker-logs:/home/rocketmq/logs
+      - xlh-rocketmq-store:/home/rocketmq/store
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin brokerStatus -n rmqnamesrv:9876 -b 127.0.0.1:10911 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  xlh-postgres-data:
+  xlh-redis-data:
+  xlh-rocketmq-namesrv-logs:
+  xlh-rocketmq-broker-logs:
+  xlh-rocketmq-store:

@@ -34,7 +34,7 @@ Baseline: `codex/clean-architecture-refactor@f868c6b` plus uncommitted AI Coding
 | D8 | medium | an in-flight stream cannot be aborted when changing/new chat | AbortController and explicit aborted/error message state |
 | D9 | medium | frontend has no test command or component/API tests | add focused Vitest coverage when UI behavior changes |
 | D10 | medium | repository-wide horizontal `internal/usecase` mixes assistant entities, ports, and orchestration | migrate per delivered module; do not big-bang move unrelated code |
-| D11 | low | frontend production build reports several >500KB chunks | lazy-load heavy Markdown/diagram code after functional slices |
+| D11 | low | frontend production build reports several >500KB chunks | resolved for the initial route: lazy-load Streamdown Markdown/diagram code; optional renderer chunks remain deferred |
 | D12 | verification | PostgreSQL/pgvector integration and real-model smoke remain unrun | add reproducible local DB and rollout evidence |
 
 ## Reusable Code
@@ -60,7 +60,10 @@ Baseline: `codex/clean-architecture-refactor@f868c6b` plus uncommitted AI Coding
 
 - The existing full `make ci BASE_REF=origin/master` passed Go vet, all Go
   tests, race tests, architecture/spec hooks, and the frontend production build.
-- The build retained the existing Vite large-chunk warning.
+- The historical baseline build retained the Vite large-chunk warning; the
+  2026-09-04 follow-up moved Streamdown behind a lazy boundary and reduced the
+  initial entry from about 982 kB to 246 kB (about 76 kB gzip). Optional
+  renderer/language chunks remain larger than 500 kB and load on demand.
 - No `.java` file was found.
 - `go test -cover ./...` could not write its temporary coverage build output in
   the restricted sandbox; this is environment evidence, not a code failure.

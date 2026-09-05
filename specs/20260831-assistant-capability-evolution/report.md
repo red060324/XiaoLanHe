@@ -1,6 +1,7 @@
 # Delivery Report
 
-- Status: `DRAFT`
+- Status: `SUPERSEDED`
+- Superseded by: `../20260904-advanced-ai-architecture/report.md`
 - Authoritative spec: `./spec.md`
 
 ## Outcome

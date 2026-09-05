@@ -7,9 +7,23 @@ PostgreSQL instance, but own their behavior and storage access.
 
 ```text
 HTTP / SSE
-  -> Account | Catalog | Community | Promotion | Order | Assistant
-  -> PostgreSQL / pgvector / model / search providers
+  -> Account | Catalog | Community | Promotion | Order | Flash Sale | Assistant | Knowledge
+  -> PostgreSQL / pgvector / Redis / RocketMQ / model / search / official LightRAG
 ```
+
+The optional flash-sale path remains in the same Go deployment but adds a
+Redis-backed admission boundary and RocketMQ-backed asynchronous order path:
+
+```text
+Flash-sale HTTP -> RocketMQ transactional producer -> Redis Lua admission
+  -> RocketMQ at-least-once consumer -> Flash-sale UseCase -> Order UseCase
+  -> PostgreSQL final stock/idempotency guard
+```
+
+Redis is the fast admission and recovery-marker store, not the durable order
+source of truth. RocketMQ delivery is at-least-once; idempotent PostgreSQL
+constraints are the final correctness boundary. Provider types remain inside
+the flash-sale repository adapters.
 
 Start with these modules only when their product behavior exists:
 
@@ -51,34 +65,37 @@ look architectural.
 ```text
 Chat Entry
   -> Chat Presenter
-  -> Chat UseCase
-  -> Router Node
-       DIRECT  -> Answer Node
-       CLARIFY -> Answer Node
-       RESEARCH
-          -> Research Agent (bounded ReAct loop)
-               -> search_knowledge
-               -> search_catalog
-               -> search_forum
-               -> search_web when enabled
-          -> Answer Node with Evidence
-  -> persist conversation
+  -> Chat UseCase -> context(summary + latest 8 + typed profile)
+  -> Router Node -> immutable Skill registry
+       DIRECT / CLARIFY -> Answer Node
+       RESEARCH / PLANNING -> Query Planner Node
+          -> Game Copilot supervisor (maximum 4 transitions)
+               -> Research Agent (bounded ReAct, read-only search tools)
+               -> Planning Agent (bounded read-only catalog/entitlement tools)
+          -> Answer Node with validated evidence and optional plan artifact
+  -> persist complete answer -> best-effort monotonic summary refresh
 ```
 
 Definitions:
 
-- Router Node: one bounded structured-output model call; not an Agent.
+- Router Node and Query Planner Node: bounded structured-output model calls; neither
+  is an Agent.
+- Game Copilot: the supervisor Agent. It selects one legal next action per turn,
+  enforces Research before Planning, prevents duplicate/cyclic delegation and shares
+  one request budget across all children.
 - Research Agent: model-controlled read-only tool loop that observes tool
-  results and may refine its query until it returns `ResearchResult` or reaches
-  its budget.
+  results and returns a typed evidence/facet artifact. In advanced mode its knowledge
+  tool calls official LightRAG; catalog/forum and optional Web remain separate sources.
+- Planning Agent: independently bounded read-only tool loop. It consumes only
+  run-local evidence IDs and typed profile constraints, then revalidates catalog,
+  ownership and price facts before returning a plan artifact.
 - Answer Node: one bounded generation/streaming call; not an Agent.
-- Memory, embedding, RRF and citation formatting are capabilities or
-  deterministic policies, not Agents.
+- Skills, memory, evidence storage and citation formatting are deterministic
+  capabilities, not Agents.
 
-The outer request lifecycle remains deterministic. Eino ADK is an adapter for
-the Research Agent runtime; Eino types remain private to that boundary.
-Catalog and forum search use this same read-only allowlist. They are tools, not
-placeholder Agents or mutation capabilities.
+All supervisor/worker exchanges carry schema version, run ID, sequence and
+Skill identity. Evidence IDs are generated server-side inside one run. Eino types
+remain private to adapter packages.
 
 ## Agent Safety And Lifecycle
 
@@ -89,8 +106,21 @@ placeholder Agents or mutation capabilities.
   per-provider limits.
 - Cancellation propagates from HTTP/SSE to the Agent and every tool.
 - Conversation memory is persisted by business code; it is not process memory.
-- Record route, Agent step, tool, result, latency and fallback reason without
-  logging full prompts, user messages, or secrets.
+- Structured events record route, Skill, Agent role, operation, bounded status,
+  budget counts, latency and fallback reason without logging prompts, messages,
+  answers, profile fields, evidence/document content or secrets.
+
+The process-local metrics registry exports Prometheus text only on `GET /metrics`
+when a separate operator token is configured. Labels use fixed allowlists and never
+contain run/session/user/source identifiers or content. The Eino boundary records
+provider token counts only when the provider returns usage metadata; missing usage is
+reported as unavailable rather than estimated. Application metrics cover Agent,
+model, LightRAG API/storage-contract/pipeline/managed-document, summary behavior,
+and flash-sale admission/transaction/consume/final-guard/recovery/expiry/release.
+Flash-sale labels are fixed enums; request, activity and user IDs remain log-only.
+Volume bytes, host/process memory and filesystem capacity are deployment metrics and
+must be collected by the host or orchestrator. This release does not install a
+runtime OpenTelemetry exporter or emit spans.
 
 The Assistant remains read-only in this project and cannot call Promotion or
 Order mutation UseCases. Coupon claims, orders, and sandbox payments remain
@@ -98,7 +128,15 @@ explicit user actions through ordinary authenticated HTTP flows.
 
 ## Deployment
 
-The HTTP server, ordinary business modules and Assistant Agent run in the same
-Go process. Each user request creates an independent Agent run. A separate
-Agent service is justified only by long-running/background execution,
-independent scaling, unsafe tool isolation, or materially different SLOs.
+The HTTP server, ordinary business modules, optional flash-sale consumer and
+workers, and Assistant Agents run in the same Go process. Official LightRAG is a
+separate Python container because it owns indexing and native knowledge storage.
+It runs as one service replica (two supported workers) with one persistent
+`WORKING_DIR`; a second replica must never share that read-write workspace. Each
+user request creates an independent Agent run.
+
+Business PostgreSQL remains authoritative for accounts, conversations, summaries,
+profiles, catalog, community, promotions and orders. In advanced mode LightRAG is
+the sole knowledge-system record: there is no application projection, ID mapping,
+outbox, dual write or continuous synchronizer. Legacy PostgreSQL knowledge is only a
+disabled-mode baseline and an explicit one-time import source.

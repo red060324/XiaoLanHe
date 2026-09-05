@@ -6,10 +6,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/red060324/XiaoLanHe/internal/order/entity"
 	order "github.com/red060324/XiaoLanHe/internal/order/usecase"
+	promotionentity "github.com/red060324/XiaoLanHe/internal/promotion/entity"
 )
 
 type Store struct{ pool *pgxpool.Pool }
@@ -69,11 +71,14 @@ func (s *Store) Create(ctx context.Context, command order.CreateCommand) (result
 	if owned {
 		return order.CreateResult{}, order.ErrAlreadyOwned
 	}
-	var editionID int64
+	var editionID, currentGameID int64
+	var currentGameSlug, currentGameName, currentEditionCode, currentEditionName string
 	err = tx.QueryRow(ctx, `
-		select e.id from game_edition e join game g on g.id=e.game_id
+		select e.id,e.game_id,g.slug,g.name,e.code,e.name from game_edition e join game g on g.id=e.game_id
 		where e.id=$1 and e.status='active' and g.status='active'
-		for share of g,e`, command.Offer.EditionID).Scan(&editionID)
+		for share of g,e`, command.Offer.EditionID).Scan(
+		&editionID, &currentGameID, &currentGameSlug, &currentGameName, &currentEditionCode, &currentEditionName,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return order.CreateResult{}, order.ErrPriceUnavailable
 	}
@@ -81,29 +86,41 @@ func (s *Store) Create(ctx context.Context, command order.CreateCommand) (result
 		return order.CreateResult{}, err
 	}
 	var currentAmount int64
+	var priceActiveFrom time.Time
+	var priceActiveUntil pgtype.Timestamptz
 	err = tx.QueryRow(ctx, `
-		select amount_minor from game_price
+		select amount_minor,active_from,active_until from game_price
 		where edition_id=$1 and currency=$2 and region_code in ($3,'GLOBAL')
 			and active_from<=$4 and (active_until is null or active_until>$4)
 		order by case when region_code=$3 then 0 else 1 end,active_from desc limit 1
-		for share`, editionID, command.Offer.Currency, command.Offer.Region, command.Now).Scan(&currentAmount)
+		for share`, editionID, command.Offer.Currency, command.Offer.Region, command.Now).Scan(&currentAmount, &priceActiveFrom, &priceActiveUntil)
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && currentAmount != command.Offer.AmountMinor {
 		return order.CreateResult{}, order.ErrPriceUnavailable
 	}
 	if err != nil {
 		return order.CreateResult{}, err
 	}
+	currentDiscount := int64(0)
+	var coupon promotionentity.Coupon
 	if command.Quote.ClaimID > 0 {
 		var claimUserID int64
 		var status string
 		if err := tx.QueryRow(ctx, `
-			select cl.user_id,cl.status
+			select cl.user_id,cl.status,
+				d.id,d.code,d.name,d.discount_type,coalesce(d.fixed_minor,0),coalesce(d.percentage_bps,0),
+				d.currency,d.minimum_minor,d.total_stock,d.claimed_stock,d.per_user_limit,
+				coalesce(d.game_id,0),coalesce(d.edition_id,0),c.status,c.starts_at,c.ends_at
 			from coupon_claim cl
 			join coupon_definition d on d.id=cl.coupon_id
 			join coupon_campaign c on c.id=d.campaign_id
-			where cl.id=$1 and cl.coupon_id=$2 and c.status='active' and c.starts_at<=$3 and c.ends_at>$3
+			where cl.id=$1 and cl.coupon_id=$2
 			for update of cl
-			for share of c`, command.Quote.ClaimID, command.Quote.CouponID, command.Now).Scan(&claimUserID, &status); errors.Is(err, pgx.ErrNoRows) {
+			for share of d,c`, command.Quote.ClaimID, command.Quote.CouponID).Scan(
+			&claimUserID, &status,
+			&coupon.ID, &coupon.Code, &coupon.Name, &coupon.DiscountType, &coupon.FixedMinor, &coupon.PercentageBps,
+			&coupon.Currency, &coupon.MinimumMinor, &coupon.TotalStock, &coupon.ClaimedStock, &coupon.PerUserLimit,
+			&coupon.GameID, &coupon.EditionID, &coupon.CampaignStatus, &coupon.StartsAt, &coupon.EndsAt,
+		); errors.Is(err, pgx.ErrNoRows) {
 			return order.CreateResult{}, order.ErrCouponIneligible
 		} else if err != nil {
 			return order.CreateResult{}, err
@@ -119,16 +136,48 @@ func (s *Store) Create(ctx context.Context, command order.CreateCommand) (result
 			return order.CreateResult{}, order.ErrCouponIneligible
 		}
 	}
+	var effectiveNow time.Time
+	if err := tx.QueryRow(ctx, `select statement_timestamp()`).Scan(&effectiveNow); err != nil {
+		return order.CreateResult{}, err
+	}
+	priceEnded := priceActiveUntil.Valid &&
+		priceActiveUntil.InfinityModifier != pgtype.Infinity &&
+		!effectiveNow.Before(priceActiveUntil.Time)
+	if effectiveNow.Before(priceActiveFrom) || priceEnded {
+		return order.CreateResult{}, order.ErrPriceUnavailable
+	}
+	if command.Quote.ClaimID > 0 {
+		if err := coupon.ValidateUse(effectiveNow); err != nil {
+			return order.CreateResult{}, order.ErrCouponIneligible
+		}
+		currentDiscount, err = coupon.Discount(currentAmount, command.Offer.Currency, currentGameID, editionID)
+		if err != nil {
+			return order.CreateResult{}, order.ErrCouponIneligible
+		}
+	}
+	currentTotal, err := entity.CalculateTotals(currentAmount, currentDiscount)
+	if err != nil {
+		if command.Quote.ClaimID > 0 {
+			return order.CreateResult{}, order.ErrCouponIneligible
+		}
+		return order.CreateResult{}, order.ErrPriceUnavailable
+	}
+	if currentDiscount != command.Quote.DiscountMinor || currentTotal != command.TotalMinor {
+		if command.Quote.ClaimID > 0 {
+			return order.CreateResult{}, order.ErrCouponIneligible
+		}
+		return order.CreateResult{}, order.ErrPriceUnavailable
+	}
 	var orderID int64
 	if err := tx.QueryRow(ctx, `
 		insert into purchase_order(order_no,user_id,status,currency,region_code,subtotal_minor,discount_minor,total_minor,coupon_claim_id,idempotency_key,created_at,updated_at)
 		values ($1,$2,'pending_payment',$3,$4,$5,$6,$7,nullif($8,0),$9,$10,$10) returning id`,
-		command.OrderNo, command.UserID, command.Offer.Currency, command.Offer.Region, command.Offer.AmountMinor, command.Quote.DiscountMinor, command.TotalMinor, command.Quote.ClaimID, command.IdempotencyKey, command.Now).Scan(&orderID); err != nil {
+		command.OrderNo, command.UserID, command.Offer.Currency, command.Offer.Region, currentAmount, currentDiscount, currentTotal, command.Quote.ClaimID, command.IdempotencyKey, effectiveNow).Scan(&orderID); err != nil {
 		return order.CreateResult{}, err
 	}
 	if _, err := tx.Exec(ctx, `
 		insert into purchase_order_item(order_id,edition_id,game_id,game_slug_snapshot,game_name_snapshot,edition_code_snapshot,edition_name_snapshot,unit_price_minor,quantity)
-		values ($1,$2,$3,$4,$5,$6,$7,$8,1)`, orderID, command.Offer.EditionID, command.Offer.GameID, command.Offer.GameSlug, command.Offer.GameName, command.Offer.EditionCode, command.Offer.EditionName, command.Offer.AmountMinor); err != nil {
+		values ($1,$2,$3,$4,$5,$6,$7,$8,1)`, orderID, editionID, currentGameID, currentGameSlug, currentGameName, currentEditionCode, currentEditionName, currentAmount); err != nil {
 		return order.CreateResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -136,6 +185,85 @@ func (s *Store) Create(ctx context.Context, command order.CreateCommand) (result
 	}
 	created, err := s.Get(ctx, command.OrderNo)
 	return order.CreateResult{Order: created}, err
+}
+
+func (s *Store) CreateFromFlashSale(ctx context.Context, command order.FlashSaleCreateCommand) (result order.CreateResult, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return order.CreateResult{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx, `select pg_advisory_xact_lock($1)`, command.UserID); err != nil {
+		return order.CreateResult{}, err
+	}
+	existing, err := queryOrder(ctx, tx, `o.source_type='flash_sale' and o.source_reference=$1`, command.RequestID)
+	if err == nil {
+		if existing.UserID != command.UserID || existing.Item.EditionID != command.Offer.EditionID ||
+			existing.Currency != command.Offer.Currency || existing.Item.Region != command.Offer.Region ||
+			existing.SubtotalMinor != command.SalePriceMinor || existing.DiscountMinor != 0 ||
+			existing.TotalMinor != command.SalePriceMinor || existing.Item.UnitPriceMinor != command.SalePriceMinor ||
+			!existing.PaymentExpiresAt.Equal(command.PaymentExpiresAt) {
+			return order.CreateResult{}, order.ErrIdempotencyConflict
+		}
+		return order.CreateResult{Order: existing, Replayed: true}, nil
+	}
+	if !errors.Is(err, order.ErrNotFound) {
+		return order.CreateResult{}, err
+	}
+	var owned bool
+	if err := tx.QueryRow(ctx, `select exists(select 1 from game_entitlement where user_id=$1 and edition_id=$2 and status='active')`, command.UserID, command.Offer.EditionID).Scan(&owned); err != nil {
+		return order.CreateResult{}, err
+	}
+	if owned {
+		return order.CreateResult{}, order.ErrAlreadyOwned
+	}
+	var offer catalogSnapshot
+	if err := tx.QueryRow(ctx, `
+		select e.id,e.game_id,g.slug,g.name,e.code,e.name
+		from game_edition e join game g on g.id=e.game_id
+		where e.id=$1 and e.status='active' and g.status='active'
+		for share of g,e`, command.Offer.EditionID).Scan(
+		&offer.EditionID, &offer.GameID, &offer.GameSlug, &offer.GameName, &offer.EditionCode, &offer.EditionName,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return order.CreateResult{}, order.ErrPriceUnavailable
+	} else if err != nil {
+		return order.CreateResult{}, err
+	}
+	var effectiveNow time.Time
+	if err := tx.QueryRow(ctx, `select statement_timestamp()`).Scan(&effectiveNow); err != nil {
+		return order.CreateResult{}, err
+	}
+	if command.SalePriceMinor < 0 || !effectiveNow.Before(command.PaymentExpiresAt) {
+		return order.CreateResult{}, order.ErrPriceUnavailable
+	}
+	var orderID int64
+	if err := tx.QueryRow(ctx, `
+		insert into purchase_order(
+			order_no,user_id,status,currency,region_code,subtotal_minor,discount_minor,total_minor,
+			coupon_claim_id,idempotency_key,source_type,source_reference,payment_expires_at,created_at,updated_at
+		) values ($1,$2,'pending_payment',$3,$4,$5,0,$5,null,$6,'flash_sale',$6,$7,$8,$8)
+		returning id`, command.OrderNo, command.UserID, command.Offer.Currency, command.Offer.Region,
+		command.SalePriceMinor, command.RequestID, command.PaymentExpiresAt, effectiveNow).Scan(&orderID); err != nil {
+		return order.CreateResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into purchase_order_item(
+			order_id,edition_id,game_id,game_slug_snapshot,game_name_snapshot,edition_code_snapshot,
+			edition_name_snapshot,unit_price_minor,quantity
+		) values ($1,$2,$3,$4,$5,$6,$7,$8,1)`, orderID, offer.EditionID, offer.GameID,
+		offer.GameSlug, offer.GameName, offer.EditionCode, offer.EditionName, command.SalePriceMinor); err != nil {
+		return order.CreateResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return order.CreateResult{}, err
+	}
+	created, err := s.Get(ctx, command.OrderNo)
+	return order.CreateResult{Order: created}, err
+}
+
+type catalogSnapshot struct {
+	EditionID, GameID                            int64
+	GameSlug, GameName, EditionCode, EditionName string
 }
 
 func (s *Store) Pay(ctx context.Context, command order.PayCommand) (result order.PayResult, err error) {
@@ -155,16 +283,22 @@ func (s *Store) Pay(ctx context.Context, command order.PayCommand) (result order
 		return order.PayResult{}, err
 	}
 	var current entity.Order
+	var currentPaymentExpiresAt *time.Time
 	err = tx.QueryRow(ctx, `
 		select o.id,o.order_no,o.user_id,o.status,o.currency,o.subtotal_minor,o.discount_minor,o.total_minor,coalesce(o.coupon_claim_id,0),
 			i.edition_id,i.game_id,i.game_slug_snapshot,i.game_name_snapshot,i.edition_code_snapshot,i.edition_name_snapshot,i.unit_price_minor,o.region_code,
+			o.source_type,coalesce(o.source_reference,''),o.payment_expires_at,
 			o.created_at,o.updated_at
 		from purchase_order o join purchase_order_item i on i.order_id=o.id
 		where o.order_no=$1 for update of o`, command.OrderNo).Scan(
 		&current.ID, &current.OrderNo, &current.UserID, &current.Status, &current.Currency, &current.SubtotalMinor, &current.DiscountMinor, &current.TotalMinor, &current.CouponClaimID,
 		&current.Item.EditionID, &current.Item.GameID, &current.Item.GameSlug, &current.Item.GameName, &current.Item.EditionCode, &current.Item.EditionName, &current.Item.UnitPriceMinor, &current.Item.Region,
+		&current.SourceType, &current.SourceReference, &currentPaymentExpiresAt,
 		&current.CreatedAt, &current.UpdatedAt,
 	)
+	if currentPaymentExpiresAt != nil {
+		current.PaymentExpiresAt = *currentPaymentExpiresAt
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return order.PayResult{}, order.ErrNotFound
 	}
@@ -183,7 +317,11 @@ func (s *Store) Pay(ctx context.Context, command order.PayCommand) (result order
 			return order.PayResult{}, replayErr
 		}
 	}
-	if err := current.ValidatePay(); err != nil {
+	var effectiveNow time.Time
+	if err := tx.QueryRow(ctx, `select statement_timestamp()`).Scan(&effectiveNow); err != nil {
+		return order.PayResult{}, err
+	}
+	if err := current.ValidatePayAt(effectiveNow); err != nil {
 		return order.PayResult{}, err
 	}
 	if current.CouponClaimID > 0 {
@@ -198,16 +336,16 @@ func (s *Store) Pay(ctx context.Context, command order.PayCommand) (result order
 	var paymentID int64
 	if err := tx.QueryRow(ctx, `
 		insert into payment_record(order_id,provider,provider_reference,status,amount_minor,idempotency_key,metadata,created_at,updated_at)
-		values ($1,'sandbox',$2,'paid',$3,$4,'{}'::jsonb,$5,$5) returning id`, current.ID, command.ProviderReference, current.TotalMinor, command.IdempotencyKey, command.Now).Scan(&paymentID); err != nil {
+		values ($1,'sandbox',$2,'paid',$3,$4,'{}'::jsonb,$5,$5) returning id`, current.ID, command.ProviderReference, current.TotalMinor, command.IdempotencyKey, effectiveNow).Scan(&paymentID); err != nil {
 		return order.PayResult{}, err
 	}
-	if _, err := tx.Exec(ctx, `update purchase_order set status='paid',updated_at=$2 where id=$1`, current.ID, command.Now); err != nil {
+	if _, err := tx.Exec(ctx, `update purchase_order set status='paid',updated_at=$2 where id=$1`, current.ID, effectiveNow); err != nil {
 		return order.PayResult{}, err
 	}
 	tag, err := tx.Exec(ctx, `
 		insert into game_entitlement(user_id,edition_id,source_order_id,status,granted_at)
 		values ($1,$2,$3,'active',$4)
-		on conflict (user_id,edition_id) where status='active' do nothing`, current.UserID, current.Item.EditionID, current.ID, command.Now)
+		on conflict (user_id,edition_id) where status='active' do nothing`, current.UserID, current.Item.EditionID, current.ID, effectiveNow)
 	if err != nil {
 		return order.PayResult{}, err
 	}
@@ -225,6 +363,7 @@ const orderSelect = `
 	select o.id,o.order_no,o.user_id,o.status,o.currency,o.subtotal_minor,o.discount_minor,o.total_minor,coalesce(o.coupon_claim_id,0),
 		i.edition_id,i.game_id,i.game_slug_snapshot,i.game_name_snapshot,i.edition_code_snapshot,i.edition_name_snapshot,i.unit_price_minor,o.region_code,
 		p.id,p.provider,p.provider_reference,p.status,p.amount_minor,p.created_at,
+		o.source_type,coalesce(o.source_reference,''),o.payment_expires_at,
 		o.created_at,o.updated_at
 	from purchase_order o
 	join purchase_order_item i on i.order_id=o.id
@@ -258,12 +397,17 @@ func scanOrder(row scanner) (entity.Order, error) {
 	var provider, reference, paymentStatus *string
 	var paymentAmount *int64
 	var paymentCreated *time.Time
+	var paymentExpiresAt *time.Time
 	err := row.Scan(
 		&item.ID, &item.OrderNo, &item.UserID, &item.Status, &item.Currency, &item.SubtotalMinor, &item.DiscountMinor, &item.TotalMinor, &item.CouponClaimID,
 		&item.Item.EditionID, &item.Item.GameID, &item.Item.GameSlug, &item.Item.GameName, &item.Item.EditionCode, &item.Item.EditionName, &item.Item.UnitPriceMinor, &item.Item.Region,
 		&paymentID, &provider, &reference, &paymentStatus, &paymentAmount, &paymentCreated,
+		&item.SourceType, &item.SourceReference, &paymentExpiresAt,
 		&item.CreatedAt, &item.UpdatedAt,
 	)
+	if paymentExpiresAt != nil {
+		item.PaymentExpiresAt = *paymentExpiresAt
+	}
 	if err == nil && paymentID != nil {
 		item.Payment = &entity.Payment{ID: *paymentID, Provider: *provider, ProviderReference: *reference, Status: *paymentStatus, AmountMinor: *paymentAmount, CreatedAt: *paymentCreated}
 	}

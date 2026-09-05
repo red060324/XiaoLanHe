@@ -1,23 +1,65 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
+  APIError,
   CouponClaim,
   Deal,
+  FlashSale,
+  FlashSaleRequest,
   Game,
   Order,
   User,
   claimCoupon,
   createOrder,
+  getFlashSaleRequest,
   listCouponClaims,
   listDeals,
+  listFlashSales,
   listOrders,
-  payOrder
+  payOrder,
+  reserveFlashSale
 } from '../lib/api';
+
+type CommerceTab = 'deals' | 'orders';
 
 type Props = {
   user: User | null;
   games: Game[];
   onRequireLogin: () => void;
   onOwned: () => void;
+  idempotencyKeys?: CommerceIdempotencyKeys;
+  initialTab?: CommerceTab;
+  onTabChange?: (tab: CommerceTab) => void;
+};
+
+export type CommerceIdempotencyKeys = {
+  claims: Map<string, string>;
+  orders: Map<string, string>;
+  payments: Map<string, string>;
+  flashSales: Map<string, string>;
+};
+
+export function createCommerceIdempotencyKeys(): CommerceIdempotencyKeys {
+  return {
+    claims: new Map(),
+    orders: new Map(),
+    payments: new Map(),
+    flashSales: new Map()
+  };
+}
+
+const FLASH_SALE_POLL_ATTEMPTS = 20;
+const FLASH_SALE_POLL_INTERVAL_MS = 1000;
+
+type RequestOwner = {
+  userId: User['id'] | null;
+  userGeneration: number;
+  tab: CommerceTab;
+  tabGeneration: number;
+};
+
+type ClaimReconciliation = {
+  add?: CouponClaim;
+  removeId?: CouponClaim['id'];
 };
 
 function key(prefix: string): string {
@@ -34,8 +76,187 @@ function describeDeal(deal: Deal): string {
     : `减 ${money(deal.fixedMinor!, deal.currency)}`;
 }
 
-export default function CommercePage({ user, games, onRequireLogin, onOwned }: Props) {
-  const [tab, setTab] = useState<'deals' | 'orders'>('deals');
+function deleteMatchingKey(keys: Map<string, string>, identity: string, requestKey: string): void {
+  if (keys.get(identity) === requestKey) keys.delete(identity);
+}
+
+function isFlashSaleTerminal(status: FlashSaleRequest['status']): boolean {
+  return status === 'order_ready' || status === 'failed' || status === 'expired';
+}
+
+function waitForPoll(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(resolve, FLASH_SALE_POLL_INTERVAL_MS);
+    signal.addEventListener('abort', () => {
+      window.clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }, { once: true });
+  });
+}
+
+function flashSaleStatus(request: FlashSaleRequest): string {
+  switch (request.status) {
+    case 'queued': return '已排队，等待订单服务处理';
+    case 'processing': return '库存已锁定，正在创建订单';
+    case 'order_ready': return '抢购成功，订单已创建';
+    case 'expired': return '订单已超时，库存已释放';
+    case 'failed': return '抢购未完成，库存将自动释放';
+  }
+}
+
+function availabilityLabel(activity: FlashSale): string {
+  switch (activity.availability) {
+    case 'upcoming': return '即将开始';
+    case 'available': return '立即抢购';
+    case 'exhausted': return '已抢完';
+    case 'cancelled': return '已取消';
+    case 'ended': return '已结束';
+    default: return '暂不可用';
+  }
+}
+
+type FlashSaleSectionProps = {
+  user: User | null;
+  requestKeys: Map<string, string>;
+  onRequireLogin: () => void;
+  onOpenOrders: () => void;
+};
+
+function FlashSaleSection({ user, requestKeys, onRequireLogin, onOpenOrders }: FlashSaleSectionProps) {
+  const [activities, setActivities] = useState<FlashSale[]>([]);
+  const [requests, setRequests] = useState<Record<string, FlashSaleRequest>>({});
+  const [busyActivity, setBusyActivity] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const pollController = useRef<AbortController | null>(null);
+  const ownerGeneration = useRef(0);
+  const userId = user?.id ?? null;
+
+  useEffect(() => {
+    let current = true;
+    void listFlashSales().then((page) => {
+      if (current) setActivities(page.items);
+    }).catch((requestError) => {
+      if (!current) return;
+      if (requestError instanceof APIError && requestError.status === 404) {
+        setActivities([]);
+        return;
+      }
+      setError(message(requestError, '限时抢购加载失败'));
+    });
+    return () => { current = false; };
+  }, []);
+
+  useLayoutEffect(() => {
+    ownerGeneration.current++;
+    pollController.current?.abort();
+    pollController.current = null;
+    setRequests({});
+    setBusyActivity('');
+    setError(null);
+  }, [userId]);
+
+  useEffect(() => () => {
+    ownerGeneration.current++;
+    pollController.current?.abort();
+  }, []);
+
+  async function poll(activity: FlashSale, initial: FlashSaleRequest, requestKey: string, generation: number) {
+    const controller = new AbortController();
+    pollController.current?.abort();
+    pollController.current = controller;
+    let current = initial;
+    try {
+      for (let attempt = 0; attempt < FLASH_SALE_POLL_ATTEMPTS && !isFlashSaleTerminal(current.status); attempt++) {
+        if (attempt > 0) await waitForPoll(controller.signal);
+        try {
+          current = await getFlashSaleRequest(initial.requestId, controller.signal);
+          if (generation !== ownerGeneration.current || controller.signal.aborted) return;
+          setRequests((existing) => ({ ...existing, [activity.id]: current }));
+        } catch (requestError) {
+          if (controller.signal.aborted) return;
+          if (attempt === FLASH_SALE_POLL_ATTEMPTS - 1) throw requestError;
+        }
+      }
+      if (generation !== ownerGeneration.current || controller.signal.aborted) return;
+      if (isFlashSaleTerminal(current.status)) {
+        deleteMatchingKey(requestKeys, activity.id, requestKey);
+      } else {
+        setError('状态查询已暂停，可使用原请求继续查询。');
+      }
+    } catch (requestError) {
+      if (generation === ownerGeneration.current && !controller.signal.aborted) {
+        setError(message(requestError, '状态查询失败，可稍后继续查询'));
+      }
+    } finally {
+      if (pollController.current === controller) pollController.current = null;
+      if (generation === ownerGeneration.current) {
+        setBusyActivity((currentBusy) => currentBusy === activity.id ? '' : currentBusy);
+      }
+    }
+  }
+
+  async function reserve(activity: FlashSale) {
+    if (!user) {
+      onRequireLogin();
+      return;
+    }
+    const generation = ownerGeneration.current;
+    const requestKey = requestKeys.get(activity.id) ?? key('flash-sale');
+    requestKeys.set(activity.id, requestKey);
+    setBusyActivity(activity.id);
+    setError(null);
+    try {
+      const result = await reserveFlashSale(activity.id, requestKey);
+      if (generation !== ownerGeneration.current) return;
+      setRequests((existing) => ({ ...existing, [activity.id]: result.request }));
+      if (isFlashSaleTerminal(result.request.status)) {
+        deleteMatchingKey(requestKeys, activity.id, requestKey);
+        setBusyActivity('');
+        return;
+      }
+      await poll(activity, result.request, requestKey, generation);
+    } catch (requestError) {
+      if (generation === ownerGeneration.current) {
+        setError(message(requestError, '抢购请求失败，请使用原请求重试'));
+        setBusyActivity('');
+      }
+    }
+  }
+
+  if (activities.length === 0 && error === null) return null;
+
+  return <section className="flash-sale-section" aria-labelledby="flash-sale-heading">
+    <div className="flash-sale-title"><div><small>FLASH SALE</small><h2 id="flash-sale-heading">限时抢购</h2></div><p>Redis 原子锁定库存，订单异步创建。</p></div>
+    {error ? <div className="error-banner" role="alert">{error}</div> : null}
+    <div className="flash-sale-grid">
+      {activities.map((activity) => {
+        const request = requests[activity.id];
+        const canReserve = activity.availability === 'available' && !isFlashSaleTerminal(request?.status ?? 'queued');
+        return <article className="flash-sale-card" key={activity.id}>
+          <div><small>{activity.code}</small><h3>{activity.gameName}</h3><p>{activity.editionName} · {money(activity.salePriceMinor, activity.currency)}</p></div>
+          <p className={`flash-sale-availability ${activity.availability}`}>{availabilityLabel(activity)}</p>
+          {request ? <p className={`flash-sale-request ${request.status}`} aria-live="polite">{flashSaleStatus(request)}</p> : null}
+          {request?.status === 'order_ready' ? <button type="button" onClick={onOpenOrders}>查看订单</button> : <button
+            type="button"
+            disabled={busyActivity !== '' || !canReserve}
+            onClick={() => void reserve(activity)}
+          >{busyActivity === activity.id ? '处理中…' : request && !isFlashSaleTerminal(request.status) ? '继续查询' : availabilityLabel(activity)}</button>}
+        </article>;
+      })}
+    </div>
+  </section>;
+}
+
+export default function CommercePage({
+  user,
+  games,
+  onRequireLogin,
+  onOwned,
+  idempotencyKeys,
+  initialTab = 'deals',
+  onTabChange
+}: Props) {
+  const [tab, setTab] = useState<CommerceTab>(initialTab);
   const [gameId, setGameId] = useState('');
   const [deals, setDeals] = useState<Deal[]>([]);
   const [claims, setClaims] = useState<CouponClaim[]>([]);
@@ -43,62 +264,162 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
   const [orders, setOrders] = useState<Order[]>([]);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const claimKeys = useRef(new Map<string, string>());
-  const orderKeys = useRef(new Map<string, string>());
-  const paymentKeys = useRef(new Map<string, string>());
+  const localIdempotencyKeys = useRef<CommerceIdempotencyKeys | null>(null);
+  if (localIdempotencyKeys.current === null) {
+    localIdempotencyKeys.current = createCommerceIdempotencyKeys();
+  }
+  const operationKeys = idempotencyKeys ?? localIdempotencyKeys.current;
   const dealRequest = useRef(0);
   const claimRequest = useRef(0);
   const orderRequest = useRef(0);
+  const claimsLoadedFor = useRef<User['id'] | null>(null);
+  const userOwner = useRef({ id: user?.id ?? null, generation: 0 });
+  const tabOwner = useRef({ tab, generation: 0 });
+  const initialTabOwner = useRef(initialTab);
+  const userId = user?.id ?? null;
 
-  useEffect(() => {
-    void loadDeals();
-  }, [gameId]);
-
-  useEffect(() => {
-    if (tab === 'orders' && user) void loadOrderHistory();
-  }, [tab, user]);
-
-  useEffect(() => {
-    const request = ++claimRequest.current;
-    if (!user) {
-      setClaims([]);
-      setSelectedClaimId('');
-      return;
+  useLayoutEffect(() => {
+    const userChanged = userOwner.current.id !== userId;
+    if (userChanged) {
+      userOwner.current = { id: userId, generation: userOwner.current.generation + 1 };
+      operationKeys.claims.clear();
+      operationKeys.orders.clear();
+      operationKeys.payments.clear();
+      operationKeys.flashSales.clear();
     }
-    void loadClaims(request);
-  }, [user]);
+    dealRequest.current++;
+    claimRequest.current++;
+    orderRequest.current++;
+    claimsLoadedFor.current = null;
+    setDeals([]);
+    setClaims([]);
+    setSelectedClaimId('');
+    setOrders([]);
+    setBusy('');
+    setError(null);
+  }, [userId]);
 
-  async function loadDeals() {
+  useLayoutEffect(() => () => {
+    userOwner.current = {
+      id: userOwner.current.id,
+      generation: userOwner.current.generation + 1
+    };
+    tabOwner.current = {
+      tab: tabOwner.current.tab,
+      generation: tabOwner.current.generation + 1
+    };
+    dealRequest.current++;
+    claimRequest.current++;
+    orderRequest.current++;
+    claimsLoadedFor.current = null;
+  }, []);
+
+  useLayoutEffect(() => {
+    if (initialTabOwner.current === initialTab) return;
+    initialTabOwner.current = initialTab;
+    changeTab(initialTab, false);
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (tab === 'deals') void loadDeals(requestOwner('deals'));
+  }, [gameId, tab, userId]);
+
+  useEffect(() => {
+    if (tab === 'orders' && userId !== null) void loadOrderHistory(requestOwner('orders'));
+  }, [tab, userId]);
+
+  useEffect(() => {
+    if (tab !== 'deals' || userId === null || claimsLoadedFor.current === userId) return;
+    const request = ++claimRequest.current;
+    void loadClaims(request, requestOwner('deals'));
+  }, [tab, userId]);
+
+  function requestOwner(expectedTab: CommerceTab): RequestOwner {
+    return {
+      userId: userOwner.current.id,
+      userGeneration: userOwner.current.generation,
+      tab: expectedTab,
+      tabGeneration: tabOwner.current.generation
+    };
+  }
+
+  function ownsRequest(owner: RequestOwner): boolean {
+    return ownsUserRequest(owner)
+      && owner.tab === tabOwner.current.tab
+      && owner.tabGeneration === tabOwner.current.generation;
+  }
+
+  function ownsUserRequest(owner: RequestOwner): boolean {
+    return owner.userId === userOwner.current.id
+      && owner.userGeneration === userOwner.current.generation;
+  }
+
+  function changeTab(nextTab: CommerceTab, notify = true) {
+    if (tabOwner.current.tab === nextTab) return;
+    tabOwner.current = { tab: nextTab, generation: tabOwner.current.generation + 1 };
+    dealRequest.current++;
+    claimRequest.current++;
+    orderRequest.current++;
+    setBusy('');
+    setError(null);
+    setTab(nextTab);
+    if (notify) onTabChange?.(nextTab);
+  }
+
+  async function loadDeals(owner: RequestOwner) {
+    if (!ownsRequest(owner)) return;
     const request = ++dealRequest.current;
     try {
       setError(null);
       const page = await listDeals(gameId);
-      if (request === dealRequest.current) setDeals(page.items);
+      if (ownsRequest(owner) && request === dealRequest.current) setDeals(page.items);
     } catch (requestError) {
-      if (request === dealRequest.current) setError(message(requestError, '优惠加载失败'));
+      if (ownsRequest(owner) && request === dealRequest.current) setError(message(requestError, '优惠加载失败'));
     }
   }
 
-  async function loadOrderHistory() {
+  async function loadOrderHistory(owner: RequestOwner) {
+    if (!ownsRequest(owner)) return;
     const request = ++orderRequest.current;
     try {
       setError(null);
       const page = await listOrders();
-      if (request === orderRequest.current) setOrders(page.items);
+      if (ownsRequest(owner) && request === orderRequest.current) setOrders(page.items);
     } catch (requestError) {
-      if (request === orderRequest.current) setError(message(requestError, '订单加载失败'));
+      if (ownsRequest(owner) && request === orderRequest.current) setError(message(requestError, '订单加载失败'));
     }
   }
 
-  async function loadClaims(request: number) {
+  async function loadClaims(request: number, owner: RequestOwner, reconciliation?: ClaimReconciliation) {
     try {
       const page = await listCouponClaims();
-      if (request !== claimRequest.current) return;
-      setClaims(page.items);
-      setSelectedClaimId((current) => page.items.some((claim) => claim.id === current) ? current : '');
+      if (!ownsRequest(owner) || request !== claimRequest.current) return;
+      claimsLoadedFor.current = owner.userId;
+      if (reconciliation) {
+        setClaims(() => {
+          const merged = new Map(page.items.map((claim) => [claim.id, claim]));
+          if (reconciliation.add) merged.set(reconciliation.add.id, reconciliation.add);
+          if (reconciliation.removeId) merged.delete(reconciliation.removeId);
+          return [...merged.values()];
+        });
+        if (reconciliation.removeId) {
+          setSelectedClaimId((current) => current === reconciliation.removeId ? '' : current);
+        }
+      } else {
+        setClaims(page.items);
+        setSelectedClaimId((current) => page.items.some((claim) => claim.id === current) ? current : '');
+      }
     } catch (requestError) {
-      if (request === claimRequest.current) setError(message(requestError, '优惠券加载失败'));
+      if (!reconciliation && ownsRequest(owner) && request === claimRequest.current) {
+        setError(message(requestError, '优惠券加载失败'));
+      }
     }
+  }
+
+  function refreshClaims(owner: RequestOwner, reconciliation: ClaimReconciliation) {
+    claimsLoadedFor.current = null;
+    const request = ++claimRequest.current;
+    void loadClaims(request, owner, reconciliation);
   }
 
   async function claim(deal: Deal) {
@@ -106,23 +427,31 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
       onRequireLogin();
       return;
     }
-    setBusy(`claim:${deal.code}`);
+    const owner = requestOwner('deals');
+    const selectionAtStart = selectedClaimId;
+    const busyKey = `claim:${deal.code}`;
+    setBusy(busyKey);
     setError(null);
-    const requestKey = claimKeys.current.get(deal.code) ?? key('claim');
-    claimKeys.current.set(deal.code, requestKey);
+    const requestKey = operationKeys.claims.get(deal.code) ?? key('claim');
+    operationKeys.claims.set(deal.code, requestKey);
     try {
       const result = await claimCoupon(deal.code, requestKey);
-      claimKeys.current.delete(deal.code);
-      claimRequest.current++;
+      if (!ownsUserRequest(owner)) return;
+      deleteMatchingKey(operationKeys.claims, deal.code, requestKey);
+      if (!ownsRequest(owner)) {
+        claimsLoadedFor.current = null;
+        return;
+      }
       setClaims((current) => current.some((item) => item.id === result.claim.id) ? current : [...current, result.claim]);
-      setSelectedClaimId(result.claim.id);
+      setSelectedClaimId((current) => current === selectionAtStart ? result.claim.id : current);
       setDeals((current) => current.map((item) => item.code === deal.code && item.viewerClaimCount < item.perUserLimit
         ? { ...item, remainingStock: Math.max(0, item.remainingStock - 1), viewerClaimCount: item.viewerClaimCount + 1 }
         : item));
+      refreshClaims(owner, { add: result.claim });
     } catch (requestError) {
-      setError(message(requestError, '领取失败，请重试'));
+      if (ownsRequest(owner)) setError(message(requestError, '领取失败，请重试'));
     } finally {
-      setBusy('');
+      if (ownsRequest(owner)) setBusy((current) => current === busyKey ? '' : current);
     }
   }
 
@@ -132,63 +461,76 @@ export default function CommercePage({ user, games, onRequireLogin, onOwned }: P
       return;
     }
     if (!edition.price) return;
-    const requestIdentity = `${edition.id}:${edition.price.region}:${edition.price.currency}:${selectedClaimId}`;
-    const requestKey = orderKeys.current.get(requestIdentity) ?? key('order');
-    orderKeys.current.set(requestIdentity, requestKey);
-    setBusy(`order:${edition.id}`);
+    const owner = requestOwner('deals');
+    const claimId = selectedClaimId;
+    const busyKey = `order:${edition.id}`;
+    const requestIdentity = `${edition.id}:${edition.price.region}:${edition.price.currency}:${claimId}`;
+    const requestKey = operationKeys.orders.get(requestIdentity) ?? key('order');
+    operationKeys.orders.set(requestIdentity, requestKey);
+    setBusy(busyKey);
     setError(null);
     try {
       const result = await createOrder({
         editionId: edition.id,
         region: edition.price.region,
         currency: edition.price.currency,
-        ...(selectedClaimId ? { couponClaimId: selectedClaimId } : {})
+        ...(claimId ? { couponClaimId: claimId } : {})
       }, requestKey);
-      orderKeys.current.delete(requestIdentity);
-      if (selectedClaimId) {
-        claimRequest.current++;
-        setClaims((current) => current.filter((claim) => claim.id !== selectedClaimId));
-        setSelectedClaimId((current) => current === selectedClaimId ? '' : current);
+      if (!ownsRequest(owner)) return;
+      deleteMatchingKey(operationKeys.orders, requestIdentity, requestKey);
+      if (claimId) {
+        setClaims((current) => current.filter((claim) => claim.id !== claimId));
+        setSelectedClaimId((current) => current === claimId ? '' : current);
       }
       setOrders((current) => [result.order, ...current.filter((item) => item.orderNo !== result.order.orderNo)]);
-      setTab('orders');
+      changeTab('orders');
+      if (claimId) refreshClaims(requestOwner('orders'), { removeId: claimId });
     } catch (requestError) {
-      setError(message(requestError, `无法购买 ${game.name}`));
+      if (ownsRequest(owner)) setError(message(requestError, `无法购买 ${game.name}`));
     } finally {
-      setBusy('');
+      if (ownsRequest(owner)) setBusy((current) => current === busyKey ? '' : current);
     }
   }
 
   async function pay(order: Order) {
+    const owner = requestOwner('orders');
     orderRequest.current++;
-    const requestKey = paymentKeys.current.get(order.orderNo) ?? key('payment');
-    paymentKeys.current.set(order.orderNo, requestKey);
-    setBusy(`payment:${order.orderNo}`);
+    const busyKey = `payment:${order.orderNo}`;
+    const requestKey = operationKeys.payments.get(order.orderNo) ?? key('payment');
+    operationKeys.payments.set(order.orderNo, requestKey);
+    setBusy(busyKey);
     setError(null);
     try {
       const result = await payOrder(order.orderNo, requestKey);
-      paymentKeys.current.delete(order.orderNo);
+      if (!ownsRequest(owner)) return;
+      deleteMatchingKey(operationKeys.payments, order.orderNo, requestKey);
       setOrders((current) => current.map((item) => item.orderNo === result.order.orderNo ? result.order : item));
       onOwned();
     } catch (requestError) {
-      setError(message(requestError, '支付确认失败，请重试'));
+      if (ownsRequest(owner)) setError(message(requestError, '支付确认失败，请重试'));
     } finally {
-      setBusy('');
+      if (ownsRequest(owner)) setBusy((current) => current === busyKey ? '' : current);
     }
   }
 
   return (
-    <section className="page-stage commerce-stage">
+    <section className="commerce-stage">
       <div className="commerce-heading">
         <div><h1>优惠与游戏</h1><p>领取优惠券，按服务器价格创建订单，并使用沙箱支付解锁游戏。</p></div>
         <div className="commerce-tabs">
-          <button className={tab === 'deals' ? 'active' : ''} type="button" onClick={() => { orderRequest.current++; setError(null); setTab('deals'); }}>优惠与购买</button>
-          <button className={tab === 'orders' ? 'active' : ''} type="button" onClick={() => user ? setTab('orders') : onRequireLogin()}>我的订单</button>
+          <button className={tab === 'deals' ? 'active' : ''} type="button" aria-pressed={tab === 'deals'} onClick={() => changeTab('deals')}>优惠与购买</button>
+          <button className={tab === 'orders' ? 'active' : ''} type="button" aria-pressed={tab === 'orders'} onClick={() => user ? changeTab('orders') : onRequireLogin()}>我的订单</button>
         </div>
       </div>
-      {error ? <div className="error-banner commerce-error">{error}</div> : null}
+      {error ? <div className="error-banner commerce-error" role="alert">{error}</div> : null}
 
       {tab === 'deals' ? <>
+        <FlashSaleSection
+          user={user}
+          requestKeys={operationKeys.flashSales}
+          onRequireLogin={onRequireLogin}
+          onOpenOrders={() => changeTab('orders')}
+        />
         <label className="deal-filter">适用游戏
           <select value={gameId} onChange={(event) => setGameId(event.target.value)}>
             <option value="">全部优惠</option>

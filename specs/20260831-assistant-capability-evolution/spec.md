@@ -1,6 +1,7 @@
 # 游戏助手能力演进 Spec
 
-- Status: `DRAFT`
+- Status: `SUPERSEDED`
+- Superseded by: `../20260904-advanced-ai-architecture/spec.md`
 - Owner: red060324
 - Source: current mature-platform goal and 2026-08-31 Agent design discussion
 - Branch: `codex/clean-architecture-refactor`

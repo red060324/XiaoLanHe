@@ -17,12 +17,20 @@ type ConversationStore struct {
 }
 
 func (s *ConversationStore) LoadContext(ctx context.Context, sessionID int64, limit int) (string, error) {
-	// ponytail: reuse an existing summary plus a recent window; add summary refresh only when long-session cost requires it.
 	var summary string
-	if err := s.pool.QueryRow(ctx, `select coalesce(metadata->>'summary_text','') from conversation_session where id=$1`, sessionID).Scan(&summary); err != nil {
+	var summaryWatermark int64
+	if err := s.pool.QueryRow(ctx, `
+		select coalesce(summary_text,''),coalesce(summary_through_message_id,0)
+		from conversation_session cs
+		where cs.id=$1`, sessionID).Scan(&summary, &summaryWatermark); err != nil {
 		return "", fmt.Errorf("load session summary: %w", err)
 	}
-	rows, err := s.pool.Query(ctx, `select role,content from conversation_message where session_id=$1 order by created_at desc,id desc limit $2`, sessionID, limit)
+	rows, err := s.pool.Query(ctx, `
+		select role,content
+		from conversation_message
+		where session_id=$1 and id>$2
+		order by id desc
+		limit $3`, sessionID, summaryWatermark, limit)
 	if err != nil {
 		return "", fmt.Errorf("load recent messages: %w", err)
 	}

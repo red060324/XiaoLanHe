@@ -8,7 +8,6 @@ type Props = {
 
 function normalizeAssistantContent(content: string): string {
   return content
-    .replace(/^data:\s?/gm, '')
     .replace(/\r\n/g, '\n')
     .replace(/\u00a0/g, ' ')
     .replace(/(^|\n)\s*(#{1,6})\s*\n+\s*(\d+\.\s*[^\n]+)/g, '$1$2 $3')
@@ -34,28 +33,37 @@ export default function ChatMessageList({ messages, loading }: Props) {
 
   return (
     <div className="message-list">
-      {messages.map((message) => (
-        <article key={message.id} className={`message-row ${message.role}`}>
-          {message.role === 'assistant' ? <div className="avatar">盒</div> : null}
-          <div className="message-bubble">
-            {message.role === 'assistant' ? (
-              <div className="message-markdown">
-                <Streamdown
-                  mode={loading && message.id === lastAssistantMessageId ? 'streaming' : 'static'}
-                  parseIncompleteMarkdown={loading && message.id === lastAssistantMessageId}
-                  isAnimating={loading && message.id === lastAssistantMessageId}
-                >
-                  {normalizeAssistantContent(message.content)}
-                </Streamdown>
-              </div>
-            ) : (
-              <div className="message-text">{message.content}</div>
-            )}
-          </div>
-        </article>
-      ))}
+      {messages.map((message) => {
+        const isStreamingAssistant = loading && message.role === 'assistant' && message.id === lastAssistantMessageId;
+        return (
+          <article
+            key={message.id}
+            className={`message-row ${message.role}`}
+            role={isStreamingAssistant ? 'status' : undefined}
+            aria-live={isStreamingAssistant ? 'polite' : undefined}
+            aria-busy={isStreamingAssistant ? true : undefined}
+          >
+            {message.role === 'assistant' ? <div className="avatar">盒</div> : null}
+            <div className="message-bubble">
+              {message.role === 'assistant' ? (
+                <div className="message-markdown">
+                  <Streamdown
+                    mode={loading && message.id === lastAssistantMessageId ? 'streaming' : 'static'}
+                    parseIncompleteMarkdown={loading && message.id === lastAssistantMessageId}
+                    isAnimating={loading && message.id === lastAssistantMessageId}
+                  >
+                    {normalizeAssistantContent(message.content)}
+                  </Streamdown>
+                </div>
+              ) : (
+                <div className="message-text">{message.content}</div>
+              )}
+            </div>
+          </article>
+        );
+      })}
       {loading && messages.length === 0 ? (
-        <article className="message-row assistant">
+        <article className="message-row assistant" role="status" aria-live="polite" aria-busy="true">
           <div className="avatar">盒</div>
           <div className="message-bubble">
             <div className="message-text">正在生成中...</div>

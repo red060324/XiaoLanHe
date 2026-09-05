@@ -1,0 +1,14 @@
+{
+  "id": "recommend_games",
+  "version": "1.0.0",
+  "promptVersion": "recommend_games_v1",
+  "intents": ["game_recommendation", "game_comparison"],
+  "routes": ["PLANNING", "CLARIFY"],
+  "delegates": ["research", "planning"],
+  "tools": ["search_lightrag", "search_catalog", "search_forum", "search_web", "read_catalog", "read_entitlements", "score_constraints"],
+  "lightragModes": ["local", "global", "hybrid", "mix"],
+  "budget": {"modelCalls": 12, "toolCalls": 12, "delegations": 2, "timeoutMilliseconds": 45000},
+  "outputContract": "ranked_recommendation_v1",
+  "citations": true,
+  "evalCases": ["recommend_games_profile", "recommend_games_owned"]
+}

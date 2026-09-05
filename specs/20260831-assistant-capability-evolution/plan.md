@@ -1,6 +1,7 @@
 # Technical Plan
 
-- Status: `DRAFT`
+- Status: `SUPERSEDED`
+- Superseded by: `../20260904-advanced-ai-architecture/plan.md`
 - Authoritative spec: `./spec.md`
 
 ## Runtime Design

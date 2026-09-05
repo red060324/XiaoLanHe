@@ -1,0 +1,14 @@
+{
+  "id": "research_guide",
+  "version": "1.0.0",
+  "promptVersion": "research_guide_v1",
+  "intents": ["game_guide", "game_mechanics", "game_research"],
+  "routes": ["RESEARCH", "CLARIFY"],
+  "delegates": ["research"],
+  "tools": ["search_lightrag", "search_catalog", "search_forum", "search_web"],
+  "lightragModes": ["local", "global", "hybrid", "mix"],
+  "budget": {"modelCalls": 10, "toolCalls": 8, "delegations": 1, "timeoutMilliseconds": 45000},
+  "outputContract": "research_artifact_v1",
+  "citations": true,
+  "evalCases": ["research_guide_hybrid", "research_guide_partial"]
+}

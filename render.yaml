@@ -15,6 +15,8 @@ services:
         sync: false
       - key: XLH_SEARCH_ENABLED
         value: "false"
+      - key: XLH_FLASH_SALE_ENABLED
+        value: "false"
       - key: XLH_COOKIE_SECURE
         value: "true"
       - key: XLH_PUBLIC_ORIGIN

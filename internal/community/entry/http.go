@@ -17,7 +17,10 @@ import (
 	"github.com/red060324/XiaoLanHe/internal/platform/httpx"
 )
 
-const maxCommunityBody = 32 << 10
+const (
+	maxCommunityBody     = 32 << 10
+	maxCommunityPostBody = 128 << 10
+)
 
 type HTTP struct {
 	service *community.Service
@@ -272,7 +275,7 @@ func (h *HTTP) moderateComment(ctx context.Context, c *app.RequestContext) {
 
 func postRequest(c *app.RequestContext) (entity.PostDraft, bool) {
 	var request communitypresenter.PostRequest
-	if err := httpx.DecodeJSON(c.Request.Body(), maxCommunityBody, &request); err != nil {
+	if err := httpx.DecodeJSON(c.Request.Body(), maxCommunityPostBody, &request); err != nil {
 		return entity.PostDraft{}, false
 	}
 	draft, err := request.Draft()

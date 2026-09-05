@@ -108,6 +108,13 @@ func (s *httpStore) Create(_ context.Context, command order.CreateCommand) (orde
 	return order.CreateResult{Order: s.value}, nil
 }
 
+func (s *httpStore) CreateFromFlashSale(_ context.Context, command order.FlashSaleCreateCommand) (order.CreateResult, error) {
+	return order.CreateResult{Order: entity.Order{
+		OrderNo: command.OrderNo, UserID: command.UserID, Status: entity.StatusPendingPayment,
+		SourceType: "flash_sale", SourceReference: command.RequestID, PaymentExpiresAt: command.PaymentExpiresAt,
+	}}, nil
+}
+
 func (s *httpStore) List(_ context.Context, filter order.ListFilter) ([]entity.Order, error) {
 	if s.value.UserID != filter.UserID {
 		return nil, nil

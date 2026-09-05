@@ -1,6 +1,7 @@
 # Test Plan
 
-- Status: `DRAFT`
+- Status: `SUPERSEDED`
+- Superseded by: `../20260904-advanced-ai-architecture/test-plan.md`
 - Authoritative spec: `./spec.md`
 
 ## Scope And Environments

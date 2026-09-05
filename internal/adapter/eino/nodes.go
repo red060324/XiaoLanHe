@@ -82,7 +82,11 @@ func (m *ModelNodes) answerMessages(request usecase.AnswerRequest) []*schema.Mes
 	for i, item := range request.Evidence {
 		fmt.Fprintf(&evidence, "%d. source=%q title=%q content=%q url=%q\n", i+1, item.Source, item.Title, item.Content, item.URL)
 	}
-	input := fmt.Sprintf("【主路由】\n%s\n\n【输出模式】\n%s\n\n【用户问题】\n%s\n\n【规划备注】\n%s\n\n【上下文】\n%s\n\n【证据材料】\n%s", request.Route, request.ResponseMode, request.Message, strings.Join(request.Notes, " | "), firstText(request.Context, "无"), firstText(evidence.String(), "无"))
+	profile := "无"
+	if encoded, err := json.Marshal(request.Profile); err == nil && string(encoded) != "{}" {
+		profile = string(encoded)
+	}
+	input := fmt.Sprintf("【主路由】\n%s\n\n【输出模式】\n%s\n\n【用户问题】\n%s\n\n【规划备注】\n%s\n\n【会话上下文】\n%s\n\n【用户明确偏好】\n%s\n\n【证据材料】\n%s\n\n【规划产物】\n%s", request.Route, request.ResponseMode, request.Message, strings.Join(request.Notes, " | "), firstText(request.Context, "无"), profile, firstText(evidence.String(), "无"), firstText(request.Plan, "无"))
 	return []*schema.Message{schema.SystemMessage(prompt), schema.UserMessage(input)}
 }
 
@@ -113,6 +117,19 @@ func citationSuffix(evidence []usecase.Evidence) string {
 	var result strings.Builder
 	for _, item := range evidence {
 		raw := strings.TrimSpace(item.URL)
+		if raw == "" && item.Source == "lightrag" {
+			title := safeCitationTitle(item)
+			key := "lightrag:" + title
+			if title == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			if result.Len() == 0 {
+				result.WriteString("\n\n来源：")
+			}
+			fmt.Fprintf(&result, "\n- %s（LightRAG source）", title)
+			continue
+		}
 		parsed, err := url.ParseRequestURI(raw)
 		if err != nil || parsed.User != nil || parsed.IsAbs() && (parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "") || !parsed.IsAbs() && !strings.HasPrefix(parsed.Path, "/api/") {
 			continue
@@ -125,10 +142,15 @@ func citationSuffix(evidence []usecase.Evidence) string {
 		if result.Len() == 0 {
 			result.WriteString("\n\n来源：")
 		}
-		title := strings.NewReplacer("\\", "\\\\", "[", "\\[", "]", "\\]").Replace(firstText(strings.TrimSpace(item.Title), strings.TrimSpace(item.Source), "来源"))
+		title := safeCitationTitle(item)
 		fmt.Fprintf(&result, "\n- [%s](%s)", title, raw)
 	}
 	return result.String()
+}
+
+func safeCitationTitle(item usecase.Evidence) string {
+	title := firstText(strings.Join(strings.Fields(item.Title), " "), strings.Join(strings.Fields(item.Source), " "), "来源")
+	return strings.NewReplacer("\\", "\\\\", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)").Replace(title)
 }
 
 var _ usecase.RouterNode = (*ModelNodes)(nil)

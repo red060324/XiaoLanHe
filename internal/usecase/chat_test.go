@@ -95,6 +95,29 @@ func TestChatRun(t *testing.T) {
 			t.Fatalf("saved messages = %#v", store.saved)
 		}
 	})
+
+	t.Run("refreshes memory only after the complete assistant message is stored", func(t *testing.T) {
+		var calls []string
+		store := &fakeStore{calls: &calls, sessionID: 17}
+		memory := &fakeMemory{calls: &calls}
+		_, err := NewChat(store, &fakeAssistant{calls: &calls, answer: Answer{Text: "ok", Model: "m"}}).
+			WithMemory(memory).Run(context.Background(), ChatInput{SessionID: "s", Message: "hi"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if memory.sessionID != 17 || calls[len(calls)-1] != "memory:17" || calls[len(calls)-2] != "save:assistant:ok:m" {
+			t.Fatalf("session=%d calls=%v", memory.sessionID, calls)
+		}
+	})
+
+	t.Run("memory failure never changes a successful answer", func(t *testing.T) {
+		memoryErr := errors.New("summary unavailable")
+		result, err := NewChat(&fakeStore{sessionID: 2}, &fakeAssistant{answer: Answer{Text: "ok"}}).
+			WithMemory(&fakeMemory{err: memoryErr}).Run(context.Background(), ChatInput{SessionID: "s", Message: "hi"})
+		if err != nil || result.Answer != "ok" {
+			t.Fatalf("result=%+v err=%v", result, err)
+		}
+	})
 }
 
 func TestChatStream(t *testing.T) {
@@ -173,6 +196,25 @@ func TestPersistingStreamRecv(t *testing.T) {
 		stream.Close()
 		if !upstream.closed || len(store.saved) != 0 {
 			t.Fatalf("closed=%v saved=%#v", upstream.closed, store.saved)
+		}
+	})
+
+	t.Run("refreshes memory once after streamed persistence and ignores refresh failure", func(t *testing.T) {
+		store := &fakeStore{}
+		memory := &fakeMemory{err: errors.New("summary unavailable")}
+		stream := &persistingStream{
+			AnswerStream: &fakeStream{chunks: []string{"done"}}, ctx: context.Background(),
+			store: store, sessionDBID: 9, memory: memory,
+		}
+		_, _ = stream.Recv()
+		if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
+			t.Fatalf("err=%v", err)
+		}
+		if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
+			t.Fatalf("second err=%v", err)
+		}
+		if memory.callsCount != 1 || memory.sessionID != 9 {
+			t.Fatalf("memory calls=%d session=%d", memory.callsCount, memory.sessionID)
 		}
 	})
 }
@@ -266,3 +308,19 @@ func (s *fakeStream) Recv() (string, error) {
 
 func (s *fakeStream) Close()        { s.closed = true }
 func (s *fakeStream) Model() string { return s.model }
+
+type fakeMemory struct {
+	calls      *[]string
+	callsCount int
+	sessionID  int64
+	err        error
+}
+
+func (m *fakeMemory) Refresh(_ context.Context, sessionID int64) error {
+	m.callsCount++
+	m.sessionID = sessionID
+	if m.calls != nil {
+		*m.calls = append(*m.calls, fmt.Sprintf("memory:%d", sessionID))
+	}
+	return m.err
+}

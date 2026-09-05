@@ -2,7 +2,7 @@ GO_PACKAGES ?= ./...
 WEB_DIR := frontend/xiaolanhe-web
 BASE_REF ?= origin/master
 
-.PHONY: fmt-check vet test test-race web-test web-build hooks architecture spec-drift verify ci docker-build
+.PHONY: fmt-check vet test test-race eval web-test web-build hooks architecture spec-drift verify ci docker-build middleware-config middleware-up middleware-down lightrag-static lightrag-config lightrag-up lightrag-down lightrag-live lightrag-lifecycle
 
 fmt-check:
 	@files="$$(gofmt -l $$(find cmd internal -type f -name '*.go'))"; \
@@ -16,6 +16,9 @@ test:
 
 test-race:
 	go test -race -count=1 $(GO_PACKAGES)
+
+eval:
+	go run ./cmd/eval-assistant
 
 web-test:
 	npm --prefix $(WEB_DIR) test
@@ -35,9 +38,37 @@ architecture:
 spec-drift:
 	.hooks/check-spec-drift.sh $(BASE_REF)
 
-verify: fmt-check vet test web-test hooks architecture web-build
+verify: fmt-check vet test eval web-test hooks architecture lightrag-static web-build
 
-ci: fmt-check vet test test-race web-test hooks architecture spec-drift web-build
+ci: fmt-check vet test test-race eval web-test hooks architecture lightrag-static spec-drift web-build
 
 docker-build:
 	docker build -t xiaolanhe:local .
+
+middleware-config:
+	docker compose -f deploy/docker-compose.middleware.yml config --quiet
+
+middleware-up:
+	docker compose -f deploy/docker-compose.middleware.yml up --detach --wait
+
+middleware-down:
+	docker compose -f deploy/docker-compose.middleware.yml down
+
+lightrag-static:
+	@bash deploy/check-lightrag-compose.sh
+	@bash -n deploy/check-lightrag-live.sh deploy/check-lightrag-lifecycle.sh
+
+lightrag-config: lightrag-static
+	docker compose -f deploy/docker-compose.lightrag.yml config --quiet
+
+lightrag-up:
+	docker compose -f deploy/docker-compose.lightrag.yml up --detach --wait
+
+lightrag-down:
+	docker compose -f deploy/docker-compose.lightrag.yml down
+
+lightrag-live:
+	@bash deploy/check-lightrag-live.sh http://127.0.0.1:9621 "$$XLH_LIGHTRAG_API_KEY"
+
+lightrag-lifecycle:
+	@bash deploy/check-lightrag-lifecycle.sh

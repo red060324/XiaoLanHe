@@ -130,6 +130,14 @@ func TestServiceListComments(t *testing.T) {
 	if _, err := service.ListComments(context.Background(), ListCommentsInput{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err=%v", err)
 	}
+
+	t.Run("delegates parent visibility to store", func(t *testing.T) {
+		store := &fakeStore{listCommentsErr: ErrNotFound}
+		_, err := NewService(store, &fakeCatalog{}).ListComments(context.Background(), ListCommentsInput{PostID: 5})
+		if !errors.Is(err, ErrNotFound) || store.getPostCalls != 0 || store.commentFilter.PostID != 5 {
+			t.Fatalf("err=%v getPostCalls=%d filter=%+v", err, store.getPostCalls, store.commentFilter)
+		}
+	})
 }
 
 func TestServiceCreateComment(t *testing.T) {
@@ -226,6 +234,7 @@ type fakeStore struct {
 	posts           []entity.Post
 	post            entity.Post
 	postErr         error
+	getPostCalls    int
 	postFilter      PostFilter
 	postDraft       entity.PostDraft
 	postAuthorID    int64
@@ -237,6 +246,7 @@ type fakeStore struct {
 	comments        []entity.Comment
 	comment         entity.Comment
 	commentErr      error
+	listCommentsErr error
 	commentFilter   CommentFilter
 	commentAuthorID int64
 	commentContent  string
@@ -254,6 +264,7 @@ func (s *fakeStore) ListPosts(_ context.Context, filter PostFilter) ([]entity.Po
 	return s.posts, nil
 }
 func (s *fakeStore) GetPost(_ context.Context, _ int64, viewerID int64, _ bool) (entity.Post, error) {
+	s.getPostCalls++
 	s.postViewerID = viewerID
 	return s.post, s.postErr
 }
@@ -272,7 +283,7 @@ func (s *fakeStore) ModeratePost(_ context.Context, _ int64, status entity.Statu
 }
 func (s *fakeStore) ListComments(_ context.Context, filter CommentFilter) ([]entity.Comment, error) {
 	s.commentFilter = filter
-	return s.comments, nil
+	return s.comments, s.listCommentsErr
 }
 func (s *fakeStore) GetComment(context.Context, int64, bool) (entity.Comment, error) {
 	return s.comment, s.commentErr

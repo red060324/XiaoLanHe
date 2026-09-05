@@ -1,16 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   claimCoupon,
+  clearAssistantProfile,
   createCommunityPost,
+  createKnowledgeDocument,
   createOrder,
+  getFlashSaleRequest,
+  getAssistantProfile,
+  getKnowledgeTrack,
   getMe,
   listCommunityPosts,
   listCouponClaims,
   listDeals,
+  listFlashSales,
   listGames,
+  listKnowledgeDocuments,
   listOrders,
   logout,
   payOrder,
+  reserveFlashSale,
+  replaceAssistantProfile,
   sendChatMessage,
   setCommunityReaction,
   streamChatMessage
@@ -58,6 +67,91 @@ describe('assistant API', () => {
     fetchMock.mockResolvedValueOnce(new Response(body, { status: 503 }));
     await expect(streamChatMessage({ message: 'help' }, vi.fn())).rejects.toMatchObject({ message: 'assistant unavailable' });
   });
+
+  it('streams message events and returns the canonical conversation ID', async () => {
+    const onChunk = vi.fn();
+    fetchMock.mockResolvedValue(new Response(
+      'event: message\ndata: first\n\ndata: second\n\n',
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'X-Conversation-ID': 'f47ac10b-58cc-4372-a567-0e02b2c3d479'
+        }
+      }
+    ));
+
+    await expect(streamChatMessage({ message: 'help' }, onChunk)).resolves.toEqual({
+      conversationId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479'
+    });
+    expect(onChunk).toHaveBeenNthCalledWith(1, 'first');
+    expect(onChunk).toHaveBeenNthCalledWith(2, 'second');
+  });
+
+  it('rejects an SSE error event instead of emitting its envelope as answer text', async () => {
+    const onChunk = vi.fn();
+    fetchMock.mockResolvedValue(new Response(
+      'event: message\ndata: partial\n\n' +
+      'event: error\ndata: {"error":{"code":"stream_failed","message":"assistant stream failed","requestId":"req-1"}}\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+    ));
+
+    await expect(streamChatMessage({ message: 'help' }, onChunk)).rejects.toThrow('assistant stream failed');
+    expect(onChunk).toHaveBeenCalledOnce();
+    expect(onChunk).toHaveBeenCalledWith('partial');
+  });
+
+  it('uses a fixed message for a malformed SSE error event', async () => {
+    const onChunk = vi.fn();
+    fetchMock.mockResolvedValue(new Response(
+      'event:error\ndata: provider secret detail\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+    ));
+
+    await expect(streamChatMessage({ message: 'help' }, onChunk)).rejects.toThrow('assistant stream failed');
+    expect(onChunk).not.toHaveBeenCalled();
+  });
+
+  it('rejects a successful response that contains no assistant content', async () => {
+    fetchMock.mockResolvedValue(new Response('', {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' }
+    }));
+
+    await expect(streamChatMessage({ message: 'help' }, vi.fn())).rejects.toThrow('assistant stream returned no content');
+  });
+});
+
+describe('assistant profile and LightRAG admin API', () => {
+  it('loads, replaces, and clears the explicit profile', async () => {
+    const profile = { favoriteGenres: ['rpg'], preferredPlatforms: ['pc'], defaultRegion: 'CN', preferredLanguages: ['zh-CN'], maxPriceMinor: 30000, currency: 'CNY' };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ profile }), { status: 200 }));
+    await expect(getAssistantProfile()).resolves.toMatchObject({ defaultRegion: 'CN' });
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/me/assistant-profile', expect.objectContaining({ credentials: 'include' }));
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ profile }), { status: 200 }));
+    await replaceAssistantProfile(profile);
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/me/assistant-profile', expect.objectContaining({ method: 'PUT', body: JSON.stringify(profile), credentials: 'include' }));
+
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await clearAssistantProfile();
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/me/assistant-profile', expect.objectContaining({ method: 'DELETE', credentials: 'include' }));
+  });
+
+  it('uses the asynchronous official LightRAG facade', async () => {
+    const draft = { sourceType: 'guide', title: 'Guide', sourceUrl: '', gameCode: 'demo', regionCode: 'CN', patchVersion: '1.0', contentText: 'body' };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ trackId: 'track-1', sourceKey: 'xlh-source.txt', status: 'accepted' }), { status: 202 }));
+    await expect(createKnowledgeDocument(draft)).resolves.toMatchObject({ trackId: 'track-1' });
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/knowledge/documents', expect.objectContaining({ method: 'POST', body: JSON.stringify(draft), credentials: 'include' }));
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ trackId: 'track-1', documents: [], totalCount: 0, statusCounts: {} }), { status: 200 }));
+    await getKnowledgeTrack('track/1');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/admin/knowledge/tracks/track%2F1', expect.objectContaining({ credentials: 'include' }));
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0 }), { status: 200 }));
+    await listKnowledgeDocuments(2);
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/admin/knowledge/documents?page=2&pageSize=20&sortField=updatedAt&sortDirection=desc', expect.objectContaining({ credentials: 'include' }));
+  });
 });
 
 describe('commerce API', () => {
@@ -100,6 +194,25 @@ describe('commerce API', () => {
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'order-key.01' },
       body: JSON.stringify({ editionId: '12', region: 'GLOBAL', currency: 'USD', couponClaimId: '9' }),
       credentials: 'include'
+    }));
+  });
+
+  it('lists, reserves, and polls a flash-sale request without a request body', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ items: [], nextCursor: 'flash-next' }), { status: 200 }));
+    await expect(listFlashSales('flash page')).resolves.toMatchObject({ nextCursor: 'flash-next' });
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/flash-sales?cursor=flash+page', expect.objectContaining({ credentials: 'include' }));
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ request: { requestId: 'fsr_15_0123456789abcdef0123456789abcdef', status: 'queued' }, replayed: false }), { status: 202 }));
+    await reserveFlashSale('41/42', 'flash-sale:key.01');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/flash-sales/41%2F42/reservations', expect.objectContaining({
+      method: 'POST', headers: { 'Idempotency-Key': 'flash-sale:key.01' }, credentials: 'include'
+    }));
+
+    const controller = new AbortController();
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ request: { requestId: 'fsr_15_0123456789abcdef0123456789abcdef', status: 'order_ready' } }), { status: 200 }));
+    await expect(getFlashSaleRequest('fsr/41', controller.signal)).resolves.toMatchObject({ status: 'order_ready' });
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/flash-sale-requests/fsr%2F41', expect.objectContaining({
+      credentials: 'include', signal: controller.signal
     }));
   });
 });
