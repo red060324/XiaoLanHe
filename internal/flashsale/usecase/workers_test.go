@@ -13,8 +13,8 @@ import (
 func TestReleaseWorkerCompletesAndRetriesJobs(t *testing.T) {
 	now := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
 	store := &fakeStore{releaseJobs: []ReleaseJob{
-		{ID: 1, RequestID: "fsr_15_0123456789abcdef0123456789abcdef", ActivityID: 41, UserID: 7, IdempotencyDigest: testDigest, ReservedAt: now, Reason: "final_guard", Attempts: 1},
-		{ID: 2, RequestID: "fsr_15_fedcba9876543210fedcba9876543210", ActivityID: 41, UserID: 8, IdempotencyDigest: testDigest, ReservedAt: now, Reason: "payment_expired", Attempts: 3},
+		{ID: 1, RequestID: "fsr_15_0123456789abcdef0123456789abcdef", ActivityID: 41, UserID: 7, IdempotencyDigest: testDigest, ReservedAt: now, Reason: "final_guard", Attempts: 1, LeaseGeneration: 11},
+		{ID: 2, RequestID: "fsr_15_fedcba9876543210fedcba9876543210", ActivityID: 41, UserID: 8, IdempotencyDigest: testDigest, ReservedAt: now, Reason: "payment_expired", Attempts: 3, LeaseGeneration: 29},
 	}}
 	compensator := &fakeCompensator{errorsByRequest: map[string]error{store.releaseJobs[1].RequestID: errors.New("redis down")}}
 	worker := NewReleaseWorker(store, compensator, 10, 30*time.Second)
@@ -24,11 +24,44 @@ func TestReleaseWorkerCompletesAndRetriesJobs(t *testing.T) {
 	if err != nil || completed != 1 || len(store.completedReleaseJobs) != 1 || store.completedReleaseJobs[0] != 1 {
 		t.Fatalf("completed=%d ids=%v err=%v", completed, store.completedReleaseJobs, err)
 	}
-	if store.retriedReleaseJobID != 2 || !store.retriedAt.Equal(now.Add(4*time.Second)) || store.retryCode != "redis_unavailable" {
-		t.Fatalf("retry id=%d at=%s code=%s", store.retriedReleaseJobID, store.retriedAt, store.retryCode)
+	if len(store.completedGenerations) != 1 || store.completedGenerations[0] != 11 {
+		t.Fatalf("completed generations=%v", store.completedGenerations)
+	}
+	if store.retriedReleaseJobID != 2 || store.retriedGeneration != 29 || !store.retriedAt.Equal(now.Add(4*time.Second)) || store.retryCode != "redis_unavailable" {
+		t.Fatalf("retry id=%d generation=%d at=%s code=%s", store.retriedReleaseJobID, store.retriedGeneration, store.retriedAt, store.retryCode)
 	}
 	if compensator.commands[0].RemoveBuyer || compensator.commands[1].RemoveBuyer {
 		t.Fatalf("commands=%+v", compensator.commands)
+	}
+}
+
+func TestReleaseWorkerRejectsLeaseWithoutExactMicrosecondPrecision(t *testing.T) {
+	store := &fakeStore{}
+	worker := NewReleaseWorker(store, &fakeCompensator{}, 10, time.Microsecond+time.Nanosecond)
+
+	if _, err := worker.RunOnce(context.Background()); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestReleaseWorkerAcceptsExactMicrosecondLease(t *testing.T) {
+	store := &fakeStore{}
+	worker := NewReleaseWorker(store, &fakeCompensator{}, 10, time.Microsecond)
+
+	if _, err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestReleaseWorkerRejectsMissingLeaseGenerationBeforeRelease(t *testing.T) {
+	store := &fakeStore{releaseJobs: []ReleaseJob{{ID: 1}}}
+	compensator := &fakeCompensator{}
+
+	if _, err := NewReleaseWorker(store, compensator, 10, time.Second).RunOnce(context.Background()); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("error=%v", err)
+	}
+	if len(compensator.commands) != 0 || len(store.completedReleaseJobs) != 0 || store.retriedReleaseJobID != 0 {
+		t.Fatalf("compensation=%d completed=%v retry=%d", len(compensator.commands), store.completedReleaseJobs, store.retriedReleaseJobID)
 	}
 }
 
@@ -36,7 +69,7 @@ func TestReleaseWorkerOnlyRemovesBuyerForTechnicalRollback(t *testing.T) {
 	now := time.Now().UTC()
 	store := &fakeStore{releaseJobs: []ReleaseJob{{
 		ID: 1, RequestID: "fsr_15_0123456789abcdef0123456789abcdef", ActivityID: 41, UserID: 7,
-		IdempotencyDigest: testDigest, ReservedAt: now, Reason: "technical_rollback",
+		IdempotencyDigest: testDigest, ReservedAt: now, Reason: "technical_rollback", LeaseGeneration: 1,
 	}}}
 	compensator := &fakeCompensator{}
 	if _, err := NewReleaseWorker(store, compensator, 10, time.Second).RunOnce(context.Background()); err != nil {
@@ -51,7 +84,7 @@ func TestReleaseWorkerLogsSafeRetryMetadata(t *testing.T) {
 	now := time.Now().UTC()
 	job := ReleaseJob{
 		ID: 1, RequestID: "fsr_15_0123456789abcdef0123456789abcdef", ActivityID: 41, UserID: 7,
-		IdempotencyDigest: testDigest, ReservedAt: now, Reason: "final_guard", Attempts: 1,
+		IdempotencyDigest: testDigest, ReservedAt: now, Reason: "final_guard", Attempts: 1, LeaseGeneration: 1,
 	}
 	secret := "redis://:super-secret@private-redis:6379/0"
 	store := &fakeStore{releaseJobs: []ReleaseJob{job}}

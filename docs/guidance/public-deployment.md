@@ -1,162 +1,275 @@
 # Public Deployment
 
-XiaoLanHe always needs one Go container plus one business PostgreSQL database with
-the `vector` extension. The React build is embedded in the same image, so browser
-pages and `/api/` use one origin. SearXNG is optional. Redis and RocketMQ are
-required only when the opt-in flash-sale feature is enabled. Official LightRAG and
-its persistent volume are required only when advanced AI is enabled.
+XiaoLanHe requires a Go web service, an external MySQL 8.4/InnoDB business
+database and an official LightRAG 1.5.7 knowledge service. LightRAG persists KV,
+graph and document status as files in its complete `WORKING_DIR` and persists
+chunk/entity/relation vectors through `MilvusVectorDBStorage` in Milvus 2.6.11.
+The Go service never connects to Milvus directly.
 
-These dependencies do not all need to be purchased as virtual machines. A real
-deployment can combine a container/PaaS for Go, managed PostgreSQL, managed Redis,
-a managed or self-hosted RocketMQ-compatible service, and a persistent-volume host
-for LightRAG. What matters is private connectivity, durable state, backups,
-monitoring and tested recovery—not server ownership.
+Redis 7.4 and RocketMQ 5.3.2 are required only when the opt-in flash-sale
+feature is enabled. They retain their existing roles: Redis Lua admits requests
+atomically, RocketMQ delivers at least once, and MySQL is the final durable
+inventory/idempotency boundary.
+
+This repository contains deployment examples and validation tools. It does not
+purchase, provision, migrate, cut over, or delete production cloud resources.
+Production infrastructure, credentials, destructive retirement, paid
+embedding/rebuild calls and traffic enablement require separate approval.
+
+## Storage Ownership
+
+| Data | System of record | Notes |
+|---|---|---|
+| accounts, sessions, profiles and conversations | MySQL 8.4/InnoDB | UTC, strict mode, `utf8mb4`; verified TLS in production |
+| catalog, community, promotions, orders and payments | MySQL 8.4/InnoDB | foreign keys, checks and durable idempotency |
+| flash-sale admission and recovery markers | Redis + Lua | time-bounded fast path, not the durable order record |
+| flash-sale reservation events | RocketMQ | at-least-once transport; consumers are idempotent in MySQL |
+| knowledge documents, chunks and caches | LightRAG `JsonKVStorage` | persistent `WORKING_DIR` files |
+| knowledge graph | LightRAG `NetworkXStorage` | persistent `WORKING_DIR` files |
+| ingestion/document status | LightRAG `JsonDocStatusStorage` | persistent `WORKING_DIR` files |
+| chunk/entity/relation vectors | LightRAG `MilvusVectorDBStorage` | derived Milvus projections; no direct Go access |
+
+LightRAG is the knowledge boundary in both basic and advanced Assistant modes.
+`XLH_ADVANCED_AI_ENABLED=false` disables advanced orchestration, not LightRAG.
+There is no MySQL, PostgreSQL, pgvector or NanoVectorDB runtime fallback.
+The Go-to-LightRAG transport defaults to HTTPS. Plain HTTP is rejected unless an
+operator explicitly sets `XLH_LIGHTRAG_ALLOW_INSECURE=true`; that exception is only
+for loopback or otherwise controlled local environments because HTTP can expose the
+LightRAG API key and query/request bodies in transit. Production must use an HTTPS
+`XLH_LIGHTRAG_BASE_URL` and keep the override `false`.
 
 ## Render Blueprint
 
-The smallest hosted demo uses the repository's `render.yaml`:
+The repository deliberately has no root `render.yaml`: Render would auto-discover it
+even though a Blueprint cannot provide this complete production topology or the
+required TLS/fence files. `deploy/render.app-only.example.yaml` is a non-automatic
+app-only reference with no `databases:` resource and no `fromDatabase` binding. Copy it
+to `render.yaml` only after the external services and file mounts below have been
+provisioned and reviewed.
 
-1. Fork or push the repository to GitHub.
-2. In Render, create a Blueprint from the repository.
-3. Store `XLH_AI_API_KEY` in Render's secret configuration.
-4. Set `XLH_PUBLIC_ORIGIN` to the final service URL if the service name changes.
-5. Open `https://<service-name>.onrender.com` and verify `/healthz` and
-   `/readyz`.
+Before deploying the Blueprint, an operator must separately provide:
 
-Render supplies the `onrender.com` subdomain. Buying a custom domain is
-optional. A custom domain only changes DNS/TLS configuration and
-`XLH_PUBLIC_ORIGIN`; it does not require a code change.
+1. an external MySQL 8.4/InnoDB database with private connectivity, verified TLS,
+   backups and restore evidence;
+2. an official LightRAG 1.5.7 service backed by a persistent `WORKING_DIR`, Milvus
+   2.6.11, etcd 3.5.25 and the pinned MinIO release;
+3. a verified rebuild-fence marker mounted read-only into the Go service at
+   `XLH_LIGHTRAG_REBUILD_FENCE_DIR`; and
+4. all required values in Render's secret store.
 
-The checked-in Blueprint deliberately keeps `XLH_FLASH_SALE_ENABLED=false` and
-`XLH_ADVANCED_AI_ENABLED=false`, and selects Render's free plans, so it cannot
-silently create a paid service. This is a demo configuration, not a production
-configuration: the free Web Service sleeps after inactivity, and the free
-PostgreSQL database is limited to 1 GB, expires after 30 days, and has no
-managed backups or connection pooling. For a persistent deployment, select a
-paid Render database or another durable PostgreSQL provider that supports
-`CREATE EXTENSION vector`, and configure tested backups before accepting user
-data. The Blueprint does not provision Redis, RocketMQ or LightRAG and therefore is
-not the complete production topology. See Render's public
-[free-plan limits](https://render.com/docs/free) and
-[supported PostgreSQL extensions](https://render.com/docs/postgresql-extensions).
+At minimum, configure the external/secret placeholders for `XLH_DATABASE_URL`,
+`XLH_AI_API_KEY`, `XLH_LIGHTRAG_BASE_URL`, `XLH_LIGHTRAG_API_KEY`,
+`XLH_LIGHTRAG_REBUILD_FENCE_DIR`, `XLH_LIGHTRAG_DEPLOYMENT_GENERATION` and
+`XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256`. Keep
+`XLH_DATABASE_ALLOW_INSECURE=false` and `XLH_LIGHTRAG_ALLOW_INSECURE=false`, and
+configure `XLH_LIGHTRAG_BASE_URL` with `https://`. A production DSN must include the fixed
+`tls=xlh-verified` profile. `XLH_DATABASE_TLS_CA_FILE` and
+`XLH_DATABASE_TLS_SERVER_NAME` are required so the profile verifies the certificate
+chain and hostname; optional `XLH_DATABASE_TLS_CERT_FILE` and
+`XLH_DATABASE_TLS_KEY_FILE` enable mutual TLS and must be configured together. The DSN
+must also retain
+`parseTime=true`, `loc=UTC`, bounded dial/read/write timeouts,
+`multiStatements=false` and `clientFoundRows=false`.
 
-The Blueprint waits for repository checks to pass before automatically
-deploying and uses `/readyz` as the routing health check, so a process without a
-usable database is not treated as ready.
+For example, the production DSN query must include
+`parseTime=true&loc=UTC&timeout=5s&readTimeout=5s&writeTimeout=5s&multiStatements=false&clientFoundRows=false&tls=xlh-verified`.
+The CA, client certificate and client key must be delivered as secret files at the
+configured paths; setting a path variable does not create or upload its file.
 
-## Any Docker Host
+The example keeps flash sale and advanced orchestration disabled. These flags
+avoid creating optional runtime dependencies; they do not make the external
+MySQL and LightRAG services optional. If enabled, the Blueprint creates only the Go
+web service, so applying it does not buy MySQL, Milvus, etcd, MinIO, Redis,
+RocketMQ, disks or backup storage.
 
-Use a PostgreSQL provider or self-hosted PostgreSQL that allows
-`CREATE EXTENSION vector`, then build and run:
+Render supplies an `onrender.com` subdomain. Buying a custom domain is optional;
+it changes DNS/TLS and `XLH_PUBLIC_ORIGIN`, not application code. `/readyz` is
+the routing health check and remains unready until the external database,
+LightRAG contract and rebuild fence are valid.
 
-```bash
-docker build -t xiaolanhe:local .
-docker run --name xiaolanhe --env-file .env -p 8088:8088 xiaolanhe:local
-```
+## Local Integration Topology
 
-Put a public TLS reverse proxy or hosting load balancer in front of port 8088.
-For a custom domain, point its DNS record at that proxy and set
-`XLH_PUBLIC_ORIGIN=https://your-domain.example` plus `XLH_COOKIE_SECURE=true`.
-Do not expose PostgreSQL publicly. The same rule applies to Redis, RocketMQ
-NameServer, and RocketMQ Broker.
-
-## Local Middleware Stack
-
-The checked-in Compose file starts PostgreSQL/pgvector, password-protected Redis
-7.4, and a persistent RocketMQ 5.3.2 NameServer/Broker pair for local integration:
+The checked-in middleware Compose stack starts MySQL 8.4, password-protected
+Redis 7.4 and a persistent RocketMQ 5.3.2 NameServer/Broker pair:
 
 ```bash
 cp .env.example .env
-# Set matching local values for XLH_POSTGRES_PASSWORD, XLH_DATABASE_URL,
-# XLH_REDIS_PASSWORD, and XLH_REDIS_URL. Do not reuse these in production.
+# Replace all local placeholders; never reuse them in production.
 make middleware-config
 make middleware-up
 ```
 
-The Go process runs on the host and connects to the loopback addresses from
-`.env`. The broker deliberately advertises `127.0.0.1` for that topology. Do not
-reuse `deploy/rocketmq/broker.conf` for an app running in another container or
-host; set `brokerIP1` to a stable private address resolvable by every client.
-Named volumes retain database, Redis AOF, RocketMQ logs, and broker state across
-ordinary restarts. `make middleware-down` stops containers without deleting the
-volumes. Removing volumes is a destructive reset and is not part of that target.
+The Go process runs on the host and connects to loopback addresses. Named
+volumes retain MySQL, Redis AOF, RocketMQ logs and broker state across ordinary
+restarts. `make middleware-down` stops containers without deleting volumes.
+Removing volumes is a destructive reset and is not part of that target.
 
-## Official LightRAG Native-Store Stack
+The local stack is integration tooling, not a high-availability topology. Do not
+expose MySQL, Redis, RocketMQ NameServer or Broker publicly. For production, use
+private addressing, least-privilege identities, authentication, encryption,
+persistent storage, alerts and tested recovery.
+The checked-in Redis endpoint is plaintext and the checked-in RocketMQ broker does
+not enable ACL, so a host-run application must explicitly set
+`XLH_REDIS_ALLOW_INSECURE=true` and `XLH_ROCKETMQ_ALLOW_INSECURE=true` when enabling
+flash sale against this local stack. These opt-ins are not production settings.
 
-`deploy/docker-compose.lightrag.yml` pins official LightRAG `1.5.7`, API `0344` and
-an immutable image digest. It uses exactly `JsonKVStorage`,
-`NanoVectorDBStorage`, `NetworkXStorage` and `JsonDocStatusStorage`. There is no
-LightRAG PostgreSQL, Redis, Neo4j, Milvus, Qdrant, MongoDB or search cluster.
+## Official LightRAG And Milvus Stack
 
-All workspace files live under `/app/data/rag_storage` on the
-`xlh-lightrag-data` volume. The local service binds only `127.0.0.1:9621`; a
-containerized Go app should instead use private service DNS and must not publish
-LightRAG publicly. Outbound access remains necessary for its LLM and embedding APIs.
+`deploy/docker-compose.lightrag.yml` pins:
+
+- official LightRAG 1.5.7/API 0344 at an immutable image digest;
+- Milvus standalone 2.6.11;
+- etcd 3.5.25; and
+- MinIO `RELEASE.2025-09-07T16-13-09Z`.
+
+The supported LightRAG storage contract is exactly:
+
+```text
+LIGHTRAG_KV_STORAGE=JsonKVStorage
+LIGHTRAG_VECTOR_STORAGE=MilvusVectorDBStorage
+LIGHTRAG_GRAPH_STORAGE=NetworkXStorage
+LIGHTRAG_DOC_STATUS_STORAGE=JsonDocStatusStorage
+WORKSPACE=xiaolanhe_v1
+WORKING_DIR=/app/data/rag_storage
+MILVUS_DB_NAME=lightrag
+MILVUS_INDEX_TYPE=AUTOINDEX
+MILVUS_METRIC_TYPE=COSINE
+EMBEDDING_MODEL=text-embedding-v4
+EMBEDDING_DIM=1024
+EMBEDDING_SEND_DIM=false
+EMBEDDING_ASYMMETRIC=false
+```
+
+`MILVUS_WORKSPACE` and the document/query embedding prefixes remain unset. A
+change to any embedding semantic, dimension, workspace, collection/index
+contract or storage class invalidates the fence and requires a reviewed full
+rebuild or re-ingestion.
+
+All four state volumes are persistent: the LightRAG workspace plus Milvus, etcd
+and MinIO. Milvus data ports remain private to the Compose network; only the
+local LightRAG endpoint is loopback-bound. The deployment bootstrap identity may
+create the `lightrag` database, while the steady-state identity must have only the
+permissions needed for that database and its collections.
+The local loopback endpoint currently uses HTTP, so the host-run Go process must
+explicitly set `XLH_LIGHTRAG_ALLOW_INSECURE=true`. This local override is not a
+production pattern and does not make cleartext safe on an untrusted network.
+
+Because KV, graph and status remain local files, exactly one LightRAG service
+replica may mount the read-write workspace. Milvus standalone and a single
+LightRAG replica are not a distributed or HA deployment. A managed/distributed
+replacement needs a separate TLS, authentication, backup, restore and
+availability review.
+
+For a fresh empty local stack, set unique credentials and a deployment
+generation, then run the non-paid empty bootstrap before starting LightRAG:
 
 ```bash
 export XLH_LIGHTRAG_API_KEY='a-distinct-private-key-at-least-32-chars'
 export XLH_LIGHTRAG_LLM_API_KEY='...'
 export XLH_LIGHTRAG_EMBEDDING_API_KEY='...'
+export XLH_MILVUS_MINIO_USER='replace-with-a-local-user'
+export XLH_MILVUS_MINIO_PASSWORD='replace-with-a-local-password'
+export XLH_MILVUS_ROOT_PASSWORD='replace-with-a-distinct-root-password'
+export XLH_MILVUS_TOKEN='xlh_lightrag:replace-with-a-distinct-runtime-password'
+export XLH_LIGHTRAG_DEPLOYMENT_GENERATION='local-empty-v1'
+export XLH_LIGHTRAG_ATTEMPT_ID="bootstrap-$(date +%Y%m%d%H%M%S)"
+export XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR="$(pwd -P)/.state/lightrag-fence"
+export XLH_LIGHTRAG_REBUILD_FENCE_DIR="$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR"
+export XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR="$(pwd -P)/.state/lightrag-writer-evidence"
+export XLH_LIGHTRAG_UNCONTROLLED_WRITERS_ATTESTATION=no_uncontrolled_writers
 make lightrag-static
-make lightrag-config
+bootstrap_output=$(make --no-print-directory lightrag-bootstrap-empty)
+printf '%s\n' "$bootstrap_output"
+export XLH_LIGHTRAG_DEPLOYMENT_GENERATION=$(
+  printf '%s\n' "$bootstrap_output" | sed -n 's/^XLH_LIGHTRAG_DEPLOYMENT_GENERATION=//p' | tail -n 1
+)
+export XLH_LIGHTRAG_ATTEMPT_ID=$(
+  printf '%s\n' "$bootstrap_output" | sed -n 's/^XLH_LIGHTRAG_ATTEMPT_ID=//p' | tail -n 1
+)
+export XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$(
+  printf '%s\n' "$bootstrap_output" | sed -n 's/^XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=//p' | tail -n 1
+)
+export XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=$(
+  printf '%s\n' "$bootstrap_output" | sed -n 's/^XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=//p' | tail -n 1
+)
+test -n "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION"
+test -n "$XLH_LIGHTRAG_ATTEMPT_ID"
+test -n "$XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256"
+test -n "$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256"
 make lightrag-up
 ```
 
-The supported topology is one LightRAG service replica with `WORKERS=2` and one
-read-write volume. Do not mount that workspace from a second service replica. Native
-storage keeps its working set in process and is suitable only for a measured
-small-corpus deployment; use a separately reviewed storage migration when corpus,
-memory, HA or horizontal-scaling requirements exceed that envelope.
-The manifest deliberately leaves `MAX_REQUEST_BODY_BYTES` unset: official 1.5.7 then
-keeps its 1 MiB ordinary-route limit and separate 50 MiB text-ingestion tier. The Go
-facade independently caps a knowledge request at 1 MiB and its normalized content at
-1 MiB.
+Persist the printed generation, attempt/evidence digest and contract digest as
+deployment evidence; the snippet feeds the contract digest back into the current
+shell before the canonical steady-state start. Empty bootstrap refuses nonempty
+authoritative sources or orphaned targets; it cannot be used to certify an
+existing NanoVectorDB workspace. See
+[`../../deploy/lightrag/README.md`](../../deploy/lightrag/README.md) for the
+guarded rebuild/fence interface.
+
+Do not use bare `docker compose up`. `make lightrag-up` first verifies the canonical
+absolute fence host path and exact generation/contract, then starts only etcd, MinIO,
+Milvus and LightRAG. The LightRAG container takes a shared `serving.lock` lease before
+rechecking the fence and retains it while supervising the complete Gunicorn process
+group. Controllers take the same lease exclusively before `rebuild.lock`, so a fence
+transition cannot race a running steady writer. `milvus-init` and `lightrag-bootstrap`
+are isolated behind the `bootstrap`
+profile and are never part of steady-state restart.
 
 ## Configuration
 
 | Variable | Required | Purpose |
 |---|---:|---|
-| `XLH_DATABASE_URL` | yes | PostgreSQL connection URL |
+| `XLH_DATABASE_URL` | yes | MySQL DSN for the business database |
+| `XLH_DATABASE_ALLOW_INSECURE` | local only | permits a plaintext local-test DSN; must be `false` in production |
+| `XLH_DATABASE_TLS_CA_FILE` | production | CA bundle used by the fixed `xlh-verified` TLS profile |
+| `XLH_DATABASE_TLS_SERVER_NAME` | production | hostname verified by the fixed `xlh-verified` TLS profile |
+| `XLH_DATABASE_TLS_CERT_FILE` / `XLH_DATABASE_TLS_KEY_FILE` | optional pair | client certificate and key for mutual TLS |
+| `XLH_DATABASE_*CONNECTION*` | no | bounded pool lifetime/idle settings |
+| `XLH_DATABASE_MIGRATION_LOCK_TIMEOUT` | no | bounded MySQL migration-lock wait |
 | `XLH_AI_API_KEY` | yes | OpenAI-compatible model credential |
-| `XLH_AI_BASE_URL` | no | model API base URL |
-| `XLH_AI_CHAT_MODEL` | no | chat/tool-calling model |
-| `XLH_AI_EMBEDDING_MODEL` | no | embedding model |
+| `XLH_AI_BASE_URL` / `XLH_AI_CHAT_MODEL` | no | model endpoint and model |
 | `XLH_PUBLIC_ORIGIN` | deployed browser app | same-origin mutation policy |
 | `XLH_COOKIE_SECURE` | deployed HTTPS | must remain `true` outside local HTTP |
-| `XLH_SEARCH_ENABLED` | no | register public Web Search when `true` |
-| `SEARXNG_BASE_URL` | when Web Search is enabled | SearXNG endpoint |
-| `XLH_RESEARCH_TIMEOUT` | no | total Research Agent deadline, default `25s` |
-| `XLH_RESEARCH_TOOL_TIMEOUT` | no | per-tool deadline, default `10s` |
-| `XLH_RESEARCH_MAX_ITERATIONS` | no | model iteration budget, default `6` |
-| `XLH_RESEARCH_MAX_TOOL_CALLS` | no | tool call budget, default `8` |
-| `XLH_ADVANCED_AI_ENABLED` | no | require the three-Agent + official LightRAG path; default `false` |
-| `XLH_METRICS_TOKEN` | when advanced AI or flash sale enabled | distinct 32-512 character operator bearer token for `GET /metrics`; no CR/LF |
-| `XLH_LIGHTRAG_BASE_URL` | when advanced AI enabled | private official LightRAG API URL |
-| `XLH_LIGHTRAG_API_KEY` | when advanced AI enabled | distinct 32-512 character server-to-server LightRAG API key; no CR/LF |
+| `XLH_SEARCH_ENABLED` / `SEARXNG_BASE_URL` | optional | public Web Search switch and endpoint |
+| `XLH_LIGHTRAG_BASE_URL` | yes | official LightRAG API URL; defaults to `https://127.0.0.1:9621` and must use HTTPS unless the local override is explicit |
+| `XLH_LIGHTRAG_ALLOW_INSECURE` | local/controlled only | permits an HTTP LightRAG URL when exactly parseable as boolean `true`; default and production value is `false` |
+| `XLH_LIGHTRAG_API_KEY` | yes | distinct 32-512 character server-to-server key |
 | `XLH_LIGHTRAG_WORKSPACE` | no | pinned workspace, default `xiaolanhe_v1` |
-| `XLH_LIGHTRAG_WORKING_DIR` | no | expected directory, default `/app/data/rag_storage` |
-| `XLH_LIGHTRAG_LLM_*` | LightRAG container | LLM binding endpoint, key and model |
-| `XLH_LIGHTRAG_EMBEDDING_*` | LightRAG container | embedding endpoint, key, model and dimension |
-| `XLH_ASSISTANT_TOTAL_TIMEOUT` | no | shared Agent deadline, default `45s` |
-| `XLH_ASSISTANT_MAX_MODEL_CALLS` / `XLH_ASSISTANT_MAX_TOOL_CALLS` | no | shared budgets, defaults `12` / `12` |
-| `XLH_ASSISTANT_MAX_DELEGATIONS` | no | shared delegation cap, default `3` |
-| `XLH_PLANNING_TIMEOUT` | no | Planning Agent local deadline, default `15s` |
-| `XLH_SUMMARY_*` | no | summary timeout, threshold, cap and prompt version |
-| `XLH_FLASH_SALE_ENABLED` | no | opt in to Redis + RocketMQ flash sale; default `false` |
-| `XLH_REDIS_URL` | when flash sale enabled | `redis://` or `rediss://` URL with an explicit non-empty password; use TLS/private networking in production |
-| `XLH_REDIS_KEY_PREFIX` | no | deployment-specific Redis namespace |
-| `XLH_ROCKETMQ_NAMESERVERS` | when flash sale enabled | comma-separated private NameServer addresses |
-| `XLH_ROCKETMQ_ACCESS_KEY` / `XLH_ROCKETMQ_SECRET_KEY` | provider-dependent | RocketMQ ACL credentials; configure together |
-| `XLH_ROCKETMQ_TOPIC` | no | versioned reservation topic |
-| `XLH_ROCKETMQ_PRODUCER_GROUP` / `XLH_ROCKETMQ_CONSUMER_GROUP` | no | stable deployment-scoped groups |
+| `XLH_LIGHTRAG_WORKING_DIR` | no | expected path, default `/app/data/rag_storage` |
+| `XLH_LIGHTRAG_REBUILD_FENCE_DIR` | yes | read-only deployment fence directory visible to the Go service |
+| `XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR` | LightRAG Compose | canonical absolute host directory bind-mounted read-only for steady state |
+| `XLH_LIGHTRAG_DEPLOYMENT_GENERATION` | yes | versioned deployment/restore generation |
+| `XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256` | yes | exact verified storage/embedding contract digest |
+| `XLH_LIGHTRAG_LLM_*` | LightRAG service | LLM endpoint, key and model |
+| `XLH_LIGHTRAG_EMBEDDING_*` | LightRAG service | embedding endpoint, key, model and dimension |
+| `XLH_MILVUS_MINIO_USER` / `XLH_MILVUS_MINIO_PASSWORD` | local Milvus stack | MinIO credentials; do not use example values in production |
+| `XLH_MILVUS_ROOT_PASSWORD` | Milvus server + one-time init | nonempty server initialization password used as a root token only by the init job; never passed to steady-state LightRAG |
+| `XLH_MILVUS_TOKEN` | Milvus init + LightRAG | distinct `username:password`; init assigns only pinned runtime privileges and verifies it cannot create databases/users |
+| `XLH_LIGHTRAG_ATTEMPT_ID` / `XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR` | empty bootstrap only | unique attempt and canonical absolute evidence path; not required by steady-state start |
+| `XLH_ADVANCED_AI_ENABLED` | no | selects advanced orchestration only; default `false` |
+| `XLH_METRICS_TOKEN` | advanced AI or flash sale | distinct operator bearer token for `GET /metrics` |
+| `XLH_FLASH_SALE_ENABLED` | no | opts into Redis + RocketMQ; default `false` |
+| `XLH_REDIS_URL` | flash sale | authenticated `rediss://` URL; plaintext `redis://` is local/CI only |
+| `XLH_REDIS_ALLOW_INSECURE` | local/CI only | permits plaintext `redis://` when exactly parseable as boolean `true`; default and production value is `false` |
+| `XLH_ROCKETMQ_NAMESERVERS` | flash sale | comma-separated private NameServer addresses |
+| `XLH_ROCKETMQ_ACCESS_KEY` / `XLH_ROCKETMQ_SECRET_KEY` | production flash sale | non-empty RocketMQ ACL pair; partial pairs are always rejected |
+| `XLH_ROCKETMQ_ALLOW_INSECURE` | local/CI only | permits both RocketMQ ACL values to be absent when exactly parseable as boolean `true`; default and production value is `false` |
 
-Use the hosting provider's secret store. `.env.example` contains no working
-credential and is only a local template.
+Use the deployment platform's secret store. Do not log or persist DSNs, database
+passwords, LightRAG/Milvus credentials, model keys or backup credentials in
+markers, reports or checked-in files. `.env.example` is a local template only.
+Private networking is not a substitute for transport security: without TLS, an
+intermediary can observe LightRAG credentials/content or authenticated Redis traffic.
+For a production flash-sale deployment, keep both insecure overrides `false`, use an
+authenticated `rediss://` URL, and configure both RocketMQ ACL values through the
+secret store. If flash sale remains disabled, Redis, RocketMQ and these override
+variables are not required.
 
 ## Metrics And Host Monitoring
 
-When `XLH_METRICS_TOKEN` is configured, scrape the private application endpoint with
-a dedicated operator credential:
+When `XLH_METRICS_TOKEN` is configured, scrape the application endpoint with a
+dedicated operator credential over a private network or operator-only gateway:
 
 ```bash
 curl --fail \
@@ -164,128 +277,253 @@ curl --fail \
   https://<private-service>/metrics
 ```
 
-The route is not registered when the token is empty. Advanced mode and flash-sale
-mode each reject startup unless the token is present and valid. Do not reuse the user session secret,
-LightRAG key or model key. Keep `/metrics` on a private network or protect it with an
-operator-only gateway in addition to the bearer token.
+The route is not registered when the token is empty. Advanced orchestration and
+flash-sale mode each require a valid token; do not reuse a user-session secret,
+LightRAG key, model key or database credential. Application metrics use bounded
+labels for Agent/model, MySQL, LightRAG pipeline/fence/document and flash-sale
+outcomes. They never use run, session, user or source identifiers as labels and
+do not expose prompts, content, SQL, DSNs or keys.
 
-The application exposes bounded Prometheus metrics for Agent operations/budgets,
-model request results, provider-reported token usage, LightRAG requests/queries/
-storage contract/pipeline/recovery/managed document status and memory-summary work.
-It also exposes bounded flash-sale admission, transaction/check, consume, final-guard,
-recovery, expiry and release outcomes plus processed-item and pending-age histograms.
-`usage_reported=false` means the model provider omitted usage metadata; no token
-estimate is substituted. Run/session/user/source keys and content are not metric
-labels. This release does not emit OpenTelemetry spans. Configure the host or
-orchestrator separately for LightRAG volume bytes/free space, process RSS, container
-memory, restarts and filesystem errors; those values cannot be proven by the
-LightRAG HTTP API and are intentionally not fabricated by XiaoLanHe.
+Collect process memory, filesystem capacity, volume bytes, container restarts and
+Milvus/etcd/MinIO resource saturation at the host or orchestrator. Those values
+cannot be inferred safely from the LightRAG API, and this release does not claim
+to install an OpenTelemetry exporter or emit spans.
 
-## Migrations And Seed
+## Migrations, Seed And Legacy Boundaries
 
-Startup applies immutable `migrations/*.sql` under a PostgreSQL advisory lock
-and records checksums. Never edit a migration already applied to a shared
-database. Seed demo data explicitly, not at every startup:
+Application startup applies the independent one-statement-per-file MySQL
+baseline in `migrations/mysql/`. It obtains a fixed-connection MySQL migration
+lock, records dirty state before DDL and fails closed on dirty/checksum/postcondition
+errors. It does not copy live PostgreSQL data.
+
+Existing PostgreSQL migrations under `migrations/` are immutable historical
+migration input. Keep them in the repository; never rewrite their checksums or
+run them against MySQL. PostgreSQL/pgx may be used only by the isolated,
+operator-invoked legacy knowledge importer and relational cutover tool. Neither
+path may be imported by the normal server, seed or evaluation binaries.
+
+Seed demo data explicitly, not at every startup:
 
 ```bash
 XLH_SEED_ADMIN_PASSWORD='replace-with-a-strong-password' go run ./cmd/seed
 ```
 
-The seed command updates the configured demo admin password, so do not run it
+The seed command updates the configured demo admin password. Do not run it
 against an account whose ownership is unknown.
 
-## Backup, Rollback, Smoke
-
-Before migration or release, take a provider snapshot or a logical dump. Free
-Render PostgreSQL has no managed backups, so export a logical dump yourself or
-upgrade before storing data you cannot recreate:
+The legacy knowledge importer is dry-run by default:
 
 ```bash
-pg_dump --format=custom --file=xiaolanhe.dump "$XLH_DATABASE_URL"
+go run ./cmd/import-knowledge --limit 20 \
+  --manifest ./artifacts/legacy-knowledge-manifest.json \
+  --checkpoint ./artifacts/legacy-knowledge-checkpoint.json
+go run ./cmd/import-knowledge --execute --limit 20 \
+  --manifest ./artifacts/legacy-knowledge-manifest.json \
+  --checkpoint ./artifacts/legacy-knowledge-checkpoint.json
+go run ./cmd/import-knowledge --reconcile --limit 20 \
+  --manifest ./artifacts/legacy-knowledge-manifest.json \
+  --checkpoint ./artifacts/legacy-knowledge-checkpoint.json \
+  --reconciliation-report ./artifacts/legacy-knowledge-reconciliation.json
 ```
 
-Migrations 001-007 are additive. Migration 007 contains only conversation summary
-and profile changes; it contains no knowledge or LightRAG tables.
+The first command scans the frozen source and writes the immutable manifest plus
+initial checkpoint. Repeating the same `--execute` command resumes from the
+checkpoint's continuous-success watermark; the removed `--after-id` flag must not be
+used. A completed import still requires `--reconcile` and retention of its immutable
+report. The isolated importer applies the same HTTPS-by-default rule as the server;
+HTTP requires `XLH_LIGHTRAG_ALLOW_INSECURE=true` and is only for a controlled local
+environment because its credential and canonical document bodies are sensitive.
+No legacy chunk or pgvector value is copied: LightRAG re-chunks and re-embeds the
+canonical document through its API. PostgreSQL knowledge remains read-only through the
+rollback window; physical deletion requires separate approval.
 
-### LightRAG import, backup and restore
+## Backup And Restore
 
-Run the legacy importer without `--execute` first. The report contains stable legacy
-IDs/source keys and the last scanned ID; only an explicit execute run writes:
+Backup/restore evidence is a rollout prerequisite, not an application feature.
+Do not accept irreplaceable data until an isolated restore has been executed and
+its RPO/RTO recorded. Encrypt backups, restrict access and define retention.
+
+### MySQL
+
+Prefer provider snapshots plus a verified point-in-time recovery policy. For a
+logical backup, use a dedicated least-privilege client configuration file rather
+than putting the password on the command line. Since all application tables are
+InnoDB, a representative flow is:
 
 ```bash
-go run ./cmd/import-knowledge --limit 20
-go run ./cmd/import-knowledge --execute --limit 20 --after-id 0
+mysqldump --defaults-extra-file=/secure/mysql-client.cnf \
+  --single-transaction --routines --triggers --events \
+  --set-gtid-purged=OFF xiaolanhe > xiaolanhe.sql
+
+mysql --defaults-extra-file=/secure/mysql-restore-client.cnf \
+  xiaolanhe_restore < xiaolanhe.sql
 ```
 
-Each execute run handles at most 100 records, waits for terminal track status and
-reports partial failures without blind write retry. Re-run from the reported
-`lastId`; 409 reconciliation uses the deterministic source key. No LightRAG ID is
-written back into PostgreSQL.
+Restore into an empty isolated MySQL 8.4 target. Verify server version, InnoDB,
+UTC/strict session settings, migration checksums, constraints, row counts,
+inventory, claims, orders, payments, entitlements and bounded read/write smoke
+before declaring the backup usable. Never test a restore over the live database.
 
-A consistent native-store backup must include the complete `WORKING_DIR`, never
-selected files:
+### LightRAG And Milvus
 
-1. Disable knowledge mutations at the public facade and wait until
-   `/documents/pipeline_status` is idle with no recovery required.
-2. Stop the one LightRAG service cleanly.
-3. Snapshot/archive the complete `xlh-lightrag-data` volume plus the pinned image,
-   workspace, model and embedding configuration.
-4. Restart the service, or restore into an empty volume using the same pinned
-   configuration.
-5. Verify authenticated `/health`, managed document counts and fixed local/global/
-   hybrid/mix retrieval cases before accepting writes.
+The knowledge consistency unit is indivisible:
 
-Never restore into a non-empty workspace and never change embedding dimension/prefix
-semantics in place; use a new workspace and re-index. Volume encryption, access and
-retention are deployment responsibilities.
+- the complete LightRAG `WORKING_DIR`;
+- the Milvus data volume;
+- the etcd data volume;
+- the MinIO data volume; and
+- pinned LightRAG/Milvus/embedding/workspace configuration.
 
-The repository provides an isolated destructive lifecycle gate that performs the
-same procedure, including missing/wrong-key checks, one real ingestion, all four
-retrieval modes, clean restart, whole-volume archive/empty-volume restore and exact
-delete. It creates a unique Compose project and refuses to reuse an existing one:
+For raw-volume backup, stop public knowledge mutations, wait for the document
+pipeline to become idle, stop every LightRAG writer, then cleanly stop Milvus,
+etcd and MinIO before archiving all four state volumes. A LightRAG-only or
+Milvus-only snapshot is incomplete and must be rejected.
+
+Restore every component into empty volumes. A restored `verified` fence is never
+trusted: use a new deployment generation, publish `stale`, start etcd/MinIO/Milvus
+while LightRAG writers remain stopped, and run fresh source/status, collection
+schema/index, exact ID-set and retrieval/citation verification. Only a new
+`restore_verify` report may publish `verified` and allow LightRAG to start.
+
+The isolated lifecycle gate exercises ingestion, all retrieval modes, restart,
+whole-unit backup/restore and exact deletion. It creates and destroys only its
+unique disposable Compose project, calls real providers and may incur cost:
 
 ```bash
-export XLH_LIGHTRAG_API_KEY='...'
-export XLH_LIGHTRAG_LLM_API_KEY='...'
-export XLH_LIGHTRAG_EMBEDDING_API_KEY='...'
 export XLH_LIGHTRAG_LIFECYCLE_ACK=isolated-destructive-test
 make lightrag-lifecycle
 ```
 
-This invokes real provider extraction/query calls and may incur cost. Run it only on
-a disposable Docker host with port 9621 free; the script removes only its uniquely
-labelled Compose resources and volume. Save the command output as PRE_MERGE evidence.
+Run it only after separate credential, cost and destructive-test approval.
 
-### Rollback
+### Flash-Sale State
 
-For an Assistant/LightRAG rollback, stop knowledge mutations, set
-`XLH_ADVANCED_AI_ENABLED=false`, redeploy, and retain the LightRAG volume for
-diagnosis. Since there was no dual write or continuous synchronizer, no reverse sync
-exists. The disabled mode can use the legacy local knowledge baseline, but it must not
-be labelled as LightRAG.
+When flash sale is enabled, configure and rehearse MySQL backup together with
+Redis AOF/snapshot and RocketMQ broker recovery. Monitor consumer lag, retries,
+DLQ and Redis/MySQL reconciliation. Do not delete Redis markers or RocketMQ
+topics during an application rollback: accepted requests may still need repair.
+Production requires private, authenticated persistent Redis over TLS (`rediss://`)
+and a persistent RocketMQ deployment with an access/secret ACL pair and tested broker
+recovery. Keep `XLH_REDIS_ALLOW_INSECURE=false` and
+`XLH_ROCKETMQ_ALLOW_INSECURE=false`; startup fails closed otherwise. The
+local single-broker Compose stack is integration tooling, not HA. `/readyz` checks
+Redis PING and an authenticated RocketMQ topic-route lookup with a publishable
+queue; that does not replace lag, DLQ, durability or end-to-end publish monitoring.
+The pinned admin API does not cancel its underlying route call when the readiness
+context expires. XiaoLanHe bounds public response time and admits at most one such
+residual probe; repeated readiness polls cannot create unbounded SDK work.
+The pinned RocketMQ Go SDK has no cancellable total `Consumer.Start` deadline. XiaoLanHe
+keeps that call synchronous and uses a 10-second process fail-stop watchdog after the
+bounded route preflight; the supervisor must restart a process that exits with
+`outcome=startup_timeout`. This avoids reporting startup failure while an orphaned SDK
+client continues mutating lifecycle state. Repeated exits require operator investigation
+of NameServer reachability, topic routes and broker heartbeat latency.
 
-For a flash-sale rollback, set `XLH_FLASH_SALE_ENABLED=false`, stop new intake,
-inspect/drain accepted pending work, and redeploy the previous image;
-leave compatible added tables in place and use a reviewed forward migration for
-schema correction. Do not delete Redis markers or the RocketMQ topic during an
-application rollback: accepted requests may still need reconciliation. Restore a
-database, Redis AOF/snapshot, or broker store only for actual data loss, after
-testing the restore in an isolated environment.
+## Rollout And Rollback
 
-Production flash-sale operation additionally requires private persistent Redis
-with an explicit URL password, TLS where supported, replication and tested backup/restore;
-and a persistent RocketMQ cluster with ACL, monitored consumer lag/retries/DLQ,
-and tested broker recovery. A single local Compose broker is integration tooling,
-not a high-availability production topology. When the feature is enabled, `/readyz`
-requires Redis PING and an authenticated RocketMQ topic-route lookup with at least
-one publishable queue. This catches a missing or inaccessible topic rather than
-merely an open NameServer TCP port; it does not replace broker lag, DLQ, durability
-or end-to-end publish monitoring. When advanced AI is enabled, startup
-and `/readyz` also require authenticated LightRAG health with the exact version,
-workspace, directory and native stores; there is no silent PostgreSQL knowledge
-fallback.
+No command in the default application startup performs a PostgreSQL-to-MySQL
+copy, NanoVectorDB-to-Milvus rebuild, production cutover or destructive cleanup.
+The following are separately approved rollout operations.
 
-After deploy:
+### Relational cutover
+
+1. Build `cmd/migrate-postgres-to-mysql` with an exact tool commit. Provision and
+   validate an empty MySQL 8.4/InnoDB target with private networking, verified TLS,
+   strict SQL mode and UTC; apply the exact embedded migrations and back up both
+   databases. Create a normalized effective-UID-owned `0700` checkpoint directory.
+2. Set `XLH_LEGACY_POSTGRES_URL` and `XLH_DATABASE_URL`, then run `--mode inspect` and
+   `--mode copy` without `--execute`. Review source inventory/checks and target identity.
+   The tool derives target provenance from the embedded migration filenames/names/SHA-256
+   values, requires an exact live `schema_migration` match and binds the inspected target
+   schema; there is no `--target-migration-commit` input.
+3. Freeze all application mutation endpoints, stop/drain RocketMQ consumers and
+   background workers, drain CDC/outbox work, and disable target write traffic and
+   automatic application/worker restart. Independent approved controllers must issue
+   (a) a short-lived Ed25519-signed `xlh.postgres_write_freeze.v1` attestation bound to
+   the observed source identity/snapshot and (b) a short-lived Ed25519-signed
+   `xlh.mysql_target_writer_fence.v1` attestation bound to the inspected target
+   instance/database/migration/schema identity and approved deployment generation. The
+   target artifact must prove zero application/background writers plus disabled restart
+   and write traffic. `GET_LOCK` only serializes migration tools and is not this proof.
+4. Trust the two key IDs and target deployment generation out of band. Supply each raw
+   base64 public key through exactly one of `XLH_SOURCE_FREEZE_PUBLIC_KEY` /
+   `XLH_TARGET_WRITER_FENCE_PUBLIC_KEY` or the corresponding public-key-file flag. Each
+   file must be a non-symlink regular file owned by the effective UID with mode `0400`
+   or `0600`; the command validates and reads one no-follow descriptor.
+5. Run `--mode copy --execute` with both attestation paths, both key IDs, both trusted
+   keys and `--target-deployment-generation`. If interrupted, use `--mode resume
+   --execute` with the same source attestation identity and either the existing target
+   fence or a freshly issued fence for the same target identity/generation. The tool
+   reloads and authenticates the target fence against the live target before every
+   copied/deferred batch and auto-increment mutation, then revalidates both evidence
+   records and the live target before successful reconciliation or
+   `Completed/CutoverReady` publication.
+6. Preserve IDs/UTC timestamps, complete deferred foreign keys, advance auto increments,
+   and reconcile all tables, constraints, inventory, claims, orders, payments,
+   entitlements, flash-sale reservations and the separate legacy knowledge import.
+7. Run `--mode verify` without `--execute`, `--source-freeze-attestation` or
+   `--target-writer-fence-attestation`, but with both trusted public keys/key IDs and
+   `--target-deployment-generation`. Verify must authenticate both manifest-embedded
+   attestations, the target canonical payload/digests and referenced immutable
+   reconciliation report, use
+   read-only database snapshots and existing locks only, and create/replace/update/delete
+   no checkpoint artifact or database data. Preserve before/after evidence proving this.
+8. After independent approval, stop the old process, start the reviewed build against
+   MySQL while writes remain disabled, run read-only smoke, then explicitly approve the
+   bounded write smoke and enable consumers/writes. Observe the approved window.
+9. Keep PostgreSQL read-only through the rollback window. Do not delete it automatically.
+
+If smoke fails before MySQL accepts new writes, restore the previous build and
+read-only PostgreSQL source. Once MySQL accepts writes, automatic reversal is
+forbidden because there is no reverse dual write: freeze writes, reconcile and
+make an explicit operator decision.
+
+The real PostgreSQL-to-MySQL 8.4 copy/resume and authenticated verify rehearsals are
+required readiness evidence. Until both V27 and V28 run successfully, relational cutover
+and overall readiness remain `BLOCKED/TODO`; unit or static checks are not substitutes.
+
+### Vector cutover
+
+1. Freeze knowledge mutations, drain the pipeline, stop all LightRAG writers and
+   disable automatic restart.
+2. Back up the complete NanoVectorDB-era workspace and pinned configuration.
+3. Obtain explicit destructive-operation and paid-embedding approval.
+4. Start healthy Milvus dependencies and invoke all three pinned official rebuild
+   functions for entities, relationships and chunks.
+5. Verify structured rebuild stats, unchanged graph/KV source digests, exact target
+   ID sets, 1024-dimensional `AUTOINDEX`/`COSINE` schemas, status, retrieval and
+   citations.
+6. Publish the immutable report and `verified` fence for the exact generation and
+   contract, then start LightRAG and observe.
+
+If rebuild or validation fails, keep LightRAG stopped and the fence ineligible.
+Before new Milvus-era writes, rollback may restore the complete prior workspace
+and pinned NanoVectorDB configuration. After new writes, rollback requires another
+writer freeze and explicit consistency/reconciliation decision. It is never an
+automatic fallback.
+
+## Verification And Smoke
+
+Static checks do not require provider credentials:
+
+```bash
+make mysql-static
+make milvus-static
+make fence-static
+make architecture
+```
+
+Live checks require the named local services and fail rather than silently skip
+when their required configuration is absent:
+
+```bash
+make mysql-live
+make milvus-live
+make fence-live
+make lightrag-live
+```
+
+After an approved deployment:
 
 ```bash
 curl --fail https://<service>/healthz
@@ -295,8 +533,8 @@ curl --fail https://<service>/api/community/posts
 curl --fail https://<service>/api/deals
 ```
 
-For an isolated environment where creating demo data is acceptable, run the
-full authenticated product smoke after seeding:
+For an isolated target where creating demo data is acceptable, run the full
+authenticated product smoke only after explicit approval:
 
 ```bash
 XLH_SMOKE_BASE_URL=https://<service> \
@@ -304,17 +542,8 @@ XLH_SMOKE_ADMIN_PASSWORD='<seeded-admin-password>' \
 bash scripts/smoke-product.sh
 ```
 
-The script creates a temporary user, community content, one coupon claim, one
-sandbox-paid order, and an entitlement. Omit `XLH_SMOKE_ADMIN_PASSWORD` to skip
-the admin catalog-write case. Do not run it against an environment where this
-demo data is unwanted.
-
-Hosted-environment authenticated/admin smoke and real model/Web smoke remain
-explicit rollout actions because they use credentials, create data, or may
-incur cost. The repository CI runs the same product script only against its
-disposable isolated database.
-
-Run `make eval` before rollout. It is a deterministic fixture comparison, not a claim
-about real-provider quality. Live LightRAG ingestion/retrieval, clean restart,
-backup/restore and real-model evaluation must be recorded separately in the rollout
-report.
+The smoke creates a temporary user, community content, a coupon claim, a
+sandbox-paid order and an entitlement. Hosted-environment writes, production
+restore, relational/vector cutover, real-model evaluation and paid provider
+calls remain rollout-only evidence. A skipped live check is `ENVIRONMENT BLOCKED`
+or `SKIPPED WITH RISK`, never a static pass.

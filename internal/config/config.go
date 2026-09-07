@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,7 +24,6 @@ type Config struct {
 	PlanningPrompt        string
 	ResearchPrompt        string
 	SynthesisPrompt       string
-	EmbeddingModel        string
 	ResearchTimeout       time.Duration
 	ResearchToolTimeout   time.Duration
 	ResearchMaxIterations int
@@ -36,6 +36,20 @@ type Config struct {
 	MetricsToken          string
 	FlashSale             FlashSaleConfig
 	AdvancedAI            AdvancedAIConfig
+	Database              DatabaseConfig
+}
+
+type DatabaseConfig struct {
+	MaxOpenConnections    int
+	MaxIdleConnections    int
+	ConnectionMaxLifetime time.Duration
+	ConnectionMaxIdleTime time.Duration
+	MigrationLockTimeout  time.Duration
+	AllowInsecure         bool
+	TLSCAFile             string
+	TLSServerName         string
+	TLSCertificateFile    string
+	TLSKeyFile            string
 }
 
 type AdvancedAIConfig struct {
@@ -52,19 +66,23 @@ type AdvancedAIConfig struct {
 }
 
 type LightRAGConfig struct {
-	BaseURL, APIKey, Workspace, WorkingDirectory string
-	CoreVersion, APIVersion                      string
-	Timeout                                      time.Duration
+	BaseURL, APIKey, Workspace, WorkingDirectory    string
+	CoreVersion, APIVersion                         string
+	FencePath, FenceGeneration, FenceContractSHA256 string
+	AllowInsecure                                   bool
+	Timeout                                         time.Duration
 }
 
 type FlashSaleConfig struct {
 	Enabled                bool
 	RedisURL               string
+	RedisAllowInsecure     bool
 	RedisKeyPrefix         string
 	RedisRecoveryGrace     time.Duration
 	RocketMQNameServers    []string
 	RocketMQAccessKey      string
 	RocketMQSecretKey      string
+	RocketMQAllowInsecure  bool
 	RocketMQTopic          string
 	RocketMQProducer       string
 	RocketMQConsumer       string
@@ -146,7 +164,6 @@ func Load() (Config, error) {
 		PlanningPrompt:        string(planningPrompt),
 		ResearchPrompt:        string(researchPrompt),
 		SynthesisPrompt:       string(synthesisPrompt),
-		EmbeddingModel:        env("XLH_AI_EMBEDDING_MODEL", "text-embedding-v4"),
 		ResearchTimeout:       researchTimeout,
 		ResearchToolTimeout:   researchToolTimeout,
 		ResearchMaxIterations: researchMaxIterations,
@@ -158,6 +175,9 @@ func Load() (Config, error) {
 		PublicOrigin:          strings.TrimRight(os.Getenv("XLH_PUBLIC_ORIGIN"), "/"),
 		MetricsToken:          strings.TrimSpace(os.Getenv("XLH_METRICS_TOKEN")),
 		FlashSale:             flashSale,
+	}
+	if cfg.Database, err = loadDatabase(); err != nil {
+		return Config{}, err
 	}
 	cfg.AdvancedAI, err = loadAdvancedAI()
 	if err != nil {
@@ -178,28 +198,95 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+func loadDatabase() (DatabaseConfig, error) {
+	maxOpen, err := positiveInt("XLH_DATABASE_MAX_OPEN_CONNECTIONS", 25)
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+	maxIdle, err := positiveInt("XLH_DATABASE_MAX_IDLE_CONNECTIONS", 10)
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+	lifetime, err := positiveDuration("XLH_DATABASE_CONNECTION_MAX_LIFETIME", "30m")
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+	idleTime, err := positiveDuration("XLH_DATABASE_CONNECTION_MAX_IDLE_TIME", "5m")
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+	lockTimeout, err := positiveDuration("XLH_DATABASE_MIGRATION_LOCK_TIMEOUT", "30s")
+	if err != nil {
+		return DatabaseConfig{}, err
+	}
+	allowInsecure, err := strconv.ParseBool(env("XLH_DATABASE_ALLOW_INSECURE", "false"))
+	if err != nil {
+		return DatabaseConfig{}, errors.New("XLH_DATABASE_ALLOW_INSECURE must be true or false")
+	}
+	if maxIdle > maxOpen || maxOpen > 256 || lifetime > 24*time.Hour || idleTime > lifetime || lockTimeout > 10*time.Minute {
+		return DatabaseConfig{}, errors.New("database pool or migration limit exceeds the supported maximum")
+	}
+	tlsCAFile := strings.TrimSpace(os.Getenv("XLH_DATABASE_TLS_CA_FILE"))
+	tlsServerName := strings.TrimSpace(os.Getenv("XLH_DATABASE_TLS_SERVER_NAME"))
+	tlsCertificateFile := strings.TrimSpace(os.Getenv("XLH_DATABASE_TLS_CERT_FILE"))
+	tlsKeyFile := strings.TrimSpace(os.Getenv("XLH_DATABASE_TLS_KEY_FILE"))
+	for name, value := range map[string]string{
+		"XLH_DATABASE_TLS_CA_FILE": tlsCAFile, "XLH_DATABASE_TLS_CERT_FILE": tlsCertificateFile, "XLH_DATABASE_TLS_KEY_FILE": tlsKeyFile,
+	} {
+		if value != "" && (!filepath.IsAbs(value) || filepath.Clean(value) != value) {
+			return DatabaseConfig{}, fmt.Errorf("%s must be an absolute normalized path", name)
+		}
+	}
+	if strings.ContainsAny(tlsServerName, "\r\n") {
+		return DatabaseConfig{}, errors.New("XLH_DATABASE_TLS_SERVER_NAME must not contain line breaks")
+	}
+	if (tlsCertificateFile == "") != (tlsKeyFile == "") {
+		return DatabaseConfig{}, errors.New("XLH_DATABASE_TLS_CERT_FILE and XLH_DATABASE_TLS_KEY_FILE must be configured together")
+	}
+	if !allowInsecure && (tlsCAFile == "" || tlsServerName == "") {
+		return DatabaseConfig{}, errors.New("XLH_DATABASE_TLS_CA_FILE and XLH_DATABASE_TLS_SERVER_NAME are required in production mode")
+	}
+	return DatabaseConfig{
+		MaxOpenConnections: maxOpen, MaxIdleConnections: maxIdle, ConnectionMaxLifetime: lifetime,
+		ConnectionMaxIdleTime: idleTime, MigrationLockTimeout: lockTimeout, AllowInsecure: allowInsecure,
+		TLSCAFile: tlsCAFile, TLSServerName: tlsServerName, TLSCertificateFile: tlsCertificateFile, TLSKeyFile: tlsKeyFile,
+	}, nil
+}
+
+// LoadDatabaseConfig loads the database-only settings used by operator commands
+// that intentionally do not need the application's AI, prompt, or HTTP config.
+func LoadDatabaseConfig() (DatabaseConfig, error) { return loadDatabase() }
+
 func loadAdvancedAI() (AdvancedAIConfig, error) {
 	enabled, err := strconv.ParseBool(env("XLH_ADVANCED_AI_ENABLED", "false"))
 	if err != nil {
 		return AdvancedAIConfig{}, errors.New("XLH_ADVANCED_AI_ENABLED must be true or false")
 	}
-	cfg := AdvancedAIConfig{Enabled: enabled}
-	if !enabled {
-		return cfg, nil
+	allowInsecure, err := strconv.ParseBool(env("XLH_LIGHTRAG_ALLOW_INSECURE", "false"))
+	if err != nil {
+		return AdvancedAIConfig{}, errors.New("XLH_LIGHTRAG_ALLOW_INSECURE must be true or false")
 	}
+	cfg := AdvancedAIConfig{Enabled: enabled}
 	cfg.LightRAG = LightRAGConfig{
-		BaseURL:          strings.TrimRight(strings.TrimSpace(env("XLH_LIGHTRAG_BASE_URL", "http://127.0.0.1:9621")), "/"),
-		APIKey:           strings.TrimSpace(os.Getenv("XLH_LIGHTRAG_API_KEY")),
-		Workspace:        strings.TrimSpace(env("XLH_LIGHTRAG_WORKSPACE", "xiaolanhe_v1")),
-		WorkingDirectory: strings.TrimSpace(env("XLH_LIGHTRAG_WORKING_DIR", "/app/data/rag_storage")),
-		CoreVersion:      "1.5.7", APIVersion: "0344",
+		BaseURL:             strings.TrimRight(strings.TrimSpace(env("XLH_LIGHTRAG_BASE_URL", "https://127.0.0.1:9621")), "/"),
+		APIKey:              strings.TrimSpace(os.Getenv("XLH_LIGHTRAG_API_KEY")),
+		Workspace:           strings.TrimSpace(env("XLH_LIGHTRAG_WORKSPACE", "xiaolanhe_v1")),
+		WorkingDirectory:    strings.TrimSpace(env("XLH_LIGHTRAG_WORKING_DIR", "/app/data/rag_storage")),
+		FencePath:           strings.TrimSpace(os.Getenv("XLH_LIGHTRAG_REBUILD_FENCE_DIR")),
+		FenceGeneration:     strings.TrimSpace(os.Getenv("XLH_LIGHTRAG_DEPLOYMENT_GENERATION")),
+		FenceContractSHA256: strings.TrimSpace(os.Getenv("XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256")),
+		AllowInsecure:       allowInsecure,
+		CoreVersion:         "1.5.7", APIVersion: "0344",
 	}
 	parsed, parseErr := url.Parse(cfg.LightRAG.BaseURL)
 	if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return AdvancedAIConfig{}, errors.New("XLH_LIGHTRAG_BASE_URL must be an absolute http(s) URL without credentials, query or fragment")
 	}
+	if parsed.Scheme == "http" && !cfg.LightRAG.AllowInsecure {
+		return AdvancedAIConfig{}, errors.New("XLH_LIGHTRAG_BASE_URL must use https unless XLH_LIGHTRAG_ALLOW_INSECURE=true")
+	}
 	if !validSecret(cfg.LightRAG.APIKey) {
-		return AdvancedAIConfig{}, errors.New("XLH_LIGHTRAG_API_KEY must contain 32 to 512 characters without line breaks when advanced AI is enabled")
+		return AdvancedAIConfig{}, errors.New("XLH_LIGHTRAG_API_KEY must contain 32 to 512 characters without line breaks")
 	}
 	if !regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`).MatchString(cfg.LightRAG.Workspace) {
 		return AdvancedAIConfig{}, errors.New("XLH_LIGHTRAG_WORKSPACE is invalid")
@@ -207,8 +294,20 @@ func loadAdvancedAI() (AdvancedAIConfig, error) {
 	if !strings.HasPrefix(cfg.LightRAG.WorkingDirectory, "/") || strings.Contains(cfg.LightRAG.WorkingDirectory, "..") {
 		return AdvancedAIConfig{}, errors.New("XLH_LIGHTRAG_WORKING_DIR must be an absolute normalized path")
 	}
+	if !filepath.IsAbs(cfg.LightRAG.FencePath) || filepath.Clean(cfg.LightRAG.FencePath) != cfg.LightRAG.FencePath {
+		return AdvancedAIConfig{}, errors.New("XLH_LIGHTRAG_REBUILD_FENCE_DIR must be an absolute normalized path")
+	}
+	if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`).MatchString(cfg.LightRAG.FenceGeneration) {
+		return AdvancedAIConfig{}, errors.New("XLH_LIGHTRAG_DEPLOYMENT_GENERATION is invalid")
+	}
+	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(cfg.LightRAG.FenceContractSHA256) {
+		return AdvancedAIConfig{}, errors.New("XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256 must be sha256 followed by 64 lowercase hexadecimal characters")
+	}
 	if cfg.LightRAG.Timeout, err = positiveDuration("XLH_LIGHTRAG_TIMEOUT", "15s"); err != nil {
 		return AdvancedAIConfig{}, err
+	}
+	if !enabled {
+		return cfg, nil
 	}
 	if cfg.OverallTimeout, err = positiveDuration("XLH_ASSISTANT_TOTAL_TIMEOUT", "45s"); err != nil {
 		return AdvancedAIConfig{}, err
@@ -265,6 +364,12 @@ func loadFlashSale() (FlashSaleConfig, error) {
 	if !enabled {
 		return cfg, nil
 	}
+	if cfg.RedisAllowInsecure, err = strconv.ParseBool(env("XLH_REDIS_ALLOW_INSECURE", "false")); err != nil {
+		return FlashSaleConfig{}, errors.New("XLH_REDIS_ALLOW_INSECURE must be true or false")
+	}
+	if cfg.RocketMQAllowInsecure, err = strconv.ParseBool(env("XLH_ROCKETMQ_ALLOW_INSECURE", "false")); err != nil {
+		return FlashSaleConfig{}, errors.New("XLH_ROCKETMQ_ALLOW_INSECURE must be true or false")
+	}
 	cfg.RedisURL = strings.TrimSpace(os.Getenv("XLH_REDIS_URL"))
 	cfg.RedisKeyPrefix = env("XLH_REDIS_KEY_PREFIX", "xlh")
 	cfg.RocketMQNameServers = splitNonEmpty(os.Getenv("XLH_ROCKETMQ_NAMESERVERS"))
@@ -285,6 +390,9 @@ func loadFlashSale() (FlashSaleConfig, error) {
 		redisURL.Fragment != "" || strings.ContainsAny(cfg.RedisURL, "\r\n") || !hasRedisPassword || redisPassword == "" {
 		return FlashSaleConfig{}, errors.New("XLH_REDIS_URL must be an authenticated redis or rediss URL without a fragment")
 	}
+	if redisURL.Scheme == "redis" && !cfg.RedisAllowInsecure {
+		return FlashSaleConfig{}, errors.New("XLH_REDIS_URL must use rediss unless XLH_REDIS_ALLOW_INSECURE=true")
+	}
 	for _, address := range cfg.RocketMQNameServers {
 		host, port, splitErr := net.SplitHostPort(address)
 		portNumber, portErr := strconv.Atoi(port)
@@ -295,7 +403,10 @@ func loadFlashSale() (FlashSaleConfig, error) {
 	if (cfg.RocketMQAccessKey == "") != (cfg.RocketMQSecretKey == "") {
 		return FlashSaleConfig{}, errors.New("RocketMQ access and secret keys must be configured together")
 	}
-	if cfg.RocketMQAccessKey != "" && (!rocketMQNamePattern.MatchString(cfg.RocketMQAccessKey) || len(cfg.RocketMQSecretKey) > 512 || strings.ContainsAny(cfg.RocketMQSecretKey, "\r\n")) {
+	if cfg.RocketMQAccessKey == "" && !cfg.RocketMQAllowInsecure {
+		return FlashSaleConfig{}, errors.New("RocketMQ access and secret keys are required unless XLH_ROCKETMQ_ALLOW_INSECURE=true")
+	}
+	if cfg.RocketMQAccessKey != "" && (!rocketMQNamePattern.MatchString(cfg.RocketMQAccessKey) || strings.TrimSpace(cfg.RocketMQSecretKey) == "" || len(cfg.RocketMQSecretKey) > 512 || strings.ContainsAny(cfg.RocketMQSecretKey, "\r\n")) {
 		return FlashSaleConfig{}, errors.New("RocketMQ credentials are invalid")
 	}
 	if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`).MatchString(cfg.RedisKeyPrefix) {

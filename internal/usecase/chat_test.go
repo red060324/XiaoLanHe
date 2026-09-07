@@ -33,6 +33,24 @@ func TestChatRun(t *testing.T) {
 		}
 	})
 
+	t.Run("uses distinct stable keys for user and assistant messages", func(t *testing.T) {
+		store := &fakeStore{sessionID: 7}
+		chat := NewChat(store, &fakeAssistant{answer: Answer{Text: "hello", Model: "model"}})
+		keys := []string{"user-message-key", "assistant-message-key"}
+		chat.newMessageKey = func() (string, error) {
+			key := keys[0]
+			keys = keys[1:]
+			return key, nil
+		}
+
+		if _, err := chat.Run(context.Background(), ChatInput{SessionID: "session", Message: "hi"}); err != nil {
+			t.Fatal(err)
+		}
+		if len(store.saved) != 2 || store.saved[0].key != "user-message-key" || store.saved[1].key != "assistant-message-key" {
+			t.Fatalf("saved messages = %#v", store.saved)
+		}
+	})
+
 	t.Run("creates a session id when absent", func(t *testing.T) {
 		store := &fakeStore{sessionID: 9}
 		chat := NewChat(store, &fakeAssistant{answer: Answer{Text: "ok"}})
@@ -41,6 +59,29 @@ func TestChatRun(t *testing.T) {
 		result, err := chat.Run(context.Background(), ChatInput{Message: "hi"})
 		if err != nil || result.SessionID != "new-session" {
 			t.Fatalf("result=%#v err=%v", result, err)
+		}
+	})
+
+	t.Run("uses distinct stable keys for streamed user and assistant messages", func(t *testing.T) {
+		store := &fakeStore{sessionID: 2}
+		chat := NewChat(store, &fakeAssistant{stream: &fakeStream{chunks: []string{"done"}}})
+		keys := []string{"stream-user-key", "stream-assistant-key"}
+		chat.newMessageKey = func() (string, error) {
+			key := keys[0]
+			keys = keys[1:]
+			return key, nil
+		}
+
+		result, err := chat.Stream(context.Background(), ChatInput{SessionID: "s", Message: "hi"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = result.Stream.Recv()
+		if _, err := result.Stream.Recv(); !errors.Is(err, io.EOF) {
+			t.Fatalf("Recv() error = %v", err)
+		}
+		if len(store.saved) != 2 || store.saved[0].key != "stream-user-key" || store.saved[1].key != "stream-assistant-key" {
+			t.Fatalf("saved messages = %#v", store.saved)
 		}
 	})
 
@@ -217,6 +258,28 @@ func TestPersistingStreamRecv(t *testing.T) {
 			t.Fatalf("memory calls=%d session=%d", memory.callsCount, memory.sessionID)
 		}
 	})
+
+	t.Run("retries failed persistence with the same key and complete answer", func(t *testing.T) {
+		wantErr := errors.New("write outcome unconfirmed")
+		store := &fakeStore{saveAssistantErr: wantErr}
+		stream := &persistingStream{
+			AnswerStream: &fakeStream{chunks: []string{"complete"}, model: "m"}, ctx: context.Background(),
+			store: store, sessionDBID: 9, messageKey: "stable-assistant-key",
+		}
+		_, _ = stream.Recv()
+		if _, err := stream.Recv(); !errors.Is(err, wantErr) {
+			t.Fatalf("first save error = %v", err)
+		}
+		store.saveAssistantErr = nil
+		if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
+			t.Fatalf("retry error = %v", err)
+		}
+		if len(store.saveAttempts) != 2 || store.saveAttempts[0] != store.saveAttempts[1] || store.saveAttempts[0] != (savedMessage{
+			key: "stable-assistant-key", role: "assistant", content: "complete", model: "m",
+		}) {
+			t.Fatalf("save attempts = %#v", store.saveAttempts)
+		}
+	})
 }
 
 func TestNewSessionID(t *testing.T) {
@@ -229,15 +292,17 @@ func TestNewSessionID(t *testing.T) {
 	}
 }
 
-type savedMessage struct{ role, content, model string }
+type savedMessage struct{ key, role, content, model string }
 
 type fakeStore struct {
-	calls       *[]string
-	sessionID   int64
-	findErr     error
-	saveUserErr error
-	saved       []savedMessage
-	contextText string
+	calls            *[]string
+	sessionID        int64
+	findErr          error
+	saveUserErr      error
+	saveAssistantErr error
+	saved            []savedMessage
+	saveAttempts     []savedMessage
+	contextText      string
 }
 
 func (s *fakeStore) LoadContext(_ context.Context, _ int64, limit int) (string, error) {
@@ -254,14 +319,19 @@ func (s *fakeStore) FindOrCreateSession(_ context.Context, key string, userID in
 	return s.sessionID, s.findErr
 }
 
-func (s *fakeStore) SaveMessage(_ context.Context, _ int64, role, content, model string) error {
+func (s *fakeStore) SaveMessageWithKey(_ context.Context, _ int64, key, role, content, model string) error {
+	attempt := savedMessage{key: key, role: role, content: content, model: model}
+	s.saveAttempts = append(s.saveAttempts, attempt)
 	if s.calls != nil {
 		*s.calls = append(*s.calls, "save:"+role+":"+content+":"+model)
 	}
 	if role == "user" && s.saveUserErr != nil {
 		return s.saveUserErr
 	}
-	s.saved = append(s.saved, savedMessage{role: role, content: content, model: model})
+	if role == "assistant" && s.saveAssistantErr != nil {
+		return s.saveAssistantErr
+	}
+	s.saved = append(s.saved, attempt)
 	return nil
 }
 

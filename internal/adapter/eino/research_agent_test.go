@@ -58,8 +58,8 @@ func TestResearchAgentTypedTaskRejectsUnplannedMode(t *testing.T) {
 
 func TestResearchAgentResearch(t *testing.T) {
 	t.Run("observes evidence and refines the query", func(t *testing.T) {
-		store := &researchKnowledgeStore{search: func(_ context.Context, query string) ([]usecase.KnowledgeSnippet, error) {
-			return []usecase.KnowledgeSnippet{{ChunkID: int64(len(query)), Title: query, Text: query + " fact"}}, nil
+		store := &researchKnowledgeStore{search: func(_ context.Context, query string) ([]usecase.Evidence, error) {
+			return []usecase.Evidence{{Source: "lightrag", Title: query, Content: query + " fact"}}, nil
 		}}
 		var modelCalls atomic.Int32
 		model := &fakeChatModel{generateContext: func(_ context.Context, messages []*schema.Message) (*schema.Message, error) {
@@ -85,8 +85,8 @@ func TestResearchAgentResearch(t *testing.T) {
 	})
 
 	t.Run("keeps evidence and reports a partial provider failure", func(t *testing.T) {
-		store := &researchKnowledgeStore{search: func(context.Context, string) ([]usecase.KnowledgeSnippet, error) {
-			return []usecase.KnowledgeSnippet{{ChunkID: 1, Title: "guide", Text: "fact"}}, nil
+		store := &researchKnowledgeStore{search: func(context.Context, string) ([]usecase.Evidence, error) {
+			return []usecase.Evidence{{Source: "lightrag", Title: "guide", Content: "fact"}}, nil
 		}}
 		web := &researchWebClient{search: func(context.Context, string) (usecase.WebSearchResult, error) {
 			return usecase.WebSearchResult{}, errors.New("web unavailable")
@@ -133,8 +133,8 @@ func TestResearchAgentResearch(t *testing.T) {
 	})
 
 	t.Run("stops at the tool call budget with partial evidence", func(t *testing.T) {
-		store := &researchKnowledgeStore{search: func(_ context.Context, query string) ([]usecase.KnowledgeSnippet, error) {
-			return []usecase.KnowledgeSnippet{{ChunkID: int64(len(query)), Title: query, Text: "fact"}}, nil
+		store := &researchKnowledgeStore{search: func(_ context.Context, query string) ([]usecase.Evidence, error) {
+			return []usecase.Evidence{{Source: "lightrag", Title: query, Content: "fact"}}, nil
 		}}
 		model := scriptedResearchModel(schema.AssistantMessage("", []schema.ToolCall{
 			{ID: "1", Function: schema.FunctionCall{Name: "search_lightrag", Arguments: `{"query":"one"}`}},
@@ -156,8 +156,8 @@ func TestResearchAgentResearch(t *testing.T) {
 			call := calls.Add(1)
 			return researchToolCall(fmt.Sprint(call), "search_lightrag", fmt.Sprintf(`{"query":"q%d"}`, call)), nil
 		}}
-		store := &researchKnowledgeStore{search: func(context.Context, string) ([]usecase.KnowledgeSnippet, error) {
-			return []usecase.KnowledgeSnippet{{ChunkID: 1, Text: "fact"}}, nil
+		store := &researchKnowledgeStore{search: func(context.Context, string) ([]usecase.Evidence, error) {
+			return []usecase.Evidence{{Source: "lightrag", Content: "fact"}}, nil
 		}}
 		agent := newTestResearchAgent(t, model, store, nil, false, ResearchLimits{TotalTimeout: time.Second, ToolTimeout: time.Second, MaxIterations: 2, MaxToolCalls: 8})
 
@@ -171,7 +171,7 @@ func TestResearchAgentResearch(t *testing.T) {
 	t.Run("propagates request cancellation into a tool", func(t *testing.T) {
 		started := make(chan struct{})
 		var once sync.Once
-		store := &researchKnowledgeStore{search: func(ctx context.Context, _ string) ([]usecase.KnowledgeSnippet, error) {
+		store := &researchKnowledgeStore{search: func(ctx context.Context, _ string) ([]usecase.Evidence, error) {
 			once.Do(func() { close(started) })
 			<-ctx.Done()
 			return nil, ctx.Err()
@@ -215,8 +215,7 @@ func TestResearchAgentResearch(t *testing.T) {
 			}),
 			schema.AssistantMessage("done", nil),
 		)
-		knowledge := usecase.NewKnowledge(&researchKnowledgeStore{}, unavailableTestEmbedder{})
-		agent, err := NewResearchAgent(context.Background(), model, "research", ResearchCapabilities{Knowledge: knowledge, Catalog: catalogSearch, Forum: forumSearch}, ResearchLimits{TotalTimeout: time.Second, ToolTimeout: time.Second, MaxIterations: 6, MaxToolCalls: 8})
+		agent, err := NewResearchAgent(context.Background(), model, "research", ResearchCapabilities{Knowledge: &researchKnowledgeStore{}, Catalog: catalogSearch, Forum: forumSearch}, ResearchLimits{TotalTimeout: time.Second, ToolTimeout: time.Second, MaxIterations: 6, MaxToolCalls: 8})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -298,12 +297,11 @@ func TestResearchRunRunTool(t *testing.T) {
 
 func newTestResearchAgent(t *testing.T, chatModel *fakeChatModel, store *researchKnowledgeStore, webClient usecase.WebSearchClient, webEnabled bool, limits ResearchLimits) *ResearchAgent {
 	t.Helper()
-	knowledge := usecase.NewKnowledge(store, unavailableTestEmbedder{})
 	var web *usecase.WebSearch
 	if webClient != nil {
 		web = usecase.NewWebSearch(webClient)
 	}
-	agent, err := NewResearchAgent(context.Background(), chatModel, "research", ResearchCapabilities{Knowledge: knowledge, Catalog: &researchCatalog{}, Forum: &researchForum{}, Web: web, WebEnabled: webEnabled}, limits)
+	agent, err := NewResearchAgent(context.Background(), chatModel, "research", ResearchCapabilities{Knowledge: store, Catalog: &researchCatalog{}, Forum: &researchForum{}, Web: web, WebEnabled: webEnabled}, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +339,7 @@ func messagesContain(messages []*schema.Message, value string) bool {
 type researchKnowledgeStore struct {
 	mu     sync.Mutex
 	seen   []string
-	search func(context.Context, string) ([]usecase.KnowledgeSnippet, error)
+	search func(context.Context, string) ([]usecase.Evidence, error)
 }
 
 type modeKnowledgeStore struct {
@@ -355,11 +353,7 @@ func (s *modeKnowledgeStore) SearchEvidence(_ context.Context, _, _, _, mode str
 	return []usecase.Evidence{{Source: "lightrag", Title: "RPG genre", Content: "genre fact"}}, nil
 }
 
-func (*researchKnowledgeStore) CreateDocument(context.Context, usecase.KnowledgeDocument, []string, [][]float32) (int64, error) {
-	return 0, nil
-}
-
-func (s *researchKnowledgeStore) SearchKeyword(ctx context.Context, query, _, _ string, _ int) ([]usecase.KnowledgeSnippet, error) {
+func (s *researchKnowledgeStore) SearchEvidence(ctx context.Context, query, _, _, _ string, _ int) ([]usecase.Evidence, error) {
 	s.mu.Lock()
 	s.seen = append(s.seen, query)
 	s.mu.Unlock()
@@ -369,20 +363,10 @@ func (s *researchKnowledgeStore) SearchKeyword(ctx context.Context, query, _, _ 
 	return s.search(ctx, query)
 }
 
-func (*researchKnowledgeStore) SearchVector(context.Context, []float32, string, string, int) ([]usecase.KnowledgeSnippet, error) {
-	return nil, nil
-}
-
 func (s *researchKnowledgeStore) queries() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.seen...)
-}
-
-type unavailableTestEmbedder struct{}
-
-func (unavailableTestEmbedder) Embed(context.Context, []string) ([][]float32, error) {
-	return nil, usecase.ErrEmbeddingUnavailable
 }
 
 type researchWebClient struct {

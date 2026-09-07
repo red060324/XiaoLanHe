@@ -21,6 +21,7 @@ Run from the repository root. `Makefile` is the canonical command interface.
 | `make lightrag-static` | Verify the immutable native-store manifest and lifecycle script syntax |
 | `make lightrag-live` | Verify auth, public-health redaction, version, topology, stores and pipeline contract on a running service |
 | `make lightrag-lifecycle` | Explicitly acknowledged isolated real-provider ingest/query/restart/backup/restore/delete gate |
+| `make integration-live` | Fail-fast MySQL 8.4, Redis, RocketMQ, Milvus, fence and LightRAG integration gate after provisioning the real local/CI stack |
 
 Use an exact package/test first during development:
 

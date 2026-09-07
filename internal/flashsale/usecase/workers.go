@@ -106,7 +106,7 @@ func (w *ReleaseWorker) RunOnce(ctx context.Context) (completed int, resultErr e
 	defer func() {
 		platformmetrics.Default().ObserveFlashSale("release", workerOutcome(resultErr, completed), time.Since(started), completed, oldestAge)
 	}()
-	if w == nil || w.store == nil || w.compensator == nil || w.batch < 1 || w.batch > 1000 || w.lease <= 0 {
+	if w == nil || w.store == nil || w.compensator == nil || w.batch < 1 || w.batch > 1000 || w.lease <= 0 || w.lease%time.Microsecond != 0 {
 		return 0, ErrInvalidInput
 	}
 	jobs, err := w.store.ClaimReleaseJobs(ctx, w.batch, w.lease)
@@ -114,6 +114,9 @@ func (w *ReleaseWorker) RunOnce(ctx context.Context) (completed int, resultErr e
 		return 0, err
 	}
 	for _, job := range jobs {
+		if job.ID <= 0 || job.LeaseGeneration <= 0 {
+			return completed, ErrInvalidInput
+		}
 		if age := pendingAge(job.ReservedAt); age > oldestAge {
 			oldestAge = age
 		}
@@ -123,7 +126,7 @@ func (w *ReleaseWorker) RunOnce(ctx context.Context) (completed int, resultErr e
 			RemoveBuyer: job.Reason == "technical_rollback",
 		})
 		if releaseErr == nil {
-			if err := w.store.CompleteReleaseJob(ctx, job.ID); err != nil {
+			if err := w.store.CompleteReleaseJob(ctx, job.ID, job.LeaseGeneration); err != nil {
 				return completed, err
 			}
 			slog.InfoContext(ctx, "flash sale stock release completed", "request_id", job.RequestID, "activity_id", job.ActivityID, "reason", job.Reason, "outcome", "released")
@@ -132,7 +135,7 @@ func (w *ReleaseWorker) RunOnce(ctx context.Context) (completed int, resultErr e
 		}
 		platformmetrics.Default().ObserveFlashSale("release_retry", "retry", time.Since(started), 1, pendingAge(job.ReservedAt))
 		delay := releaseRetryDelay(job.Attempts)
-		if err := w.store.RetryReleaseJob(ctx, job.ID, w.now().UTC().Add(delay), "redis_unavailable"); err != nil {
+		if err := w.store.RetryReleaseJob(ctx, job.ID, job.LeaseGeneration, w.now().UTC().Add(delay), "redis_unavailable"); err != nil {
 			return completed, err
 		}
 		slog.WarnContext(ctx, "flash sale stock release deferred", "request_id", job.RequestID, "activity_id", job.ActivityID, "reason", job.Reason, "attempt", job.Attempts, "outcome", "dependency_unavailable")

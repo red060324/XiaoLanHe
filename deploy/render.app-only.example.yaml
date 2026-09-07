@@ -1,0 +1,57 @@
+# REFERENCE ONLY. Copy this file to render.yaml only after an operator has
+# provisioned the external MySQL and LightRAG/Milvus consistency unit and has
+# configured the required secret files in Render. Keeping the example outside
+# the repository root prevents Render from auto-discovering a deployment that
+# cannot satisfy XiaoLanHe's fail-closed TLS and rebuild-fence requirements.
+services:
+  - type: web
+    name: xiaolanhe
+    runtime: docker
+    plan: free
+    region: singapore
+    autoDeployTrigger: checksPass
+    healthCheckPath: /readyz
+    envVars:
+      # This example provisions no database. Supply an external MySQL
+      # 8.4/InnoDB DSN from Render's secret store.
+      - key: XLH_DATABASE_URL
+        sync: false
+      - key: XLH_DATABASE_ALLOW_INSECURE
+        value: "false"
+      - key: XLH_DATABASE_TLS_CA_FILE
+        sync: false
+      - key: XLH_DATABASE_TLS_SERVER_NAME
+        sync: false
+      # Optional mutual-TLS paths must be configured as a pair after the
+      # matching secret files are present.
+      - key: XLH_DATABASE_TLS_CERT_FILE
+        sync: false
+      - key: XLH_DATABASE_TLS_KEY_FILE
+        sync: false
+      - key: XLH_AI_API_KEY
+        sync: false
+      # Knowledge always uses an externally operated LightRAG service. That
+      # service, its persistent files, Milvus, etcd and MinIO are outside this
+      # app-only example.
+      - key: XLH_LIGHTRAG_BASE_URL
+        sync: false
+      - key: XLH_LIGHTRAG_ALLOW_INSECURE
+        value: "false"
+      - key: XLH_LIGHTRAG_API_KEY
+        sync: false
+      - key: XLH_LIGHTRAG_REBUILD_FENCE_DIR
+        sync: false
+      - key: XLH_LIGHTRAG_DEPLOYMENT_GENERATION
+        sync: false
+      - key: XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256
+        sync: false
+      - key: XLH_ADVANCED_AI_ENABLED
+        value: "false"
+      - key: XLH_SEARCH_ENABLED
+        value: "false"
+      - key: XLH_FLASH_SALE_ENABLED
+        value: "false"
+      - key: XLH_COOKIE_SECURE
+        value: "true"
+      - key: XLH_PUBLIC_ORIGIN
+        sync: false

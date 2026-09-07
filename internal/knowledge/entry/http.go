@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"regexp"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
@@ -20,20 +23,30 @@ import (
 
 const maxKnowledgeBody = 1 << 20
 
+var publicSearchFilterPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
+
 type HTTP struct {
-	service *knowledge.Service
-	auth    httpauth.Authenticator
-	origin  string
+	service         *knowledge.Service
+	auth            httpauth.Authenticator
+	origin          string
+	searchAdmission *searchAdmission
 }
 
 func NewHTTP(service *knowledge.Service, authenticator httpauth.Authenticator, publicOrigin string) *HTTP {
-	return &HTTP{service: service, auth: authenticator, origin: publicOrigin}
+	return newHTTPWithSearchAdmission(service, authenticator, publicOrigin, newDefaultSearchAdmission())
+}
+
+func newHTTPWithSearchAdmission(service *knowledge.Service, authenticator httpauth.Authenticator, publicOrigin string, admission *searchAdmission) *HTTP {
+	if admission == nil {
+		panic("knowledge search admission is required")
+	}
+	return &HTTP{service: service, auth: authenticator, origin: publicOrigin, searchAdmission: admission}
 }
 func (h *HTTP) Register(router *server.Hertz) {
-	read := router.Group("/api", httpauth.RequireRole(h.auth, auth.RoleAdmin))
-	read.GET("/knowledge/search", h.search)
-	read.GET("/admin/knowledge/tracks/:trackId", h.track)
-	read.GET("/admin/knowledge/documents", h.list)
+	router.GET("/api/knowledge/search", h.search)
+	adminRead := router.Group("/api", httpauth.RequireRole(h.auth, auth.RoleAdmin))
+	adminRead.GET("/admin/knowledge/tracks/:trackId", h.track)
+	adminRead.GET("/admin/knowledge/documents", h.list)
 	write := router.Group("/api", httpauth.RequireOrigin(h.origin), httpauth.RequireRole(h.auth, auth.RoleAdmin))
 	write.POST("/knowledge/documents", h.create)
 	write.DELETE("/admin/knowledge/documents/:documentId", h.delete)
@@ -62,13 +75,53 @@ func (h *HTTP) search(ctx context.Context, c *app.RequestContext) {
 		h.writeError(ctx, c, "search", err)
 		return
 	}
-	value, err := h.service.Search(ctx, entity.SearchInput{Query: string(c.Query("query")), Mode: entity.Mode(string(c.Query("mode"))), GameCode: string(c.Query("gameCode")), RegionCode: string(c.Query("regionCode")), Limit: limit})
+	input := entity.SearchInput{
+		Query:      strings.TrimSpace(string(c.Query("query"))),
+		Mode:       entity.Mode(string(c.Query("mode"))),
+		GameCode:   strings.TrimSpace(string(c.Query("gameCode"))),
+		RegionCode: strings.TrimSpace(string(c.Query("regionCode"))),
+		Limit:      limit,
+	}
+	if !validPublicSearch(input) {
+		h.writeError(ctx, c, "search", entity.ErrInvalidInput)
+		return
+	}
+	release, retryAfter, err := h.searchAdmission.acquire(ctx)
+	if err != nil {
+		if errors.Is(err, entity.ErrCapacity) {
+			c.Header("Retry-After", strconv.FormatInt(retryAfterSeconds(retryAfter), 10))
+		} else if errors.Is(err, context.Canceled) {
+			httpx.WriteError(c, consts.StatusRequestTimeout, "request_cancelled", "request was cancelled", nil)
+			return
+		}
+		h.writeError(ctx, c, "search", err)
+		return
+	}
+	defer release()
+	value, err := h.service.Search(ctx, input)
 	if err != nil {
 		h.writeError(ctx, c, "search", err)
 		return
 	}
 	c.JSON(consts.StatusOK, knowledgepresenter.PresentSearch(value))
 }
+
+func validPublicSearch(input entity.SearchInput) bool {
+	if input.Mode == "" {
+		input.Mode = entity.ModeMix
+	}
+	if input.Limit == 0 {
+		input.Limit = 5
+	}
+	return utf8.RuneCountInString(input.Query) >= 1 && utf8.RuneCountInString(input.Query) <= 100 &&
+		input.Mode.Valid() && input.Limit >= 1 && input.Limit <= 10 &&
+		validPublicSearchFilter(input.GameCode, 64) && validPublicSearchFilter(input.RegionCode, 32)
+}
+
+func validPublicSearchFilter(value string, maxLength int) bool {
+	return value == "" || len(value) <= maxLength && publicSearchFilterPattern.MatchString(value)
+}
+
 func (h *HTTP) track(ctx context.Context, c *app.RequestContext) {
 	principal, _ := httpauth.Principal(c)
 	value, err := h.service.Track(ctx, principal, c.Param("trackId"))

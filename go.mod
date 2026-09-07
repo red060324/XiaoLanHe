@@ -3,16 +3,19 @@ module github.com/red060324/XiaoLanHe
 go 1.23.0
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/apache/rocketmq-client-go/v2 v2.1.2
 	github.com/cloudwego/eino v0.9.13
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/cloudwego/hertz v0.10.6
+	github.com/go-sql-driver/mysql v1.9.3
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/redis/go-redis/v9 v9.7.3
 	golang.org/x/crypto v0.37.0
 )
 
 require (
+	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect

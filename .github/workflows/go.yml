@@ -14,25 +14,30 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_DB: xiaolanhe_test
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d xiaolanhe_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
-      XLH_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/xiaolanhe_test?sslmode=disable
-      XLH_TEST_REDIS_URL: redis://:integration-password@127.0.0.1:6379/15
-      XLH_TEST_ROCKETMQ_NAMESERVERS: 127.0.0.1:9876
-      XLH_TEST_ROCKETMQ_BROKER_ADDR: 127.0.0.1:10911
       XLH_REDIS_PASSWORD: integration-password
+      XLH_MYSQL_DATABASE: xiaolanhe_test
+      XLH_MYSQL_USER: xlh
+      XLH_MYSQL_PASSWORD: integration-password
+      XLH_MYSQL_ROOT_PASSWORD: integration-root-password
+      XLH_MILVUS_MINIO_USER: integration-minio-user
+      XLH_MILVUS_MINIO_PASSWORD: integration-minio-password
+      XLH_MILVUS_ROOT_PASSWORD: integration-milvus-root-password
+      XLH_MILVUS_TOKEN: xlh_ci:integration-milvus-runtime-password
+      XLH_CI_COMPOSE_PROJECT: xlhci${{ github.run_id }}${{ github.run_attempt }}
+      XLH_CI_OPENAI_STUB_API_KEY: ci-openai-private-key-at-least-32-chars
+      XLH_LIGHTRAG_API_KEY: ci-lightrag-private-key-at-least-32-chars
+      XLH_LIGHTRAG_LLM_API_KEY: ci-openai-private-key-at-least-32-chars
+      XLH_LIGHTRAG_EMBEDDING_API_KEY: ci-openai-private-key-at-least-32-chars
+      XLH_LIGHTRAG_LLM_BASE_URL: http://host.docker.internal:18080/v1
+      XLH_LIGHTRAG_EMBEDDING_BASE_URL: http://host.docker.internal:18080/v1
+      XLH_LIGHTRAG_DEPLOYMENT_GENERATION: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      XLH_LIGHTRAG_ATTEMPT_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+      XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256: sha256:0000000000000000000000000000000000000000000000000000000000000000
+      XLH_LIGHTRAG_UNCONTROLLED_WRITERS_ATTESTATION: no_uncontrolled_writers
+      XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR: /tmp/xlh-ci-lightrag-fence-${{ github.run_id }}-${{ github.run_attempt }}
+      XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR: /tmp/xlh-ci-lightrag-writer-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,22 +51,78 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/xiaolanhe-web/package-lock.json
-      - name: Start Redis and RocketMQ integration services
-        run: docker compose -f deploy/docker-compose.middleware.yml up --detach --wait redis rmqnamesrv rmqbroker
+      - name: Start MySQL, Redis and RocketMQ integration services
+        run: docker compose -p "$XLH_CI_COMPOSE_PROJECT" -f deploy/docker-compose.middleware.yml up --detach --wait mysql redis rmqnamesrv rmqbroker
+      - name: Create the flash-sale RocketMQ topic
+        run: |
+          docker compose -p "$XLH_CI_COMPOSE_PROJECT" -f deploy/docker-compose.middleware.yml \
+            exec -T rmqbroker sh mqadmin updateTopic \
+              -n rmqnamesrv:9876 -b 127.0.0.1:10911 -t XLH_FLASH_SALE_V1 -r 4 -w 4
       - run: npm --prefix frontend/xiaolanhe-web ci
-      - name: Validate official LightRAG native-store manifest
+      - name: Verify and start deterministic OpenAI-compatible provider
+        run: |
+          python3 scripts/test-ci-openai-stub.py
+          stub_host=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
+          [[ "$stub_host" =~ ^[0-9a-fA-F:.]+$ ]]
+          stub_log="$RUNNER_TEMP/xlh-ci-openai-stub.log"
+          RUNNER_TRACKING_ID= nohup python3 scripts/ci-openai-stub.py \
+            --host "$stub_host" --port 18080 \
+            --api-key "$XLH_CI_OPENAI_STUB_API_KEY" --allow-private-host \
+            >"$stub_log" 2>&1 &
+          stub_pid=$!
+          stub_ready=false
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error "http://$stub_host:18080/healthz" >/dev/null; then
+              stub_ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$stub_ready" != "true" ]]; then
+            cat "$stub_log" >&2
+            kill "$stub_pid" 2>/dev/null || true
+            exit 1
+          fi
+          {
+            echo "XLH_CI_OPENAI_STUB_HOST=$stub_host"
+            echo "XLH_CI_OPENAI_STUB_STATS_URL=http://$stub_host:18080/__stats"
+            echo "XLH_CI_OPENAI_STUB_PID=$stub_pid"
+            echo "XLH_CI_OPENAI_STUB_LOG=$stub_log"
+          } >> "$GITHUB_ENV"
+      - name: Validate official LightRAG Milvus manifest
         run: make lightrag-static
       - name: Official LightRAG image and runtime contract
-        env:
-          XLH_LIGHTRAG_API_KEY: ci-lightrag-private-key-at-least-32-chars
-          XLH_LIGHTRAG_LLM_API_KEY: ci-placeholder
-          XLH_LIGHTRAG_EMBEDDING_API_KEY: ci-placeholder
-          XLH_LIGHTRAG_LLM_BASE_URL: http://127.0.0.1:9/v1
-          XLH_LIGHTRAG_EMBEDDING_BASE_URL: http://127.0.0.1:9/v1
         run: |
-          trap 'docker compose -f deploy/docker-compose.lightrag.yml logs --no-color lightrag; docker compose -f deploy/docker-compose.lightrag.yml down --volumes' EXIT
-          docker compose -f deploy/docker-compose.lightrag.yml up --detach --wait lightrag
-          bash deploy/check-lightrag-live.sh http://127.0.0.1:9621 "$XLH_LIGHTRAG_API_KEY"
+          fence_dir="$RUNNER_TEMP/xlh-lightrag-fence-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          writer_dir="$RUNNER_TEMP/xlh-lightrag-writer-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          contract_sha256=$(bash deploy/lightrag-contract-hash.sh)
+          export XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR="$fence_dir"
+          export XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR="$writer_dir"
+          {
+            echo "XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR=$fence_dir"
+            echo "XLH_LIGHTRAG_REBUILD_FENCE_DIR=$fence_dir"
+            echo "XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR=$writer_dir"
+          } >> "$GITHUB_ENV"
+          bootstrap_output=$(bash deploy/lightrag-bootstrap-empty.sh \
+            deploy/docker-compose.lightrag.yml "$XLH_CI_COMPOSE_PROJECT")
+          printf '%s\n' "$bootstrap_output"
+          reported_generation=$(awk -F= '$1 == "XLH_LIGHTRAG_DEPLOYMENT_GENERATION" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
+          reported_attempt=$(awk -F= '$1 == "XLH_LIGHTRAG_ATTEMPT_ID" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
+          writer_sha256=$(awk -F= '$1 == "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
+          reported_contract=$(awk -F= '$1 == "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
+          [[ "$reported_generation" == "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" ]]
+          [[ "$reported_attempt" == "$XLH_LIGHTRAG_ATTEMPT_ID" ]]
+          [[ "$reported_contract" == "$contract_sha256" ]]
+          [[ "$writer_sha256" =~ ^sha256:[0-9a-f]{64}$ ]]
+          export XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256="$writer_sha256"
+          bash deploy/check-lightrag-milvus.sh deploy/docker-compose.lightrag.yml "$XLH_CI_COMPOSE_PROJECT"
+          docker compose -p "$XLH_CI_COMPOSE_PROJECT" -f deploy/docker-compose.lightrag.yml \
+            up --detach --wait --no-deps lightrag
+          bash deploy/check-lightrag-live.sh http://127.0.0.1:9621 "$XLH_LIGHTRAG_API_KEY" "$fence_dir" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$contract_sha256"
+          {
+            echo "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$writer_sha256"
+            echo "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=$contract_sha256"
+          } >> "$GITHUB_ENV"
       - name: Repository gates
         run: |
           if [ -n "${{ github.base_ref }}" ] && git rev-parse --verify "origin/${{ github.base_ref }}" >/dev/null 2>&1; then
@@ -72,23 +133,51 @@ jobs:
             base_ref=HEAD^
           fi
           make ci BASE_REF="$base_ref"
+      - name: Real middleware and knowledge integration gates
+        env:
+          XLH_MYSQL_TEST_DSN: xlh:integration-password@tcp(127.0.0.1:3306)/xiaolanhe_test?parseTime=true&loc=UTC&charset=utf8mb4&timeout=5s&readTimeout=5s&writeTimeout=5s&multiStatements=false&clientFoundRows=false
+          XLH_TEST_REDIS_URL: redis://:integration-password@127.0.0.1:6379/15
+          XLH_TEST_ROCKETMQ_NAMESERVERS: 127.0.0.1:9876
+          XLH_TEST_ROCKETMQ_BROKER_ADDR: 127.0.0.1:10911
+        run: COMPOSE_PROJECT_NAME="$XLH_CI_COMPOSE_PROJECT" make integration-live
       - name: Seed idempotency
         env:
-          XLH_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/xiaolanhe_test?sslmode=disable
+          XLH_DATABASE_URL: xlh:integration-password@tcp(127.0.0.1:3306)/xiaolanhe_test?parseTime=true&loc=UTC&charset=utf8mb4&timeout=5s&readTimeout=5s&writeTimeout=5s&multiStatements=false&clientFoundRows=false
+          XLH_DATABASE_ALLOW_INSECURE: "true"
           XLH_SEED_ADMIN_PASSWORD: integration-password
         run: |
           go run ./cmd/seed
           go run ./cmd/seed
       - name: Container smoke
         env:
-          XLH_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/xiaolanhe_test?sslmode=disable
+          XLH_DATABASE_URL: xlh:integration-password@tcp(127.0.0.1:3306)/xiaolanhe_test?parseTime=true&loc=UTC&charset=utf8mb4&timeout=5s&readTimeout=5s&writeTimeout=5s&multiStatements=false&clientFoundRows=false
         run: |
           docker build -t xiaolanhe:ci .
           container_id=$(docker run --detach --network host \
+            --add-host host.docker.internal:host-gateway \
+            --volume "$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:/rebuild-fence:ro" \
             -e PORT=18088 \
             -e XLH_DATABASE_URL="$XLH_DATABASE_URL" \
-            -e XLH_AI_API_KEY=ci-placeholder \
+            -e XLH_DATABASE_ALLOW_INSECURE=true \
+            -e XLH_AI_BASE_URL="$XLH_LIGHTRAG_LLM_BASE_URL" \
+            -e XLH_AI_API_KEY="$XLH_CI_OPENAI_STUB_API_KEY" \
+            -e XLH_ADVANCED_AI_ENABLED=false \
+            -e XLH_LIGHTRAG_BASE_URL=http://127.0.0.1:9621 \
+            -e XLH_LIGHTRAG_ALLOW_INSECURE=true \
+            -e XLH_LIGHTRAG_API_KEY="$XLH_LIGHTRAG_API_KEY" \
+            -e XLH_LIGHTRAG_REBUILD_FENCE_DIR=/rebuild-fence \
+            -e XLH_LIGHTRAG_DEPLOYMENT_GENERATION="$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" \
+            -e XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256="$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256" \
             -e XLH_SEARCH_ENABLED=false \
+            -e XLH_FLASH_SALE_ENABLED=true \
+            -e XLH_METRICS_TOKEN=ci-metrics-private-key-at-least-32-chars \
+            -e XLH_REDIS_URL=redis://:integration-password@127.0.0.1:6379/0 \
+            -e XLH_REDIS_ALLOW_INSECURE=true \
+            -e XLH_ROCKETMQ_NAMESERVERS=127.0.0.1:9876 \
+            -e XLH_ROCKETMQ_ALLOW_INSECURE=true \
+            -e XLH_ROCKETMQ_TOPIC=XLH_FLASH_SALE_V1 \
+            -e XLH_ROCKETMQ_PRODUCER_GROUP=xlh-flash-sale-ci-producer \
+            -e XLH_ROCKETMQ_CONSUMER_GROUP=xlh-flash-sale-ci-consumer \
             -e XLH_COOKIE_SECURE=false \
             -e XLH_PUBLIC_ORIGIN=http://127.0.0.1:18088 \
             xiaolanhe:ci)
@@ -97,14 +186,41 @@ jobs:
             curl --fail --silent http://127.0.0.1:18088/healthz && break
             sleep 1
           done
+          curl --fail --silent --show-error http://127.0.0.1:18088/healthz >/dev/null
+          curl --fail --silent --show-error http://127.0.0.1:18088/readyz >/dev/null
           XLH_SMOKE_ADMIN_PASSWORD=integration-password \
             XLH_SMOKE_RUN_ID="${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}" \
+            XLH_SMOKE_REQUIRE_V45=true \
+            XLH_SMOKE_OPENAI_STUB_STATS_URL="$XLH_CI_OPENAI_STUB_STATS_URL" \
             bash scripts/smoke-product.sh
+      - name: Deterministic provider logs
+        if: failure()
+        continue-on-error: true
+        run: |
+          if [[ -n "${XLH_CI_OPENAI_STUB_LOG:-}" && -f "$XLH_CI_OPENAI_STUB_LOG" ]]; then
+            cat "$XLH_CI_OPENAI_STUB_LOG"
+          fi
+      - name: LightRAG and Milvus logs
+        if: failure()
+        continue-on-error: true
+        run: |
+          mkdir -p "$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR" "$XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR"
+          docker compose -p "$XLH_CI_COMPOSE_PROJECT" -f deploy/docker-compose.lightrag.yml \
+            logs --no-color lightrag milvus milvus-etcd milvus-minio
       - name: Middleware logs
         if: failure()
-        run: docker compose -f deploy/docker-compose.middleware.yml logs --no-color redis rmqnamesrv rmqbroker
+        continue-on-error: true
+        run: |
+          docker compose -p "$XLH_CI_COMPOSE_PROJECT" -f deploy/docker-compose.middleware.yml \
+            logs --no-color mysql redis rmqnamesrv rmqbroker
       - name: Stop integration services
         if: always()
         run: |
-          docker compose -f deploy/docker-compose.lightrag.yml down --volumes
-          docker compose -f deploy/docker-compose.middleware.yml down --volumes
+          if [[ -n "${XLH_CI_OPENAI_STUB_PID:-}" ]]; then
+            kill "$XLH_CI_OPENAI_STUB_PID" 2>/dev/null || true
+          fi
+          mkdir -p "$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR" "$XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR" || true
+          docker compose -p "$XLH_CI_COMPOSE_PROJECT" -f deploy/docker-compose.lightrag.yml \
+            down --volumes --remove-orphans || true
+          docker compose -p "$XLH_CI_COMPOSE_PROJECT" -f deploy/docker-compose.middleware.yml \
+            down --volumes --remove-orphans || true

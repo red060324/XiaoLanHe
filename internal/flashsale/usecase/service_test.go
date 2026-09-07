@@ -293,7 +293,9 @@ type fakeStore struct {
 	failedCode           string
 	releaseJobs          []ReleaseJob
 	completedReleaseJobs []int64
+	completedGenerations []int
 	retriedReleaseJobID  int64
+	retriedGeneration    int
 	retriedAt            time.Time
 	retryCode            string
 	expiredCount         int
@@ -356,12 +358,14 @@ func (s *fakeStore) ExpireDue(_ context.Context, batch int) (int, error) {
 func (s *fakeStore) ClaimReleaseJobs(context.Context, int, time.Duration) ([]ReleaseJob, error) {
 	return s.releaseJobs, nil
 }
-func (s *fakeStore) CompleteReleaseJob(_ context.Context, id int64) error {
+func (s *fakeStore) CompleteReleaseJob(_ context.Context, id int64, leaseGeneration int) error {
 	s.completedReleaseJobs = append(s.completedReleaseJobs, id)
+	s.completedGenerations = append(s.completedGenerations, leaseGeneration)
 	return nil
 }
-func (s *fakeStore) RetryReleaseJob(_ context.Context, id int64, next time.Time, code string) error {
+func (s *fakeStore) RetryReleaseJob(_ context.Context, id int64, leaseGeneration int, next time.Time, code string) error {
 	s.retriedReleaseJobID = id
+	s.retriedGeneration = leaseGeneration
 	s.retriedAt = next
 	s.retryCode = code
 	return nil

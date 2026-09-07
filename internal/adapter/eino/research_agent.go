@@ -362,20 +362,6 @@ type knowledgeQuery struct {
 	Mode       string `json:"mode,omitempty"`
 }
 
-type LegacyKnowledgeSearch struct{ Knowledge *usecase.Knowledge }
-
-func (s LegacyKnowledgeSearch) SearchEvidence(ctx context.Context, query, gameCode, regionCode, _ string, limit int) ([]usecase.Evidence, error) {
-	items, err := s.Knowledge.Search(ctx, query, gameCode, regionCode, limit)
-	if err != nil {
-		return nil, err
-	}
-	evidence := make([]usecase.Evidence, 0, len(items))
-	for _, item := range items {
-		evidence = append(evidence, usecase.Evidence{Source: "legacy_local", Title: item.Title, Content: item.Text, URL: item.SourceURL, Score: float64(item.Score)})
-	}
-	return evidence, nil
-}
-
 type webQuery struct {
 	Query string `json:"query"`
 }

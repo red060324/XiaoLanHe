@@ -66,7 +66,8 @@ func (l *transactionListener) CheckLocalTransaction(message *primitive.MessageEx
 		return primitive.RollbackMessageState
 	}
 	if record.RequestID == event.RequestID && record.ActivityID == event.ActivityID && record.UserID == event.UserID &&
-		record.IdempotencyDigest == event.IdempotencyDigest && record.Status == "queued" && record.ReservedAt.Equal(event.ReservedAt) {
+		record.IdempotencyDigest == event.IdempotencyDigest && record.Status == "queued" &&
+		record.ReservedAt.UnixMilli() == event.ReservedAt.UnixMilli() {
 		slog.Info("flash sale transaction checked", "request_id", event.RequestID, "activity_id", event.ActivityID, "transaction_state", "commit", "outcome", "marker_matched")
 		return primitive.CommitMessageState
 	}

@@ -16,9 +16,28 @@ import (
 )
 
 const (
-	DatasetSchemaVersion = 1
+	DatasetSchemaVersion = 2
 	maxFixtureLineBytes  = 256 << 10
+
+	expectedLightRAGCoreVersion  = "1.5.7"
+	expectedLightRAGAPIVersion   = "0344"
+	expectedLightRAGImage        = "ghcr.io/hkuds/lightrag:v1.5.7@sha256:5bdbd524931b011df246fe20888d110cef691e6804c12cde636a2b746d7de27e"
+	expectedMilvusVersion        = "2.6.11"
+	expectedMilvusImage          = "milvusdb/milvus:v2.6.11"
+	expectedEtcdVersion          = "3.5.25"
+	expectedEtcdImage            = "quay.io/coreos/etcd:v3.5.25"
+	expectedMinIOVersion         = "RELEASE.2025-09-07T16-13-09Z"
+	expectedMinIOImage           = "minio/minio:RELEASE.2025-09-07T16-13-09Z"
+	expectedEmbeddingVersion     = "text-embedding-v4-1024-symmetric-v1"
+	expectedEmbeddingModel       = "text-embedding-v4"
+	expectedEmbeddingDimension   = 1024
+	expectedEmbeddingBinding     = "openai"
+	expectedEmbeddingProfile     = "dashscope-compatible-v1"
+	expectedEmbeddingBooleanFlag = "false"
+	expectedUnsetPrefix          = "unset"
 )
+
+var expectedLightRAGStores = []string{"JsonKVStorage", "MilvusVectorDBStorage", "NetworkXStorage", "JsonDocStatusStorage"}
 
 //go:embed testdata/*.jsonl
 var fixtureFS embed.FS
@@ -34,8 +53,27 @@ type Metadata struct {
 	LightRAGAPIVersion   string            `json:"lightragApiVersion"`
 	LightRAGImage        string            `json:"lightragImage"`
 	LightRAGStores       []string          `json:"lightragStores"`
+	LightRAGWorkspace    string            `json:"lightragWorkspace"`
+	LightRAGWorkingDir   string            `json:"lightragWorkingDirectory"`
+	MilvusVersion        string            `json:"milvusVersion"`
+	MilvusImage          string            `json:"milvusImage"`
+	MilvusDatabase       string            `json:"milvusDatabase"`
+	MilvusIndexType      string            `json:"milvusIndexType"`
+	MilvusMetricType     string            `json:"milvusMetricType"`
+	EtcdVersion          string            `json:"etcdVersion"`
+	EtcdImage            string            `json:"etcdImage"`
+	MinIOVersion         string            `json:"minioVersion"`
+	MinIOImage           string            `json:"minioImage"`
 	ModelVersion         string            `json:"modelVersion"`
 	EmbeddingVersion     string            `json:"embeddingVersion"`
+	EmbeddingBinding     string            `json:"embeddingBinding"`
+	EmbeddingProfile     string            `json:"embeddingEndpointProfile"`
+	EmbeddingModel       string            `json:"embeddingModel"`
+	EmbeddingDimension   int               `json:"embeddingDimension"`
+	EmbeddingSendDim     string            `json:"embeddingSendDimension"`
+	EmbeddingAsymmetric  string            `json:"embeddingAsymmetric"`
+	EmbeddingDocPrefix   string            `json:"embeddingDocumentPrefix"`
+	EmbeddingQueryPrefix string            `json:"embeddingQueryPrefix"`
 	SkillVersions        map[string]string `json:"skillVersions"`
 	SkillPromptVersions  map[string]string `json:"skillPromptVersions"`
 }
@@ -136,7 +174,7 @@ func Load(reader io.Reader) (Dataset, error) {
 
 func (d Dataset) Validate() error {
 	m := d.Metadata
-	if m.RecordType != "metadata" || m.SchemaVersion != DatasetSchemaVersion || !safeVersion(m.DatasetVersion) || !safeVersion(m.ApplicationVersion) || !safeVersion(m.RouterPromptVersion) || !safeVersion(m.PlannerPromptVersion) || m.LightRAGCoreVersion == "" || m.LightRAGAPIVersion == "" || m.LightRAGImage == "" || m.ModelVersion == "" || m.EmbeddingVersion == "" || len(m.LightRAGStores) != 4 || len(m.SkillVersions) != 4 || len(m.SkillPromptVersions) != 4 || len(d.Cases) == 0 {
+	if m.RecordType != "metadata" || m.SchemaVersion != DatasetSchemaVersion || !safeVersion(m.DatasetVersion) || !safeVersion(m.ApplicationVersion) || !safeVersion(m.RouterPromptVersion) || !safeVersion(m.PlannerPromptVersion) || m.ModelVersion == "" || len(m.SkillVersions) != 4 || len(m.SkillPromptVersions) != 4 || len(d.Cases) == 0 || !validKnowledgeRuntimeContract(m) {
 		return errors.New("invalid eval metadata")
 	}
 	ids := map[string]bool{}
@@ -150,6 +188,23 @@ func (d Dataset) Validate() error {
 		}
 	}
 	return nil
+}
+
+func validKnowledgeRuntimeContract(metadata Metadata) bool {
+	return metadata.LightRAGCoreVersion == expectedLightRAGCoreVersion &&
+		metadata.LightRAGAPIVersion == expectedLightRAGAPIVersion &&
+		metadata.LightRAGImage == expectedLightRAGImage &&
+		strings.Join(metadata.LightRAGStores, "\x00") == strings.Join(expectedLightRAGStores, "\x00") &&
+		metadata.LightRAGWorkspace == "xiaolanhe_v1" && metadata.LightRAGWorkingDir == "/app/data/rag_storage" &&
+		metadata.MilvusVersion == expectedMilvusVersion && metadata.MilvusImage == expectedMilvusImage &&
+		metadata.MilvusDatabase == "lightrag" && metadata.MilvusIndexType == "AUTOINDEX" && metadata.MilvusMetricType == "COSINE" &&
+		metadata.EtcdVersion == expectedEtcdVersion && metadata.EtcdImage == expectedEtcdImage &&
+		metadata.MinIOVersion == expectedMinIOVersion && metadata.MinIOImage == expectedMinIOImage &&
+		metadata.EmbeddingVersion == expectedEmbeddingVersion && metadata.EmbeddingBinding == expectedEmbeddingBinding &&
+		metadata.EmbeddingProfile == expectedEmbeddingProfile && metadata.EmbeddingModel == expectedEmbeddingModel &&
+		metadata.EmbeddingDimension == expectedEmbeddingDimension && metadata.EmbeddingSendDim == expectedEmbeddingBooleanFlag &&
+		metadata.EmbeddingAsymmetric == expectedEmbeddingBooleanFlag && metadata.EmbeddingDocPrefix == expectedUnsetPrefix &&
+		metadata.EmbeddingQueryPrefix == expectedUnsetPrefix
 }
 
 func (d Dataset) ValidateRegistry(registry *skill.Registry) error {

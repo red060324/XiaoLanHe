@@ -3,6 +3,9 @@ set -euo pipefail
 
 base_url=${1:-http://127.0.0.1:9621}
 api_key=${2:-}
+fence_dir=${3:-}
+fence_generation=${4:-}
+fence_contract_sha256=${5:-}
 if (( ${#api_key} < 32 || ${#api_key} > 512 )) || [[ "$api_key" == *$'\n'* || "$api_key" == *$'\r'* ]]; then
   echo "usage: $0 [base-url] <32-512 character api-key without line breaks>" >&2
   exit 2
@@ -42,7 +45,7 @@ jq -e '
   .working_directory == "/app/data/rag_storage" and
   .configuration.workspace == "xiaolanhe_v1" and
   .configuration.kv_storage == "JsonKVStorage" and
-  .configuration.vector_storage == "NanoVectorDBStorage" and
+    .configuration.vector_storage == "MilvusVectorDBStorage" and
   .configuration.graph_storage == "NetworkXStorage" and
   .configuration.doc_status_storage == "JsonDocStatusStorage" and
   .server_mode == "gunicorn" and
@@ -51,3 +54,11 @@ jq -e '
 
 pipeline=$(curl --fail --silent --show-error "${common_headers[@]}" "$base_url/documents/pipeline_status")
 jq -e '.recovery_required == false and (.busy | type == "boolean")' <<<"$pipeline" >/dev/null
+
+if [[ -n "$fence_dir$fence_generation$fence_contract_sha256" ]]; then
+  [[ -n "$fence_dir" && -n "$fence_generation" && -n "$fence_contract_sha256" ]] || {
+    echo "fence-dir, generation and contract-sha256 must be supplied together" >&2
+    exit 2
+  }
+  bash deploy/check-lightrag-fence.sh "$fence_dir" "$fence_generation" "$fence_contract_sha256"
+fi

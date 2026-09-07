@@ -1,17 +1,24 @@
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
+  mysql:
+    image: mysql:8.4
     restart: unless-stopped
     environment:
-      POSTGRES_DB: xiaolanhe
-      POSTGRES_USER: xlh
-      POSTGRES_PASSWORD: ${XLH_POSTGRES_PASSWORD:-local-only-change-me}
+      MYSQL_DATABASE: ${XLH_MYSQL_DATABASE:-xiaolanhe}
+      MYSQL_USER: ${XLH_MYSQL_USER:-xlh}
+      MYSQL_PASSWORD: ${XLH_MYSQL_PASSWORD:-local-only-change-me}
+      MYSQL_ROOT_PASSWORD: ${XLH_MYSQL_ROOT_PASSWORD:-local-root-only-change-me}
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+      - --sql-mode=STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:3306:3306"
     volumes:
-      - xlh-postgres-data:/var/lib/postgresql/data
+      - xlh-mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U xlh -d xiaolanhe"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -74,7 +81,7 @@ services:
       retries: 30
 
 volumes:
-  xlh-postgres-data:
+  xlh-mysql-data:
   xlh-redis-data:
   xlh-rocketmq-namesrv-logs:
   xlh-rocketmq-broker-logs:

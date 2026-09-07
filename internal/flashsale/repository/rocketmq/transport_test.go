@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -32,6 +33,32 @@ func TestTransactionAdmissionCommitsAndReturnsLuaResult(t *testing.T) {
 	}
 	if client.message == nil || client.message.Topic != "XLH_FLASH_SALE_V1" || client.message.GetTags() != reservationTagV1 || admission.last.ReservedAt != now {
 		t.Fatalf("message=%+v command=%+v", client.message, admission.last)
+	}
+}
+
+func TestTransactionAdmissionCanonicalizesRedisTimeToMilliseconds(t *testing.T) {
+	now := time.Date(2026, 9, 3, 10, 0, 0, 123456000, time.UTC)
+	want := time.UnixMilli(now.UnixMilli()).UTC()
+	admission := &fakeAdmission{result: flashsale.AdmissionResult{
+		Outcome: flashsale.AdmissionAccepted, RequestID: testAdmissionCommand().RequestID, ReservedAt: want,
+	}}
+	inspector := &fakeInspector{now: now}
+	listener := &transactionListener{admission: admission, inspector: inspector, timeout: time.Second}
+	client := &fakeTransactionProducer{listener: listener}
+	producer := &Producer{client: client, recovery: &fakeSyncProducer{}, topic: "topic", inspector: inspector, listener: listener, timeout: time.Second}
+
+	if _, err := producer.Reserve(context.Background(), testAdmissionCommand()); err != nil {
+		t.Fatal(err)
+	}
+	if !admission.last.ReservedAt.Equal(want) {
+		t.Fatalf("reserved at=%s want=%s", admission.last.ReservedAt, want)
+	}
+	event, err := decodeEvent(client.message.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !event.ReservedAt.Equal(want) {
+		t.Fatalf("event reserved at=%s want=%s", event.ReservedAt, want)
 	}
 }
 
@@ -113,7 +140,7 @@ func TestTransactionAdmissionFailsClosedOnUncertainResult(t *testing.T) {
 }
 
 func TestTransactionCheckerMapsPresentAbsentAndUncertain(t *testing.T) {
-	event := testEvent(time.Now().UTC())
+	event := testEvent(time.Date(2026, 9, 3, 10, 0, 0, 123456000, time.UTC))
 	payload, err := encodeEvent(event)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +148,8 @@ func TestTransactionCheckerMapsPresentAbsentAndUncertain(t *testing.T) {
 	message := &primitive.MessageExt{Message: *primitive.NewMessage("topic", payload)}
 	inspector := &fakeInspector{record: flashsale.AdmissionRecord{
 		RequestID: event.RequestID, ActivityID: event.ActivityID, UserID: event.UserID,
-		IdempotencyDigest: event.IdempotencyDigest, Status: "queued", ReservedAt: event.ReservedAt,
+		IdempotencyDigest: event.IdempotencyDigest, Status: "queued",
+		ReservedAt: time.UnixMilli(event.ReservedAt.UnixMilli()).UTC(),
 	}, found: true}
 	listener := &transactionListener{admission: &fakeAdmission{}, inspector: inspector, timeout: time.Second}
 	if state := listener.CheckLocalTransaction(message); state != primitive.CommitMessageState {
@@ -231,7 +259,7 @@ func TestReadinessProbeRequiresWritableTopicRoute(t *testing.T) {
 	t.Run("bounded concurrent probes", func(t *testing.T) {
 		release := make(chan struct{})
 		started := make(chan struct{}, 1)
-		admin := &fakeTopicRouteAdmin{queues: []*primitive.MessageQueue{{Topic: config.Topic}}, started: started, release: release}
+		admin := &fakeTopicRouteAdmin{queues: []*primitive.MessageQueue{{Topic: config.Topic, BrokerName: "broker-a"}}, started: started, release: release}
 		probe := newReadinessProbe(config, func(Config) (topicRouteAdmin, error) { return admin, nil })
 		first := make(chan error, 1)
 		go func() { first <- probe.Ready(context.Background()) }()
@@ -257,6 +285,9 @@ func TestRocketMQConfigRejectsUnsafeNames(t *testing.T) {
 		"name server port": func(config *Config) { config.NameServers = []string{"rmq:70000"} },
 		"access key":       func(config *Config) { config.AccessKey = "bad.access" },
 		"secret key":       func(config *Config) { config.SecretKey = "secret\nvalue" },
+		"too many name servers": func(config *Config) {
+			config.NameServers = []string{"rmq-1:9876", "rmq-2:9876", "rmq-3:9876", "rmq-4:9876", "rmq-5:9876"}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			config := testConfig()
@@ -265,6 +296,38 @@ func TestRocketMQConfigRejectsUnsafeNames(t *testing.T) {
 				t.Fatal("expected invalid configuration")
 			}
 		})
+	}
+}
+
+func TestReadinessProbeRejectsOversizedOrInvalidTopology(t *testing.T) {
+	config := testConfig()
+	queues := make([]*primitive.MessageQueue, maxPublishQueues+1)
+	for index := range queues {
+		queues[index] = &primitive.MessageQueue{Topic: config.Topic, BrokerName: "broker-a", QueueId: index}
+	}
+	probe := newReadinessProbe(config, func(Config) (topicRouteAdmin, error) {
+		return &fakeTopicRouteAdmin{queues: queues}, nil
+	})
+	if err := probe.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "too many writable queues") {
+		t.Fatalf("oversized queue topology error = %v", err)
+	}
+
+	queues = make([]*primitive.MessageQueue, maxPublishBrokers+1)
+	for index := range queues {
+		queues[index] = &primitive.MessageQueue{Topic: config.Topic, BrokerName: fmt.Sprintf("broker-%d", index), QueueId: index}
+	}
+	probe = newReadinessProbe(config, func(Config) (topicRouteAdmin, error) {
+		return &fakeTopicRouteAdmin{queues: queues}, nil
+	})
+	if err := probe.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "too many writable brokers") {
+		t.Fatalf("oversized broker topology error = %v", err)
+	}
+
+	probe = newReadinessProbe(config, func(Config) (topicRouteAdmin, error) {
+		return &fakeTopicRouteAdmin{queues: []*primitive.MessageQueue{nil}}, nil
+	})
+	if err := probe.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "invalid writable queue") {
+		t.Fatalf("invalid topology error = %v", err)
 	}
 }
 

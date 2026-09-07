@@ -2,39 +2,39 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"os"
 	"time"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
-	"github.com/jackc/pgx/v5/pgxpool"
 	redisclient "github.com/redis/go-redis/v9"
 
 	accountentry "github.com/red060324/XiaoLanHe/internal/account/entry"
+	accountmysql "github.com/red060324/XiaoLanHe/internal/account/repository/mysql"
 	"github.com/red060324/XiaoLanHe/internal/account/repository/password"
-	accountpg "github.com/red060324/XiaoLanHe/internal/account/repository/postgres"
 	account "github.com/red060324/XiaoLanHe/internal/account/usecase"
 	einoadapter "github.com/red060324/XiaoLanHe/internal/adapter/eino"
-	"github.com/red060324/XiaoLanHe/internal/adapter/postgres"
+	mysqladapter "github.com/red060324/XiaoLanHe/internal/adapter/mysql"
 	"github.com/red060324/XiaoLanHe/internal/adapter/websearch"
 	assistantagent "github.com/red060324/XiaoLanHe/internal/assistant/agent/eino"
 	assistantentity "github.com/red060324/XiaoLanHe/internal/assistant/entity"
 	assistantentry "github.com/red060324/XiaoLanHe/internal/assistant/entry"
 	assistantlightrag "github.com/red060324/XiaoLanHe/internal/assistant/repository/lightrag"
-	assistantpg "github.com/red060324/XiaoLanHe/internal/assistant/repository/postgres"
+	assistantmysql "github.com/red060324/XiaoLanHe/internal/assistant/repository/mysql"
 	assistantskill "github.com/red060324/XiaoLanHe/internal/assistant/skill"
 	assistantuc "github.com/red060324/XiaoLanHe/internal/assistant/usecase"
 	catalogentry "github.com/red060324/XiaoLanHe/internal/catalog/entry"
-	catalogpg "github.com/red060324/XiaoLanHe/internal/catalog/repository/postgres"
+	catalogmysql "github.com/red060324/XiaoLanHe/internal/catalog/repository/mysql"
 	catalog "github.com/red060324/XiaoLanHe/internal/catalog/usecase"
 	communityentry "github.com/red060324/XiaoLanHe/internal/community/entry"
-	communitypg "github.com/red060324/XiaoLanHe/internal/community/repository/postgres"
+	communitymysql "github.com/red060324/XiaoLanHe/internal/community/repository/mysql"
 	community "github.com/red060324/XiaoLanHe/internal/community/usecase"
 	"github.com/red060324/XiaoLanHe/internal/config"
 	"github.com/red060324/XiaoLanHe/internal/entry"
 	flashentry "github.com/red060324/XiaoLanHe/internal/flashsale/entry"
+	flashmysql "github.com/red060324/XiaoLanHe/internal/flashsale/repository/mysql"
 	flashorder "github.com/red060324/XiaoLanHe/internal/flashsale/repository/order"
-	flashpg "github.com/red060324/XiaoLanHe/internal/flashsale/repository/postgres"
 	flashredis "github.com/red060324/XiaoLanHe/internal/flashsale/repository/redis"
 	flashmq "github.com/red060324/XiaoLanHe/internal/flashsale/repository/rocketmq"
 	flashsale "github.com/red060324/XiaoLanHe/internal/flashsale/usecase"
@@ -42,16 +42,14 @@ import (
 	knowledgelightrag "github.com/red060324/XiaoLanHe/internal/knowledge/repository/lightrag"
 	knowledgeuc "github.com/red060324/XiaoLanHe/internal/knowledge/usecase"
 	orderentry "github.com/red060324/XiaoLanHe/internal/order/entry"
-	orderpg "github.com/red060324/XiaoLanHe/internal/order/repository/postgres"
+	ordermysql "github.com/red060324/XiaoLanHe/internal/order/repository/mysql"
 	order "github.com/red060324/XiaoLanHe/internal/order/usecase"
-	"github.com/red060324/XiaoLanHe/internal/platform/auth"
-	"github.com/red060324/XiaoLanHe/internal/platform/httpauth"
 	platformmetrics "github.com/red060324/XiaoLanHe/internal/platform/metrics"
 	promotionentry "github.com/red060324/XiaoLanHe/internal/promotion/entry"
-	promotionpg "github.com/red060324/XiaoLanHe/internal/promotion/repository/postgres"
+	promotionmysql "github.com/red060324/XiaoLanHe/internal/promotion/repository/mysql"
 	promotion "github.com/red060324/XiaoLanHe/internal/promotion/usecase"
 	"github.com/red060324/XiaoLanHe/internal/usecase"
-	"github.com/red060324/XiaoLanHe/migrations"
+	mysqlmigrations "github.com/red060324/XiaoLanHe/migrations/mysql"
 )
 
 func main() {
@@ -61,31 +59,49 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	var db *sql.DB
+	err = runStartupPhase(databaseStartupTimeout, func(ctx context.Context) error {
+		var openErr error
+		db, openErr = mysqladapter.Open(ctx, cfg.DatabaseURL, mysqladapter.Options{
+			MaxOpenConnections:    cfg.Database.MaxOpenConnections,
+			MaxIdleConnections:    cfg.Database.MaxIdleConnections,
+			ConnectionMaxLifetime: cfg.Database.ConnectionMaxLifetime,
+			ConnectionMaxIdleTime: cfg.Database.ConnectionMaxIdleTime,
+			AllowInsecure:         cfg.Database.AllowInsecure,
+			TLS: mysqladapter.TLSOptions{
+				CAFile:          cfg.Database.TLSCAFile,
+				ServerName:      cfg.Database.TLSServerName,
+				CertificateFile: cfg.Database.TLSCertificateFile,
+				KeyFile:         cfg.Database.TLSKeyFile,
+			},
+		})
+		return openErr
+	})
 	if err != nil {
-		slog.Error("connect database", "error", err)
+		slog.Error("connect database", "outcome", "dependency_unavailable")
 		os.Exit(1)
 	}
-	defer pool.Close()
-	if err := pool.Ping(ctx); err != nil {
-		slog.Error("ping database", "error", err)
-		os.Exit(1)
-	}
-	if err := postgres.Migrate(ctx, pool, migrations.Files); err != nil {
-		slog.Error("initialize database", "error", err)
+	defer db.Close()
+	if err := runStartupPhase(migrationStartupTimeout(cfg.Database.MigrationLockTimeout), func(ctx context.Context) error {
+		return mysqladapter.Migrate(ctx, db, mysqlmigrations.Files, mysqladapter.MigrationOptions{LockTimeout: cfg.Database.MigrationLockTimeout})
+	}); err != nil {
+		slog.Error("initialize database", "outcome", "migration_failed")
 		os.Exit(1)
 	}
 
 	temperature := float32(0.4)
-	providerChatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		APIKey:      cfg.AIAPIKey,
-		BaseURL:     cfg.AIBaseURL,
-		Model:       cfg.AIModel,
-		Timeout:     cfg.AITimeout,
-		Temperature: &temperature,
-		ExtraFields: map[string]any{"enable_thinking": false},
+	var providerChatModel *openai.ChatModel
+	err = runStartupPhase(componentConstructionTimeout, func(ctx context.Context) error {
+		var modelErr error
+		providerChatModel, modelErr = openai.NewChatModel(ctx, &openai.ChatModelConfig{
+			APIKey:      cfg.AIAPIKey,
+			BaseURL:     cfg.AIBaseURL,
+			Model:       cfg.AIModel,
+			Timeout:     cfg.AITimeout,
+			Temperature: &temperature,
+			ExtraFields: map[string]any{"enable_thinking": false},
+		})
+		return modelErr
 	})
 	if err != nil {
 		slog.Error("create chat model", "error", err)
@@ -93,34 +109,37 @@ func main() {
 	}
 	chatModel := einoadapter.ObserveChatModel(providerChatModel, platformmetrics.Default())
 
-	store := postgres.NewConversationStore(pool)
-	assistantProfileStore := assistantpg.NewProfileStore(pool)
-	legacyKnowledge := usecase.NewKnowledge(postgres.NewKnowledgeStore(pool), einoadapter.NewOpenAIEmbedder(cfg.AIBaseURL, cfg.AIAPIKey, cfg.EmbeddingModel, cfg.AITimeout))
-	var researchKnowledge einoadapter.KnowledgeSearch = legacyKnowledge
-	var advancedKnowledge *knowledgeuc.Service
-	if cfg.AdvancedAI.Enabled {
-		client, clientErr := knowledgelightrag.NewClient(knowledgelightrag.Config{
-			BaseURL: cfg.AdvancedAI.LightRAG.BaseURL, APIKey: cfg.AdvancedAI.LightRAG.APIKey,
-			Workspace: cfg.AdvancedAI.LightRAG.Workspace, WorkingDirectory: cfg.AdvancedAI.LightRAG.WorkingDirectory,
-			CoreVersion: cfg.AdvancedAI.LightRAG.CoreVersion, APIVersion: cfg.AdvancedAI.LightRAG.APIVersion, Timeout: cfg.AdvancedAI.LightRAG.Timeout,
-		})
-		if clientErr != nil {
-			slog.Error("configure LightRAG", "outcome", "invalid_configuration")
-			os.Exit(1)
-		}
-		advancedKnowledge = knowledgeuc.NewService(client)
-		if readyErr := advancedKnowledge.Ready(ctx); readyErr != nil {
-			slog.Error("verify LightRAG", "outcome", "dependency_unavailable")
-			os.Exit(1)
-		}
-		researchKnowledge = assistantlightrag.NewSearchAdapter(advancedKnowledge)
+	store := mysqladapter.NewConversationStore(db)
+	assistantProfileStore := assistantmysql.NewProfileStore(db)
+	client, clientErr := knowledgelightrag.NewClient(knowledgelightrag.Config{
+		BaseURL: cfg.AdvancedAI.LightRAG.BaseURL, APIKey: cfg.AdvancedAI.LightRAG.APIKey,
+		Workspace: cfg.AdvancedAI.LightRAG.Workspace, WorkingDirectory: cfg.AdvancedAI.LightRAG.WorkingDirectory,
+		CoreVersion: cfg.AdvancedAI.LightRAG.CoreVersion, APIVersion: cfg.AdvancedAI.LightRAG.APIVersion,
+		FencePath: cfg.AdvancedAI.LightRAG.FencePath, FenceGeneration: cfg.AdvancedAI.LightRAG.FenceGeneration,
+		FenceContractSHA256: cfg.AdvancedAI.LightRAG.FenceContractSHA256, AllowInsecure: cfg.AdvancedAI.LightRAG.AllowInsecure,
+		Timeout: cfg.AdvancedAI.LightRAG.Timeout,
+	})
+	if clientErr != nil {
+		slog.Error("configure LightRAG", "outcome", "invalid_configuration")
+		os.Exit(1)
 	}
+	knowledgeService := knowledgeuc.NewService(client)
+	if readyErr := runStartupPhase(cfg.AdvancedAI.LightRAG.Timeout, knowledgeService.Ready); readyErr != nil {
+		slog.Error("verify LightRAG", "outcome", "dependency_unavailable")
+		os.Exit(1)
+	}
+	researchKnowledge := assistantlightrag.NewSearchAdapter(knowledgeService)
 	search := usecase.NewWebSearch(websearch.NewSearXNG(cfg.SearchEnabled, cfg.SearchEndpoint, cfg.SearchTimeout))
-	accountService := account.NewService(accountpg.NewStore(pool), password.Bcrypt{}, 7*24*time.Hour)
-	catalogService := catalog.NewService(catalogpg.NewStore(pool))
-	communityService := community.NewService(communitypg.NewStore(pool), catalogService)
+	accountService := account.NewService(accountmysql.NewStore(db), password.Bcrypt{}, 7*24*time.Hour)
+	catalogService := catalog.NewService(catalogmysql.NewStore(db))
+	communityService := community.NewService(communitymysql.NewStore(db), catalogService)
 	nodes := einoadapter.NewModelNodes(chatModel, cfg.AIModel, cfg.PlanningPrompt, cfg.DirectPrompt, cfg.SynthesisPrompt)
-	research, err := einoadapter.NewResearchAgent(ctx, chatModel, cfg.ResearchPrompt, einoadapter.ResearchCapabilities{Knowledge: researchKnowledge, Catalog: catalogService, Forum: communityService, Web: search, WebEnabled: cfg.SearchEnabled}, einoadapter.ResearchLimits{TotalTimeout: cfg.ResearchTimeout, ToolTimeout: cfg.ResearchToolTimeout, MaxIterations: cfg.ResearchMaxIterations, MaxToolCalls: cfg.ResearchMaxToolCalls})
+	var research *einoadapter.ResearchAgent
+	err = runStartupPhase(componentConstructionTimeout, func(ctx context.Context) error {
+		var agentErr error
+		research, agentErr = einoadapter.NewResearchAgent(ctx, chatModel, cfg.ResearchPrompt, einoadapter.ResearchCapabilities{Knowledge: researchKnowledge, Catalog: catalogService, Forum: communityService, Web: search, WebEnabled: cfg.SearchEnabled}, einoadapter.ResearchLimits{TotalTimeout: cfg.ResearchTimeout, ToolTimeout: cfg.ResearchToolTimeout, MaxIterations: cfg.ResearchMaxIterations, MaxToolCalls: cfg.ResearchMaxToolCalls})
+		return agentErr
+	})
 	if err != nil {
 		slog.Error("create research agent", "error", err)
 		os.Exit(1)
@@ -159,7 +178,7 @@ func main() {
 	chatService := usecase.NewChat(store, assistant)
 	if cfg.AdvancedAI.Enabled {
 		memory, memoryErr := assistantuc.NewMemoryService(
-			assistantpg.NewMemoryStore(pool),
+			assistantmysql.NewMemoryStore(db),
 			assistantagent.NewSummaryNode(chatModel),
 			assistantuc.MemoryConfig{
 				Threshold: cfg.AdvancedAI.SummaryThreshold, SummaryCap: cfg.AdvancedAI.SummaryCap, RecentWindow: cfg.AdvancedAI.RecentWindow,
@@ -172,22 +191,16 @@ func main() {
 		}
 		chatService.WithMemory(memory)
 	}
-	httpKnowledge := legacyKnowledge
-	if advancedKnowledge != nil {
-		httpKnowledge = nil
-	}
-	server := entry.NewHTTPWithServices(cfg.Address, chatService, httpKnowledge, search, accountService, httpauth.RequireOrigin(cfg.PublicOrigin), httpauth.RequireRole(accountService, auth.RoleAdmin))
+	server := entry.NewHTTPWithServices(cfg.Address, chatService, search, accountService)
 	server.RegisterMetrics(cfg.MetricsToken, platformmetrics.Default())
 	accountentry.NewHTTP(accountService, cfg.CookieSecure, cfg.PublicOrigin).Register(server.Router())
 	assistantentry.NewProfileHTTP(assistantuc.NewProfileService(assistantProfileStore), accountService, cfg.PublicOrigin).Register(server.Router())
-	if advancedKnowledge != nil {
-		knowledgeentry.NewHTTP(advancedKnowledge, accountService, cfg.PublicOrigin).Register(server.Router())
-	}
+	knowledgeentry.NewHTTP(knowledgeService, accountService, cfg.PublicOrigin).Register(server.Router())
 	catalogentry.NewHTTP(catalogService, accountService, cfg.PublicOrigin).Register(server.Router())
 	communityentry.NewHTTP(communityService, accountService, cfg.PublicOrigin).Register(server.Router())
-	promotionService := promotion.NewService(promotionpg.NewStore(pool))
+	promotionService := promotion.NewService(promotionmysql.NewStore(db))
 	promotionentry.NewHTTP(promotionService, accountService, cfg.PublicOrigin).Register(server.Router())
-	orderService := order.NewService(orderpg.NewStore(pool), catalogService, promotionService)
+	orderService := order.NewService(ordermysql.NewStore(db), catalogService, promotionService)
 	orderentry.NewHTTP(orderService, accountService, cfg.PublicOrigin).Register(server.Router())
 	if cfg.FlashSale.Enabled {
 		redisOptions, err := redisclient.ParseURL(cfg.FlashSale.RedisURL)
@@ -202,27 +215,32 @@ func main() {
 			slog.Error("initialize flash sale Redis", "error", err)
 			os.Exit(1)
 		}
-		if err := redisStore.Ping(ctx); err != nil {
+		if err := runStartupPhase(dependencyStartupTimeout, redisStore.Ping); err != nil {
 			slog.Error("ping flash sale Redis", "outcome", "dependency_unavailable")
 			os.Exit(1)
 		}
-		if err := redisStore.LoadScripts(ctx); err != nil {
+		if err := runStartupPhase(dependencyStartupTimeout, redisStore.LoadScripts); err != nil {
 			slog.Error("load flash sale Redis scripts", "outcome", "dependency_unavailable")
 			os.Exit(1)
 		}
-		flashStore := flashpg.NewStore(pool)
+		flashStore := flashmysql.NewStore(db)
 		mqConfig := flashmq.Config{
 			NameServers: cfg.FlashSale.RocketMQNameServers, AccessKey: cfg.FlashSale.RocketMQAccessKey, SecretKey: cfg.FlashSale.RocketMQSecretKey,
 			Topic: cfg.FlashSale.RocketMQTopic, ProducerGroup: cfg.FlashSale.RocketMQProducer, ConsumerGroup: cfg.FlashSale.RocketMQConsumer,
 			SendTimeout: cfg.FlashSale.RocketMQSendTimeout, ConsumeTimeout: cfg.FlashSale.RocketMQConsumeTimeout,
 			ConsumerConcurrency: cfg.FlashSale.ConsumerConcurrency, RetryLimit: int32(cfg.FlashSale.RetryLimit),
 		}
+		rocketReadiness, err := flashmq.NewReadinessProbe(mqConfig)
+		if err != nil {
+			slog.Error("configure RocketMQ readiness", "outcome", "invalid_configuration")
+			os.Exit(1)
+		}
 		producer, err := flashmq.NewProducer(mqConfig, redisStore, redisStore)
 		if err != nil {
 			slog.Error("configure flash sale producer", "outcome", "invalid_configuration")
 			os.Exit(1)
 		}
-		if err := producer.Start(); err != nil {
+		if err := startRocketMQClient(dependencyStartupTimeout, rocketReadiness.Ready, producer.Start, rocketMQStartDeadline("producer")); err != nil {
 			slog.Error("start flash sale producer", "outcome", "dependency_unavailable")
 			os.Exit(1)
 		}
@@ -233,16 +251,11 @@ func main() {
 			slog.Error("configure flash sale consumer", "outcome", "invalid_configuration")
 			os.Exit(1)
 		}
-		if err := consumer.Start(); err != nil {
+		if err := startRocketMQClient(dependencyStartupTimeout, rocketReadiness.Ready, consumer.Start, rocketMQStartDeadline("consumer")); err != nil {
 			slog.Error("start flash sale consumer", "outcome", "dependency_unavailable")
 			os.Exit(1)
 		}
 		defer consumer.Shutdown()
-		rocketReadiness, err := flashmq.NewReadinessProbe(mqConfig)
-		if err != nil {
-			slog.Error("configure RocketMQ readiness", "outcome", "invalid_configuration")
-			os.Exit(1)
-		}
 		flashentry.NewHTTP(flashService, accountService, cfg.PublicOrigin).Register(server.Router())
 		background := flashentry.StartBackground(context.Background(), cfg.FlashSale.RecoveryInterval,
 			flashentry.RecoveryRunner(flashsale.NewRecoveryDispatcher(flashStore, redisStore, producer, cfg.FlashSale.RecoveryBatch, cfg.FlashSale.RecoveryStale, cfg.FlashSale.RecoveryLease)),
@@ -254,15 +267,10 @@ func main() {
 			defer shutdownCancel()
 			_ = background.Shutdown(shutdownCtx)
 		}()
-		checks := []func(context.Context) error{pool.Ping, redisStore.Ping, rocketReadiness.Ready}
-		if advancedKnowledge != nil {
-			checks = append(checks, advancedKnowledge.Ready)
-		}
+		checks := []func(context.Context) error{func(checkCtx context.Context) error { return mysqladapter.Ready(checkCtx, db) }, redisStore.Ping, rocketReadiness.Ready, knowledgeService.Ready}
 		server.RegisterReadinessChecks(checks...)
-	} else if advancedKnowledge != nil {
-		server.RegisterReadinessChecks(pool.Ping, advancedKnowledge.Ready)
 	} else {
-		server.RegisterReadiness(pool.Ping)
+		server.RegisterReadinessChecks(func(checkCtx context.Context) error { return mysqladapter.Ready(checkCtx, db) }, knowledgeService.Ready)
 	}
 	slog.Info("xiaolanhe started", "address", cfg.Address, "model", cfg.AIModel)
 	server.Spin()

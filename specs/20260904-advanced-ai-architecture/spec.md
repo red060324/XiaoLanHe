@@ -6,6 +6,13 @@
 - Branch: `codex/clean-architecture-refactor`
 - Mode: `FULL`
 - Supersedes: `../20260831-assistant-capability-evolution/spec.md`
+- Storage decision superseded by:
+  `../20260907-mysql-milvus-migration/spec.md` (approved 2026-09-07)
+
+> Historical implementation record: its PostgreSQL/pgvector and
+> `NanoVectorDBStorage` decisions describe the 2026-09-04 implementation only. The
+> linked approved migration makes MySQL 8.4 and official LightRAG
+> `MilvusVectorDBStorage` authoritative for subsequent production changes.
 
 ## Goal
 

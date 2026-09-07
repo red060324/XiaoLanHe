@@ -14,10 +14,13 @@ import (
 // method applies a fixed vocabulary before values become labels, so user and
 // provider-controlled strings cannot create unbounded time series.
 type Registry struct {
-	mu         sync.RWMutex
-	counters   map[string]map[string]uint64
-	gauges     map[string]map[string]float64
-	histograms map[string]map[string]*histogram
+	mu                   sync.RWMutex
+	counters             map[string]map[string]uint64
+	gauges               map[string]map[string]float64
+	histograms           map[string]map[string]*histogram
+	mysqlPoolSnapshot    func() MySQLPoolObservation
+	mysqlPoolSnapshotSeq uint64
+	mysqlPoolSnapshotMu  sync.Mutex
 }
 
 type histogram struct {
@@ -49,6 +52,51 @@ type MemoryObservation struct {
 	Outcome, ErrorClass           string
 	Duration                      time.Duration
 	WorkingSetRunes, MessageCount int
+}
+
+type MySQLOperationObservation struct {
+	Operation, Outcome string
+	Duration           time.Duration
+}
+
+type MySQLRetryObservation struct {
+	Reason, Outcome string
+}
+
+// MySQLPoolObservation is one absolute database/sql pool snapshot. BindMySQLPool
+// refreshes these values before every scrape; cumulative DBStats fields must not
+// be added to values from an earlier scrape.
+type MySQLPoolObservation struct {
+	MaxOpenConnections, OpenConnections, InUse, Idle               int64
+	WaitCount, MaxIdleClosed, MaxIdleTimeClosed, MaxLifetimeClosed int64
+	WaitDuration                                                   time.Duration
+}
+
+type MySQLCutoverObservation struct {
+	Operation, Outcome string
+	Duration           time.Duration
+	// HasReconciliation distinguishes a complete source/target reconciliation
+	// from inspect, dry-run, early-error and source-only preflight outcomes.
+	HasReconciliation      bool
+	SourceRows, TargetRows int64
+	MismatchCount          int64
+	Ready                  bool
+}
+
+type LightRAGFenceObservation struct {
+	State, Operation, Outcome, Reason string
+}
+
+type LightRAGRebuildObservation struct {
+	Operation, Outcome, Reason string
+	Duration                   time.Duration
+	Targets                    []LightRAGRebuildTarget
+}
+
+type LightRAGRebuildTarget struct {
+	Target                                              string
+	SourceTotal, Prepared, Rebuilt, Skipped, Duplicates int
+	FailedBatches                                       int
 }
 
 var defaultRegistry = NewRegistry()
@@ -138,6 +186,129 @@ func (r *Registry) SetLightRAGDocumentStatuses(counts map[string]int) {
 	r.gauges["xiaolanhe_lightrag_documents"] = series
 }
 
+func (r *Registry) ObserveMySQLOperation(value MySQLOperationObservation) {
+	metricLabels := labels{
+		{"operation", boundedUnknown(value.Operation, mysqlOperations)},
+		{"outcome", boundedUnknown(value.Outcome, mysqlOperationOutcomes)},
+	}
+	r.increment("xiaolanhe_mysql_operations_total", metricLabels, 1)
+	r.observe("xiaolanhe_mysql_operation_duration_seconds", metricLabels, seconds(value.Duration))
+}
+
+func (r *Registry) ObserveMySQLRetry(value MySQLRetryObservation) {
+	r.increment("xiaolanhe_mysql_transaction_retry_events_total", labels{
+		{"reason", boundedUnknown(value.Reason, mysqlRetryReasons)},
+		{"outcome", boundedUnknown(value.Outcome, mysqlRetryOutcomes)},
+	}, 1)
+}
+
+// BindMySQLPool installs an absolute snapshot callback. The callback runs once
+// immediately before each Prometheus scrape, outside the registry lock. A panic
+// leaves the prior snapshot intact and does not prevent the scrape.
+func (r *Registry) BindMySQLPool(snapshot func() MySQLPoolObservation) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.mysqlPoolSnapshot = snapshot
+	r.mysqlPoolSnapshotSeq++
+	if snapshot == nil {
+		for _, name := range mysqlPoolMetricNames {
+			delete(r.gauges, name)
+		}
+	}
+}
+
+func (r *Registry) SetMySQLMigrations(applied, pending, dirty int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gauges["xiaolanhe_mysql_migrations"] = map[string]float64{
+		labels{{"state", "applied"}}.key(): float64(nonNegativeInt(applied)),
+		labels{{"state", "pending"}}.key(): float64(nonNegativeInt(pending)),
+		labels{{"state", "dirty"}}.key():   float64(nonNegativeInt(dirty)),
+	}
+}
+
+func (r *Registry) ObserveMySQLCutover(value MySQLCutoverObservation) {
+	metricLabels := labels{
+		{"operation", boundedUnknown(value.Operation, mysqlCutoverOperations)},
+		{"outcome", boundedUnknown(value.Outcome, mysqlCutoverOutcomes)},
+	}
+	r.increment("xiaolanhe_mysql_cutover_runs_total", metricLabels, 1)
+	r.observe("xiaolanhe_mysql_cutover_run_duration_seconds", metricLabels, seconds(value.Duration))
+	if !value.HasReconciliation {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gauges["xiaolanhe_mysql_cutover_last_reconciliation_rows"] = map[string]float64{
+		labels{{"side", "source"}}.key(): float64(nonNegativeInt64(value.SourceRows)),
+		labels{{"side", "target"}}.key(): float64(nonNegativeInt64(value.TargetRows)),
+	}
+	r.gauges["xiaolanhe_mysql_cutover_last_reconciliation_mismatches"] = map[string]float64{"": float64(nonNegativeInt64(value.MismatchCount))}
+	r.gauges["xiaolanhe_mysql_cutover_last_reconciliation_ready"] = map[string]float64{"": boolFloat(value.Ready)}
+}
+
+func (r *Registry) ObserveLightRAGFence(value LightRAGFenceObservation) {
+	state := boundedUnknown(value.State, lightragFenceStates)
+	metricLabels := labels{
+		{"state", state},
+		{"operation", boundedUnknown(value.Operation, lightragFenceOperations)},
+		{"outcome", boundedUnknown(value.Outcome, lightragFenceOutcomes)},
+		{"reason", boundedUnknown(value.Reason, lightragFenceReasons)},
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.counters["xiaolanhe_lightrag_fence_observations_total"] == nil {
+		r.counters["xiaolanhe_lightrag_fence_observations_total"] = make(map[string]uint64)
+	}
+	r.counters["xiaolanhe_lightrag_fence_observations_total"][metricLabels.key()]++
+	series := make(map[string]float64, len(lightragFenceStateValues))
+	for _, candidate := range lightragFenceStateValues {
+		series[labels{{"state", candidate}}.key()] = boolFloat(candidate == state)
+	}
+	r.gauges["xiaolanhe_lightrag_fence_state"] = series
+}
+
+func (r *Registry) SetLightRAGRebuild(value LightRAGRebuildObservation) {
+	operation := boundedUnknown(value.Operation, lightragFenceOperations)
+	outcome := boundedUnknown(value.Outcome, lightragFenceOutcomes)
+	reason := boundedUnknown(value.Reason, lightragFenceReasons)
+	baseLabels := labels{{"operation", operation}, {"outcome", outcome}, {"reason", reason}}
+	series := make(map[string]float64, len(value.Targets)*6)
+	for _, target := range value.Targets {
+		targetName := boundedUnknown(target.Target, lightragRebuildTargets)
+		for _, stat := range []struct {
+			name  string
+			value int
+		}{
+			{"source_total", target.SourceTotal},
+			{"prepared", target.Prepared},
+			{"rebuilt", target.Rebuilt},
+			{"skipped", target.Skipped},
+			{"duplicates", target.Duplicates},
+			{"failed_batches", target.FailedBatches},
+		} {
+			metricLabels := append(labels(nil), baseLabels...)
+			metricLabels = append(metricLabels, label{"target", targetName}, label{"stat", stat.name})
+			series[metricLabels.key()] = float64(nonNegativeInt(stat.value))
+		}
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gauges["xiaolanhe_lightrag_rebuild_last"] = series
+	r.gauges["xiaolanhe_lightrag_rebuild_last_duration_seconds"] = map[string]float64{baseLabels.key(): seconds(value.Duration)}
+}
+
+func (r *Registry) SetLightRAGBackend(vectorExpected, serviceHealthy, generationMatch bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gauges["xiaolanhe_lightrag_backend_expected"] = map[string]float64{"": boolFloat(vectorExpected)}
+	r.gauges["xiaolanhe_lightrag_service_healthy"] = map[string]float64{"": boolFloat(serviceHealthy)}
+	r.gauges["xiaolanhe_lightrag_generation_match"] = map[string]float64{"": boolFloat(generationMatch)}
+}
+
 func (r *Registry) ObserveMemory(value MemoryObservation) {
 	metricLabels := labels{{"outcome", bounded(value.Outcome, memoryOutcomes)}, {"error_class", bounded(value.ErrorClass, memoryErrorClasses)}}
 	r.increment("xiaolanhe_assistant_memory_refresh_total", metricLabels, 1)
@@ -166,6 +337,7 @@ func (r *Registry) ObserveFlashSale(operation, outcome string, duration time.Dur
 }
 
 func (r *Registry) Prometheus() []byte {
+	r.refreshMySQLPool()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var output bytes.Buffer
@@ -181,6 +353,55 @@ func (r *Registry) Prometheus() []byte {
 		}
 	}
 	return output.Bytes()
+}
+
+func (r *Registry) refreshMySQLPool() {
+	// Serialize callbacks so two concurrent scrapes cannot publish an older
+	// snapshot after a newer one. BindMySQLPool itself remains independent.
+	r.mysqlPoolSnapshotMu.Lock()
+	defer r.mysqlPoolSnapshotMu.Unlock()
+
+	r.mu.RLock()
+	snapshot, sequence := r.mysqlPoolSnapshot, r.mysqlPoolSnapshotSeq
+	r.mu.RUnlock()
+	if snapshot == nil {
+		return
+	}
+	value, ok := safeMySQLPoolSnapshot(snapshot)
+	if !ok {
+		return
+	}
+	series := map[string]float64{
+		"xiaolanhe_mysql_pool_max_open_connections":        float64(nonNegativeInt64(value.MaxOpenConnections)),
+		"xiaolanhe_mysql_pool_open_connections":            float64(nonNegativeInt64(value.OpenConnections)),
+		"xiaolanhe_mysql_pool_in_use_connections":          float64(nonNegativeInt64(value.InUse)),
+		"xiaolanhe_mysql_pool_idle_connections":            float64(nonNegativeInt64(value.Idle)),
+		"xiaolanhe_mysql_pool_wait_count_total":            float64(nonNegativeInt64(value.WaitCount)),
+		"xiaolanhe_mysql_pool_wait_duration_seconds_total": seconds(value.WaitDuration),
+		"xiaolanhe_mysql_pool_max_idle_closed_total":       float64(nonNegativeInt64(value.MaxIdleClosed)),
+		"xiaolanhe_mysql_pool_max_idle_time_closed_total":  float64(nonNegativeInt64(value.MaxIdleTimeClosed)),
+		"xiaolanhe_mysql_pool_max_lifetime_closed_total":   float64(nonNegativeInt64(value.MaxLifetimeClosed)),
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if sequence != r.mysqlPoolSnapshotSeq || snapshot == nil {
+		return
+	}
+	for name, metricValue := range series {
+		r.gauges[name] = map[string]float64{"": metricValue}
+	}
+}
+
+func safeMySQLPoolSnapshot(snapshot func() MySQLPoolObservation) (value MySQLPoolObservation, ok bool) {
+	ok = true
+	defer func() {
+		if recover() != nil {
+			value = MySQLPoolObservation{}
+			ok = false
+		}
+	}()
+	value = snapshot()
+	return value, ok
 }
 
 func (r *Registry) increment(name string, metricLabels labels, delta uint64) {
@@ -306,6 +527,28 @@ func bounded(value string, allowed map[string]bool) string {
 	return "unknown"
 }
 
+func boundedUnknown(value string, allowed map[string]bool) string {
+	value = strings.TrimSpace(value)
+	if allowed[value] {
+		return value
+	}
+	return "unknown"
+}
+
+func nonNegativeInt(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func nonNegativeInt64(value int64) int64 {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
 var (
 	durationBuckets     = []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60}
 	memoryRuneBuckets   = []float64{1_000, 2_000, 4_000, 8_000, 12_000, 20_000, 50_000, 100_000}
@@ -330,6 +573,13 @@ var descriptors = []descriptor{
 	{"xiaolanhe_lightrag_pipeline_active", "Whether the latest LightRAG health check reported an active pipeline.", "gauge"},
 	{"xiaolanhe_lightrag_recovery_required", "Whether the latest LightRAG health check requires pipeline recovery.", "gauge"},
 	{"xiaolanhe_lightrag_documents", "Managed LightRAG documents by validated status after a complete scan.", "gauge"},
+	{"xiaolanhe_lightrag_fence_observations_total", "Bounded LightRAG rebuild-fence observations.", "counter"},
+	{"xiaolanhe_lightrag_fence_state", "Latest LightRAG rebuild-fence state as a one-hot vector.", "gauge"},
+	{"xiaolanhe_lightrag_rebuild_last", "Last LightRAG rebuild snapshot values by bounded target and statistic.", "gauge"},
+	{"xiaolanhe_lightrag_rebuild_last_duration_seconds", "Duration of the last LightRAG rebuild snapshot.", "gauge"},
+	{"xiaolanhe_lightrag_backend_expected", "Whether the latest LightRAG health response reported the expected vector backend.", "gauge"},
+	{"xiaolanhe_lightrag_service_healthy", "Whether the latest official LightRAG health and storage contract check passed.", "gauge"},
+	{"xiaolanhe_lightrag_generation_match", "Whether the latest LightRAG fence matched the required generation.", "gauge"},
 	{"xiaolanhe_assistant_memory_refresh_total", "Conversation summary refresh attempts.", "counter"},
 	{"xiaolanhe_assistant_memory_refresh_duration_seconds", "Conversation summary refresh duration.", "histogram"},
 	{"xiaolanhe_assistant_memory_working_set_runes", "Conversation memory candidate size in Unicode code points.", "histogram"},
@@ -338,6 +588,24 @@ var descriptors = []descriptor{
 	{"xiaolanhe_flash_sale_operation_duration_seconds", "Flash-sale operation duration.", "histogram"},
 	{"xiaolanhe_flash_sale_items_total", "Items processed by bounded flash-sale operations.", "counter"},
 	{"xiaolanhe_flash_sale_pending_age_seconds", "Age of flash-sale work when consumed, recovered or released.", "histogram"},
+	{"xiaolanhe_mysql_operations_total", "Bounded MySQL operations.", "counter"},
+	{"xiaolanhe_mysql_operation_duration_seconds", "MySQL operation duration.", "histogram"},
+	{"xiaolanhe_mysql_transaction_retry_events_total", "MySQL retryable transaction failure decisions by reason and outcome.", "counter"},
+	{"xiaolanhe_mysql_pool_max_open_connections", "Configured maximum MySQL pool connections.", "gauge"},
+	{"xiaolanhe_mysql_pool_open_connections", "Current open MySQL pool connections.", "gauge"},
+	{"xiaolanhe_mysql_pool_in_use_connections", "Current in-use MySQL pool connections.", "gauge"},
+	{"xiaolanhe_mysql_pool_idle_connections", "Current idle MySQL pool connections.", "gauge"},
+	{"xiaolanhe_mysql_pool_wait_count_total", "Absolute database/sql MySQL pool wait count.", "gauge"},
+	{"xiaolanhe_mysql_pool_wait_duration_seconds_total", "Absolute database/sql MySQL pool wait duration.", "gauge"},
+	{"xiaolanhe_mysql_pool_max_idle_closed_total", "Absolute MySQL pool connections closed by the idle limit.", "gauge"},
+	{"xiaolanhe_mysql_pool_max_idle_time_closed_total", "Absolute MySQL pool connections closed by the idle-time limit.", "gauge"},
+	{"xiaolanhe_mysql_pool_max_lifetime_closed_total", "Absolute MySQL pool connections closed by the lifetime limit.", "gauge"},
+	{"xiaolanhe_mysql_migrations", "Latest MySQL migration count by state.", "gauge"},
+	{"xiaolanhe_mysql_cutover_runs_total", "Bounded PostgreSQL-to-MySQL cutover tool runs.", "counter"},
+	{"xiaolanhe_mysql_cutover_run_duration_seconds", "PostgreSQL-to-MySQL cutover tool run duration.", "histogram"},
+	{"xiaolanhe_mysql_cutover_last_reconciliation_rows", "Row totals from the last complete PostgreSQL-to-MySQL reconciliation by side.", "gauge"},
+	{"xiaolanhe_mysql_cutover_last_reconciliation_mismatches", "Mismatch count from the last complete PostgreSQL-to-MySQL reconciliation.", "gauge"},
+	{"xiaolanhe_mysql_cutover_last_reconciliation_ready", "Whether the last complete PostgreSQL-to-MySQL reconciliation was cutover-ready.", "gauge"},
 }
 
 func vocabulary(values ...string) map[string]bool {
@@ -349,22 +617,52 @@ func vocabulary(values ...string) map[string]bool {
 }
 
 var (
-	assistantEvents      = vocabulary("assistant.run", "assistant.route", "assistant.query_plan", "assistant.copilot", "assistant.agent", "assistant.delegate", "assistant.tool")
-	assistantRoles       = vocabulary("game_copilot", "router", "query_planner", "research", "planning", "answer")
-	assistantOperations  = vocabulary("prepare", "answer", "stream_prepare", "stream_answer", "route", "plan", "supervise", "retrieve", "select", "search_lightrag", "search_catalog", "search_forum", "search_web", "read_catalog", "read_entitlements", "score_constraints")
-	assistantOutcomes    = vocabulary("ok", "error", "bounded", "selected", "no_result", "failed", "invalid", "cancelled")
-	assistantStopReasons = vocabulary("complete", "cancelled", "deadline", "max_model_calls", "max_tool_calls", "max_delegations", "invalid_output", "dependency_unavailable")
-	assistantRoutes      = vocabulary("direct", "clarify", "research", "planning")
-	assistantSkills      = vocabulary("generic_qa", "research_guide", "recommend_games", "build_team")
-	modelOperations      = vocabulary("generate", "stream")
-	modelOutcomes        = vocabulary("ok", "error", "cancelled", "deadline")
-	lightragOperations   = vocabulary("auth_verify", "health", "pipeline_status", "query", "document_create", "document_track", "document_list", "document_delete")
-	lightragOutcomes     = vocabulary("ok", "cancelled", "deadline", "invalid_input", "not_found", "conflict", "capacity", "unavailable", "contract")
-	lightragModes        = vocabulary("local", "global", "hybrid", "mix")
-	documentStatuses     = vocabulary("pending", "parsing", "analyzing", "preprocessed", "processing", "processed", "failed")
-	memoryOutcomes       = vocabulary("skipped", "updated", "stale", "invalid", "error")
-	memoryErrorClasses   = vocabulary("none", "cancelled", "deadline", "invalid_output", "dependency")
-	flashSaleOperations  = vocabulary("lua_admission", "lua_release", "transaction", "transaction_check", "consume", "fulfil", "final_guard", "recovery", "expiry", "release", "release_retry")
-	flashSaleAgeStages   = vocabulary("consume", "recovery", "release")
-	flashSaleOutcomes    = vocabulary("accepted", "replay", "not_started", "ended", "exhausted", "already_reserved", "unavailable", "commit", "rollback", "unknown", "success", "retry", "retry_exhausted", "rejected", "terminal", "released", "invalid", "cancelled", "deadline", "dependency", "empty")
+	assistantEvents         = vocabulary("assistant.run", "assistant.route", "assistant.query_plan", "assistant.copilot", "assistant.agent", "assistant.delegate", "assistant.tool")
+	assistantRoles          = vocabulary("game_copilot", "router", "query_planner", "research", "planning", "answer")
+	assistantOperations     = vocabulary("prepare", "answer", "stream_prepare", "stream_answer", "route", "plan", "supervise", "retrieve", "select", "search_lightrag", "search_catalog", "search_forum", "search_web", "read_catalog", "read_entitlements", "score_constraints")
+	assistantOutcomes       = vocabulary("ok", "error", "bounded", "selected", "no_result", "failed", "invalid", "cancelled")
+	assistantStopReasons    = vocabulary("complete", "cancelled", "deadline", "max_model_calls", "max_tool_calls", "max_delegations", "invalid_output", "dependency_unavailable")
+	assistantRoutes         = vocabulary("direct", "clarify", "research", "planning")
+	assistantSkills         = vocabulary("generic_qa", "research_guide", "recommend_games", "build_team")
+	modelOperations         = vocabulary("generate", "stream")
+	modelOutcomes           = vocabulary("ok", "error", "cancelled", "deadline")
+	lightragOperations      = vocabulary("auth_verify", "health", "pipeline_status", "query", "document_create", "document_track", "document_list", "document_delete")
+	lightragOutcomes        = vocabulary("ok", "cancelled", "deadline", "invalid_input", "not_found", "conflict", "capacity", "unavailable", "contract")
+	lightragModes           = vocabulary("local", "global", "hybrid", "mix")
+	documentStatuses        = vocabulary("pending", "parsing", "analyzing", "preprocessed", "processing", "processed", "failed")
+	memoryOutcomes          = vocabulary("skipped", "updated", "stale", "invalid", "error")
+	memoryErrorClasses      = vocabulary("none", "cancelled", "deadline", "invalid_output", "dependency")
+	flashSaleOperations     = vocabulary("lua_admission", "lua_release", "transaction", "transaction_check", "consume", "fulfil", "final_guard", "recovery", "expiry", "release", "release_retry")
+	flashSaleAgeStages      = vocabulary("consume", "recovery", "release")
+	flashSaleOutcomes       = vocabulary("accepted", "replay", "not_started", "ended", "exhausted", "already_reserved", "unavailable", "commit", "rollback", "unknown", "success", "retry", "retry_exhausted", "rejected", "terminal", "released", "invalid", "cancelled", "deadline", "dependency", "empty")
+	mysqlOperations         = vocabulary("open", "ready", "ping", "migrate", "inspect_migrations", "repair_migration", "transaction")
+	mysqlOperationOutcomes  = vocabulary("success", "error", "cancelled", "deadline", "commit_unknown")
+	mysqlRetryReasons       = vocabulary("deadlock", "lock_wait_timeout")
+	mysqlRetryOutcomes      = vocabulary("scheduled", "exhausted", "cancelled")
+	mysqlCutoverOperations  = vocabulary("inspect", "copy", "resume", "verify")
+	mysqlCutoverOutcomes    = vocabulary("success", "error", "cancelled", "deadline", "rejected")
+	lightragFenceStates     = vocabulary("absent", "stale", "rebuilding", "failed", "verified", "invalid")
+	lightragFenceOperations = vocabulary("migration_rebuild", "bootstrap_empty", "restore_verify", "revalidate")
+	lightragFenceOutcomes   = vocabulary("verified", "rejected", "error")
+	lightragFenceReasons    = vocabulary(
+		"restore_pending_verification", "contract_changed", "generation_changed", "legacy_manifest_changed", "invalidated",
+		"in_progress", "operation_failed", "abandoned_rebuilding", "verified",
+		"marker_missing", "marker_unreadable", "marker_invalid", "state_not_verified", "generation_mismatch", "contract_mismatch",
+		"report_unreadable", "report_digest_mismatch", "report_invalid", "report_identity_mismatch",
+	)
+	lightragRebuildTargets = vocabulary("entities", "relationships", "chunks")
 )
+
+var lightragFenceStateValues = []string{"absent", "stale", "rebuilding", "failed", "verified", "invalid", "unknown"}
+
+var mysqlPoolMetricNames = []string{
+	"xiaolanhe_mysql_pool_max_open_connections",
+	"xiaolanhe_mysql_pool_open_connections",
+	"xiaolanhe_mysql_pool_in_use_connections",
+	"xiaolanhe_mysql_pool_idle_connections",
+	"xiaolanhe_mysql_pool_wait_count_total",
+	"xiaolanhe_mysql_pool_wait_duration_seconds_total",
+	"xiaolanhe_mysql_pool_max_idle_closed_total",
+	"xiaolanhe_mysql_pool_max_idle_time_closed_total",
+	"xiaolanhe_mysql_pool_max_lifetime_closed_total",
+}

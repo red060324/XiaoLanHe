@@ -26,11 +26,11 @@ func TestKnowledgeHTTP(t *testing.T) {
 	NewHTTP(knowledge.NewService(provider), authenticator, "https://play.example").Register(router)
 	admin := ut.Header{Key: "Cookie", Value: httpauth.CookieName + "=admin"}
 	user := ut.Header{Key: "Cookie", Value: httpauth.CookieName + "=user"}
-	unauthorized := ut.PerformRequest(router.Engine, "GET", "/api/knowledge/search?query=guide", nil)
-	if unauthorized.Code != 401 {
-		t.Fatalf("status=%d body=%s", unauthorized.Code, unauthorized.Body.String())
+	publicSearch := ut.PerformRequest(router.Engine, "GET", "/api/knowledge/search?query=guide", nil)
+	if publicSearch.Code != 200 || !strings.Contains(publicSearch.Body.String(), `"provider":"lightrag"`) {
+		t.Fatalf("status=%d body=%s", publicSearch.Code, publicSearch.Body.String())
 	}
-	forbidden := ut.PerformRequest(router.Engine, "GET", "/api/knowledge/search?query=guide", nil, user)
+	forbidden := ut.PerformRequest(router.Engine, "GET", "/api/admin/knowledge/documents", nil, user)
 	if forbidden.Code != 403 {
 		t.Fatalf("status=%d body=%s", forbidden.Code, forbidden.Body.String())
 	}

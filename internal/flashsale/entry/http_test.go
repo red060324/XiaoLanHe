@@ -160,8 +160,10 @@ func (s *httpStore) ExpireDue(context.Context, int) (int, error) { return 0, nil
 func (s *httpStore) ClaimReleaseJobs(context.Context, int, time.Duration) ([]flashsale.ReleaseJob, error) {
 	return nil, nil
 }
-func (s *httpStore) CompleteReleaseJob(context.Context, int64) error                 { return nil }
-func (s *httpStore) RetryReleaseJob(context.Context, int64, time.Time, string) error { return nil }
+func (s *httpStore) CompleteReleaseJob(context.Context, int64, int) error { return nil }
+func (s *httpStore) RetryReleaseJob(context.Context, int64, int, time.Time, string) error {
+	return nil
+}
 
 type httpCatalog struct{}
 

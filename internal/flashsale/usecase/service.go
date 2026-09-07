@@ -100,8 +100,8 @@ type Store interface {
 	GetRequest(context.Context, string, int64, bool) (Request, error)
 	ExpireDue(context.Context, int) (int, error)
 	ClaimReleaseJobs(context.Context, int, time.Duration) ([]ReleaseJob, error)
-	CompleteReleaseJob(context.Context, int64) error
-	RetryReleaseJob(context.Context, int64, time.Time, string) error
+	CompleteReleaseJob(context.Context, int64, int) error
+	RetryReleaseJob(context.Context, int64, int, time.Time, string) error
 }
 
 type ActivityCache interface {
@@ -178,6 +178,7 @@ type ReleaseJob struct {
 	ReservedAt        time.Time
 	Reason            string
 	Attempts          int
+	LeaseGeneration   int
 }
 
 type ReleaseCommand struct {

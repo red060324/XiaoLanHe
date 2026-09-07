@@ -62,3 +62,16 @@ func TestActivityAcceptsReservationTime(t *testing.T) {
 		t.Fatal("end boundary must be exclusive")
 	}
 }
+
+func TestActivityAcceptsReservationTimeUsesRedisMillisecondBoundaries(t *testing.T) {
+	start := time.Date(2026, 9, 3, 10, 0, 0, 123456000, time.UTC)
+	end := start.Add(time.Hour + 333*time.Microsecond)
+	activity := Activity{Status: StatusActive, StartsAt: start, EndsAt: end}
+
+	if !activity.AcceptsReservationTime(time.UnixMilli(start.UnixMilli()).UTC()) {
+		t.Fatal("Redis start millisecond must be accepted by the MySQL final guard")
+	}
+	if activity.AcceptsReservationTime(time.UnixMilli(end.UnixMilli()).UTC()) {
+		t.Fatal("Redis end millisecond must remain exclusive in the MySQL final guard")
+	}
+}

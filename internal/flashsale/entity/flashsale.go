@@ -98,15 +98,21 @@ func (a *Activity) Cancel(now time.Time) error {
 }
 
 func (a Activity) AcceptsReservationTime(value time.Time) bool {
-	value = value.UTC()
-	if value.Before(a.StartsAt) || !value.Before(a.EndsAt) {
+	// Redis is the admission-time clock and persists the activity window and
+	// reservation marker as Unix milliseconds. Compare the MySQL final guard
+	// at that same precision so DATETIME(6) values cannot create a sub-millisecond
+	// disagreement at either window boundary.
+	valueMillis := value.UTC().UnixMilli()
+	if valueMillis < a.StartsAt.UTC().UnixMilli() || valueMillis >= a.EndsAt.UTC().UnixMilli() {
 		return false
 	}
 	switch a.Status {
 	case StatusActive:
 		return true
 	case StatusCancelled:
-		return !a.CancelledAt.IsZero() && !value.After(a.CancelledAt)
+		// Close returns a Redis-generated millisecond timestamp that is stored
+		// unchanged in MySQL, so retain the strict cutoff comparison.
+		return !a.CancelledAt.IsZero() && !value.UTC().After(a.CancelledAt.UTC())
 	default:
 		return false
 	}

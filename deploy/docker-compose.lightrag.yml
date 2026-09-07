@@ -1,13 +1,161 @@
 services:
+  milvus-etcd:
+    image: quay.io/coreos/etcd:v3.5.25
+    command: ["etcd", "-advertise-client-urls=http://milvus-etcd:2379", "-listen-client-urls=http://0.0.0.0:2379", "--data-dir=/etcd"]
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    volumes:
+      - xlh-milvus-etcd-data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks: [xlh-private]
+
+  milvus-minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["minio", "server", "/minio_data", "--console-address", ":9001"]
+    environment:
+      # Local/CI defaults only. Production deployment must override both values.
+      MINIO_ROOT_USER: ${XLH_MILVUS_MINIO_USER:?XLH_MILVUS_MINIO_USER is required}
+      MINIO_ROOT_PASSWORD: ${XLH_MILVUS_MINIO_PASSWORD:?XLH_MILVUS_MINIO_PASSWORD is required}
+    volumes:
+      - xlh-milvus-minio-data:/minio_data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks: [xlh-private]
+
+  milvus:
+    image: milvusdb/milvus:v2.6.11
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+      MINIO_ACCESS_KEY_ID: ${XLH_MILVUS_MINIO_USER:?XLH_MILVUS_MINIO_USER is required}
+      MINIO_SECRET_ACCESS_KEY: ${XLH_MILVUS_MINIO_PASSWORD:?XLH_MILVUS_MINIO_PASSWORD is required}
+      MQ_TYPE: woodpecker
+      # Milvus v2.6.11 maps environment keys after removing case, dots and
+      # underscores. These are the documented common.security settings.
+      COMMON_SECURITY_AUTHORIZATIONENABLED: "true"
+      COMMON_SECURITY_DEFAULTROOTPASSWORD: ${XLH_MILVUS_ROOT_PASSWORD:?XLH_MILVUS_ROOT_PASSWORD is required}
+      COMMON_SECURITY_ENABLEPUBLICPRIVILEGE: "false"
+    volumes:
+      - xlh-milvus-data:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9091/healthz"]
+      interval: 10s
+      start_period: 90s
+      timeout: 5s
+      retries: 18
+    depends_on:
+      milvus-etcd:
+        condition: service_healthy
+      milvus-minio:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [xlh-private]
+
+  milvus-init:
+    image: ghcr.io/hkuds/lightrag:v1.5.7@sha256:5bdbd524931b011df246fe20888d110cef691e6804c12cde636a2b746d7de27e
+    command: ["python", "/opt/xlh/init_milvus.py"]
+    restart: "no"
+    profiles: ["bootstrap"]
+    environment:
+      MILVUS_URI: http://milvus:19530
+      MILVUS_DB_NAME: lightrag
+      MILVUS_BOOTSTRAP_TOKEN: root:${XLH_MILVUS_ROOT_PASSWORD:?XLH_MILVUS_ROOT_PASSWORD is required}
+      MILVUS_RUNTIME_TOKEN: ${XLH_MILVUS_TOKEN:?XLH_MILVUS_TOKEN is required}
+    volumes:
+      - ./lightrag/init_milvus.py:/opt/xlh/init_milvus.py:ro
+    depends_on:
+      milvus:
+        condition: service_healthy
+    networks: [xlh-private]
+
+  lightrag-bootstrap:
+    image: ghcr.io/hkuds/lightrag:v1.5.7@sha256:5bdbd524931b011df246fe20888d110cef691e6804c12cde636a2b746d7de27e
+    command: ["python", "/opt/xlh/guarded_start.py", "bootstrap"]
+    restart: "no"
+    profiles: ["bootstrap"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      HOST: 127.0.0.1
+      PORT: "9621"
+      WORKERS: "2"
+      WORKSPACE: xiaolanhe_v1
+      WORKING_DIR: /app/data/rag_storage
+      INPUT_DIR: /app/data/inputs
+      LIGHTRAG_API_KEY: ${XLH_LIGHTRAG_API_KEY:?XLH_LIGHTRAG_API_KEY is required}
+      WHITELIST_PATHS: /health
+      ENABLE_API_DOCS: "false"
+      LIGHTRAG_KV_STORAGE: JsonKVStorage
+      LIGHTRAG_VECTOR_STORAGE: MilvusVectorDBStorage
+      LIGHTRAG_GRAPH_STORAGE: NetworkXStorage
+      LIGHTRAG_DOC_STATUS_STORAGE: JsonDocStatusStorage
+      MILVUS_URI: http://milvus:19530
+      MILVUS_DB_NAME: lightrag
+      MILVUS_INDEX_TYPE: AUTOINDEX
+      MILVUS_METRIC_TYPE: COSINE
+      MILVUS_TOKEN: ${XLH_MILVUS_TOKEN:?XLH_MILVUS_TOKEN is required}
+      MAX_PENDING_DOCUMENTS: "100"
+      LLM_BINDING: openai
+      LLM_BINDING_HOST: ${XLH_LIGHTRAG_LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      LLM_BINDING_API_KEY: ${XLH_LIGHTRAG_LLM_API_KEY:?XLH_LIGHTRAG_LLM_API_KEY is required}
+      LLM_MODEL: ${XLH_LIGHTRAG_LLM_MODEL:-qwen3.5-flash}
+      EMBEDDING_BINDING: openai
+      EMBEDDING_BINDING_HOST: ${XLH_LIGHTRAG_EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      EMBEDDING_BINDING_API_KEY: ${XLH_LIGHTRAG_EMBEDDING_API_KEY:?XLH_LIGHTRAG_EMBEDDING_API_KEY is required}
+      EMBEDDING_MODEL: ${XLH_LIGHTRAG_EMBEDDING_MODEL:-text-embedding-v4}
+      EMBEDDING_DIM: ${XLH_LIGHTRAG_EMBEDDING_DIM:-1024}
+      EMBEDDING_SEND_DIM: "false"
+      EMBEDDING_ASYMMETRIC: "false"
+      EMBEDDING_DOCUMENT_PREFIX: ""
+      EMBEDDING_QUERY_PREFIX: ""
+      RERANK_BINDING: ${XLH_LIGHTRAG_RERANK_BINDING:-null}
+      XLH_LIGHTRAG_IMAGE_DIGEST: sha256:5bdbd524931b011df246fe20888d110cef691e6804c12cde636a2b746d7de27e
+      XLH_LIGHTRAG_WORKING_DIR_ID: xlh-lightrag-data
+      XLH_EMBEDDING_ENDPOINT_PROFILE: ${XLH_EMBEDDING_ENDPOINT_PROFILE:-dashscope-compatible-v1}
+      XLH_LIGHTRAG_FIXTURE_SUITE_VERSION: ${XLH_LIGHTRAG_FIXTURE_SUITE_VERSION:-lifecycle-v1}
+      XLH_LIGHTRAG_DEPLOYMENT_GENERATION: ${XLH_LIGHTRAG_DEPLOYMENT_GENERATION:?XLH_LIGHTRAG_DEPLOYMENT_GENERATION is required}
+      XLH_LIGHTRAG_ATTEMPT_ID: ${XLH_LIGHTRAG_ATTEMPT_ID:-}
+      XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256: ${XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256:-}
+      XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR: ${XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:?XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR must be an absolute path}
+      XLH_LEGACY_KNOWLEDGE: ${XLH_LEGACY_KNOWLEDGE:-absent}
+    volumes:
+      - xlh-lightrag-data:/app/data/rag_storage
+      - ${XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:?XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR is required}:/rebuild-fence
+      - ${XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR:?XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR is required}:/writer-evidence:ro
+      - ${XLH_LIGHTRAG_BACKUP_HOST_DIR:-./.state/lightrag-backup}:/backup-evidence:ro
+      - ./lightrag/rebuild_fence.py:/opt/xlh/rebuild_fence.py:ro
+      - ./lightrag/guarded_start.py:/opt/xlh/guarded_start.py:ro
+    depends_on:
+      milvus-init:
+        condition: service_completed_successfully
+    networks: [xlh-private]
+
   lightrag:
     image: ghcr.io/hkuds/lightrag:v1.5.7@sha256:5bdbd524931b011df246fe20888d110cef691e6804c12cde636a2b746d7de27e
     # The image default starts single-process Uvicorn and intentionally ignores
     # WORKERS>1. Use the official Gunicorn entry point so both configured workers
     # actually run inside this one (and only one) service replica.
-    command: ["lightrag-gunicorn"]
+    command: ["python", "/opt/xlh/guarded_start.py", "steady"]
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       HOST: 0.0.0.0
       PORT: "9621"
@@ -19,9 +167,14 @@ services:
       WHITELIST_PATHS: /health
       ENABLE_API_DOCS: "false"
       LIGHTRAG_KV_STORAGE: JsonKVStorage
-      LIGHTRAG_VECTOR_STORAGE: NanoVectorDBStorage
+      LIGHTRAG_VECTOR_STORAGE: MilvusVectorDBStorage
       LIGHTRAG_GRAPH_STORAGE: NetworkXStorage
       LIGHTRAG_DOC_STATUS_STORAGE: JsonDocStatusStorage
+      MILVUS_URI: http://milvus:19530
+      MILVUS_DB_NAME: lightrag
+      MILVUS_INDEX_TYPE: AUTOINDEX
+      MILVUS_METRIC_TYPE: COSINE
+      MILVUS_TOKEN: ${XLH_MILVUS_TOKEN:?XLH_MILVUS_TOKEN is required}
       MAX_PENDING_DOCUMENTS: "100"
       # Keep MAX_REQUEST_BODY_BYTES unset. Official 1.5.7 then applies its 1 MiB
       # ordinary-route limit and separate 50 MiB /documents/text limit. Setting
@@ -35,13 +188,28 @@ services:
       EMBEDDING_BINDING_API_KEY: ${XLH_LIGHTRAG_EMBEDDING_API_KEY:?XLH_LIGHTRAG_EMBEDDING_API_KEY is required}
       EMBEDDING_MODEL: ${XLH_LIGHTRAG_EMBEDDING_MODEL:-text-embedding-v4}
       EMBEDDING_DIM: ${XLH_LIGHTRAG_EMBEDDING_DIM:-1024}
+      EMBEDDING_SEND_DIM: "false"
+      EMBEDDING_ASYMMETRIC: "false"
+      EMBEDDING_DOCUMENT_PREFIX: ""
+      EMBEDDING_QUERY_PREFIX: ""
       RERANK_BINDING: ${XLH_LIGHTRAG_RERANK_BINDING:-null}
+      XLH_LIGHTRAG_DEPLOYMENT_GENERATION: ${XLH_LIGHTRAG_DEPLOYMENT_GENERATION:?XLH_LIGHTRAG_DEPLOYMENT_GENERATION is required}
+      XLH_EXPECTED_CONTRACT_SHA256: ${XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256:?XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256 is required}
+      XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR: ${XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:?XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR must be an absolute path}
+    depends_on:
+      milvus:
+        condition: service_healthy
     ports:
       # Host-run XiaoLanHe can reach LightRAG, while the API remains unreachable
       # from other hosts. Container deployments should use the private DNS name.
       - "127.0.0.1:9621:9621"
     volumes:
       - xlh-lightrag-data:/app/data/rag_storage
+      # The guarded entry point reads the marker and holds a shared lock on the
+      # pre-created serving.lock inode. It never mutates the read-only fence mount.
+      - ${XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:?XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR is required}:/rebuild-fence:ro
+      - ./lightrag/rebuild_fence.py:/opt/xlh/rebuild_fence.py:ro
+      - ./lightrag/guarded_start.py:/opt/xlh/guarded_start.py:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=3)\""]
       interval: 10s
@@ -71,3 +239,6 @@ networks:
 
 volumes:
   xlh-lightrag-data:
+  xlh-milvus-data:
+  xlh-milvus-etcd-data:
+  xlh-milvus-minio-data:

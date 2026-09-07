@@ -38,6 +38,33 @@ func TestDefaultDatasetMatchesSkillsAndPassesThresholds(t *testing.T) {
 	}
 }
 
+func TestDefaultDatasetPinsMilvusEmbeddingAndComponentContract(t *testing.T) {
+	dataset, err := LoadDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := dataset.Metadata
+	if metadata.ApplicationVersion != "xlh-mysql-milvus-spec-20260907" || !validKnowledgeRuntimeContract(metadata) {
+		t.Fatalf("metadata=%+v", metadata)
+	}
+	for name, mutate := range map[string]func(*Metadata){
+		"legacy vector store":       func(value *Metadata) { value.LightRAGStores[1] = "NanoVectorDBStorage" },
+		"wrong Milvus version":      func(value *Metadata) { value.MilvusVersion = "2.6.10" },
+		"wrong embedding model":     func(value *Metadata) { value.EmbeddingModel = "text-embedding-v3" },
+		"wrong embedding dimension": func(value *Metadata) { value.EmbeddingDimension = 1536 },
+		"dimension sent":            func(value *Metadata) { value.EmbeddingSendDim = "true" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := dataset
+			candidate.Metadata.LightRAGStores = append([]string(nil), dataset.Metadata.LightRAGStores...)
+			mutate(&candidate.Metadata)
+			if err := candidate.Validate(); err == nil {
+				t.Fatal("drifted knowledge runtime metadata unexpectedly accepted")
+			}
+		})
+	}
+}
+
 func TestEvalGateRejectsSafetyViolationAndRegression(t *testing.T) {
 	dataset, err := LoadDefault()
 	if err != nil {

@@ -34,7 +34,7 @@ import (
 
 func TestHTTPMessage(t *testing.T) {
 	store := &httpStore{}
-	h := NewHTTPWithServices(":0", usecase.NewChat(store, httpAssistant{}), nil, nil, httpAuthenticator{})
+	h := NewHTTPWithServices(":0", usecase.NewChat(store, httpAssistant{}), nil, httpAuthenticator{})
 
 	t.Run("keeps the REST response contract", func(t *testing.T) {
 		response := ut.PerformRequest(
@@ -111,7 +111,7 @@ func TestHTTPMessage(t *testing.T) {
 	})
 
 	t.Run("returns forbidden when the conversation owner does not match", func(t *testing.T) {
-		blocked := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{findErr: usecase.ErrConversationForbidden}, httpAssistant{}), nil, nil, httpAuthenticator{})
+		blocked := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{findErr: usecase.ErrConversationForbidden}, httpAssistant{}), nil, httpAuthenticator{})
 		response := ut.PerformRequest(
 			blocked.server.Engine,
 			"POST",
@@ -125,7 +125,7 @@ func TestHTTPMessage(t *testing.T) {
 	})
 
 	t.Run("maps a request deadline to the public timeout contract", func(t *testing.T) {
-		timedOut := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{findErr: context.DeadlineExceeded}, httpAssistant{}), nil, nil, httpAuthenticator{})
+		timedOut := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{findErr: context.DeadlineExceeded}, httpAssistant{}), nil, httpAuthenticator{})
 		response := ut.PerformRequest(
 			timedOut.server.Engine,
 			"POST",
@@ -160,7 +160,7 @@ func TestHTTPOversizedRequestContract(t *testing.T) {
 
 	h := newHTTPWithServices(
 		newHertzServer(address, server.WithListener(listener), server.WithTransport(standard.NewTransporter)),
-		usecase.NewChat(&httpStore{}, httpAssistant{}), nil, nil, nil,
+		usecase.NewChat(&httpStore{}, httpAssistant{}), nil, nil,
 	)
 	h.server.POST("/test/request-body", func(_ context.Context, c *app.RequestContext) {
 		c.JSON(http.StatusOK, map[string]int{"bytes": len(c.Request.Body())})
@@ -259,7 +259,7 @@ func TestHTTPOversizedRequestContract(t *testing.T) {
 		return err
 	}
 
-	exactBody := bytes.Repeat([]byte("x"), maxKnowledgeBody)
+	exactBody := bytes.Repeat([]byte("x"), maxDefaultRequestBytes)
 
 	t.Run("accepts a fixed body at the limit", func(t *testing.T) {
 		connection, reader := dial(t)
@@ -270,14 +270,14 @@ func TestHTTPOversizedRequestContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		response, body := readResponse(t, reader)
-		if response.StatusCode != http.StatusOK || response.Close || string(body) != fmt.Sprintf(`{"bytes":%d}`, maxKnowledgeBody) {
+		if response.StatusCode != http.StatusOK || response.Close || string(body) != fmt.Sprintf(`{"bytes":%d}`, maxDefaultRequestBytes) {
 			t.Fatalf("status=%d close=%v body=%s", response.StatusCode, response.Close, body)
 		}
 	})
 
 	t.Run("rejects a fixed body above the limit and closes", func(t *testing.T) {
 		connection, reader := dial(t)
-		if _, err := fmt.Fprintf(connection, "POST /test/request-body HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\nX-Request-ID: fixed-oversized\r\n\r\n", address, maxKnowledgeBody+1); err != nil {
+		if _, err := fmt.Fprintf(connection, "POST /test/request-body HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\nX-Request-ID: fixed-oversized\r\n\r\n", address, maxDefaultRequestBytes+1); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := io.Copy(connection, bytes.NewReader(bytes.Repeat([]byte("x"), requestBodyPrefetchBytes+1))); err != nil {
@@ -300,7 +300,7 @@ func TestHTTPOversizedRequestContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		response, body := readResponse(t, reader)
-		if response.StatusCode != http.StatusOK || response.Close || string(body) != fmt.Sprintf(`{"bytes":%d}`, maxKnowledgeBody) {
+		if response.StatusCode != http.StatusOK || response.Close || string(body) != fmt.Sprintf(`{"bytes":%d}`, maxDefaultRequestBytes) {
 			t.Fatalf("status=%d close=%v body=%s", response.StatusCode, response.Close, body)
 		}
 	})
@@ -323,7 +323,7 @@ func TestHTTPOversizedRequestContract(t *testing.T) {
 
 	t.Run("rejects oversized expect continue before acknowledging or reading a body", func(t *testing.T) {
 		connection, reader := dial(t)
-		if _, err := fmt.Fprintf(connection, "POST /test/request-body HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\nExpect: 100-continue\r\nX-Request-ID: expect-oversized\r\n\r\n", address, maxKnowledgeBody+1); err != nil {
+		if _, err := fmt.Fprintf(connection, "POST /test/request-body HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\nExpect: 100-continue\r\nX-Request-ID: expect-oversized\r\n\r\n", address, maxDefaultRequestBytes+1); err != nil {
 			t.Fatal(err)
 		}
 		response, body := readResponse(t, reader)
@@ -392,7 +392,7 @@ func TestHTTPOversizedRequestWithDefaultNetpollStopsReading(t *testing.T) {
 	address := listener.Addr().String()
 	h := newHTTPWithServices(
 		newHertzServer(address, server.WithListener(listener)),
-		usecase.NewChat(&httpStore{}, httpAssistant{}), nil, nil, nil,
+		usecase.NewChat(&httpStore{}, httpAssistant{}), nil, nil,
 	)
 	h.server.POST("/test/request-body", func(_ context.Context, c *app.RequestContext) {
 		c.JSON(http.StatusOK, map[string]int{"bytes": len(c.Request.Body())})
@@ -408,7 +408,7 @@ func TestHTTPOversizedRequestWithDefaultNetpollStopsReading(t *testing.T) {
 	}
 
 	const initialBodyBytes = 64 << 10
-	declaredBodyBytes := maxKnowledgeBody + (32 << 20)
+	declaredBodyBytes := maxDefaultRequestBytes + (32 << 20)
 	header := fmt.Sprintf(
 		"POST /test/request-body HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\nX-Request-ID: netpoll-oversized\r\n\r\n",
 		address, declaredBodyBytes,
@@ -485,7 +485,7 @@ func TestReleaseRejectedRequestBodyUsesAbsoluteDeadline(t *testing.T) {
 	c := app.NewContext(0)
 	c.SetConn(connection)
 	stream := bytes.NewReader(nil)
-	c.Request.SetBodyStream(stream, maxKnowledgeBody+1)
+	c.Request.SetBodyStream(stream, maxDefaultRequestBytes+1)
 	started := time.Now()
 
 	releaseRejectedRequestBody(c, stream)
@@ -646,7 +646,7 @@ func TestHTTPStreamCancelsOnClientDisconnect(t *testing.T) {
 	store := &httpStore{}
 	h := newHTTPWithServices(
 		newHertzServer(address, server.WithListener(listener)),
-		usecase.NewChat(store, disconnectAwareHTTPAssistant{stream: stream}), nil, nil, nil,
+		usecase.NewChat(store, disconnectAwareHTTPAssistant{stream: stream}), nil, nil,
 	)
 	runDone := make(chan struct{})
 	var runErr error
@@ -799,21 +799,115 @@ func TestHTTPReadinessChecks(t *testing.T) {
 	t.Run("all dependencies ready", func(t *testing.T) {
 		h := NewHTTP(":0", usecase.NewChat(&httpStore{}, httpAssistant{}))
 		called := 0
-		h.RegisterReadinessChecks(func(context.Context) error { called++; return nil }, func(context.Context) error { called++; return nil })
+		var lock sync.Mutex
+		check := func(context.Context) error {
+			lock.Lock()
+			called++
+			lock.Unlock()
+			return nil
+		}
+		h.RegisterReadinessChecks(check, check)
 		response := ut.PerformRequest(h.server.Engine, "GET", "/readyz", nil)
+		lock.Lock()
+		defer lock.Unlock()
 		if response.Code != 200 || called != 2 || response.Body.String() != `{"status":"ready"}` {
 			t.Fatalf("status=%d called=%d body=%s", response.Code, called, response.Body.String())
 		}
 	})
-	t.Run("fails closed and stops checks", func(t *testing.T) {
+	t.Run("fails closed without leaking dependency details", func(t *testing.T) {
 		h := NewHTTP(":0", usecase.NewChat(&httpStore{}, httpAssistant{}))
 		called := 0
-		h.RegisterReadinessChecks(func(context.Context) error { called++; return errors.New("private dependency detail") }, func(context.Context) error { called++; return nil })
+		var lock sync.Mutex
+		h.RegisterReadinessChecks(func(context.Context) error {
+			lock.Lock()
+			called++
+			lock.Unlock()
+			return errors.New("private dependency detail")
+		}, func(context.Context) error {
+			lock.Lock()
+			called++
+			lock.Unlock()
+			return nil
+		})
 		response := ut.PerformRequest(h.server.Engine, "GET", "/readyz", nil)
-		if response.Code != 503 || called != 1 || strings.Contains(response.Body.String(), "private dependency detail") {
+		lock.Lock()
+		defer lock.Unlock()
+		if response.Code != 503 || called != 2 || strings.Contains(response.Body.String(), "private dependency detail") {
 			t.Fatalf("status=%d called=%d body=%s", response.Code, called, response.Body.String())
 		}
 	})
+}
+
+func TestRunReadinessChecksUsesIndependentConcurrentDeadlines(t *testing.T) {
+	started := make(chan time.Time, 2)
+	released := make(chan struct{}, 2)
+	check := func(ctx context.Context) error {
+		started <- time.Now()
+		<-ctx.Done()
+		released <- struct{}{}
+		return ctx.Err()
+	}
+
+	begin := time.Now()
+	err := runReadinessChecks(context.Background(), 500*time.Millisecond, 40*time.Millisecond, []func(context.Context) error{check, check})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error=%v, want deadline exceeded", err)
+	}
+	first, second := <-started, <-started
+	if delta := first.Sub(second); delta > 20*time.Millisecond || delta < -20*time.Millisecond {
+		t.Fatalf("checks did not start concurrently: delta=%s", delta)
+	}
+	if elapsed := time.Since(begin); elapsed > 250*time.Millisecond {
+		t.Fatalf("independent checks consumed a sequential budget: %s", elapsed)
+	}
+	for range 2 {
+		select {
+		case <-released:
+		case <-time.After(time.Second):
+			t.Fatal("readiness check did not observe cancellation")
+		}
+	}
+}
+
+func TestRunReadinessChecksBoundsOverallResponseAndCancelsPeers(t *testing.T) {
+	peerCanceled := make(chan struct{})
+	checks := []func(context.Context) error{
+		func(ctx context.Context) error {
+			<-ctx.Done()
+			close(peerCanceled)
+			return ctx.Err()
+		},
+		func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	}
+	started := time.Now()
+	err := runReadinessChecks(context.Background(), 30*time.Millisecond, time.Second, checks)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error=%v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("overall readiness deadline was not bounded: %s", elapsed)
+	}
+	select {
+	case <-peerCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("overall timeout did not cancel a context-aware peer")
+	}
+}
+
+func TestRunReadinessChecksRejectsNilAndRecoversPanic(t *testing.T) {
+	for name, check := range map[string]func(context.Context) error{
+		"nil":   nil,
+		"panic": func(context.Context) error { panic("private dependency detail") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := runReadinessChecks(context.Background(), time.Second, time.Second, []func(context.Context) error{check}); err == nil {
+				t.Fatal("expected readiness failure")
+			}
+		})
+	}
 }
 
 func TestHTTPServesWebAndSPAFallback(t *testing.T) {
@@ -833,51 +927,6 @@ func TestHTTPServesWebAndSPAFallback(t *testing.T) {
 	response := ut.PerformRequest(h.Engine, "GET", "/api/missing", nil)
 	if response.Code != 404 {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
-	}
-}
-
-func TestHTTPKnowledge(t *testing.T) {
-	store := &httpKnowledgeStore{items: []usecase.KnowledgeSnippet{{ChunkID: 1, DocumentID: 2, Title: "Guide", Text: "fact", Score: 30}}}
-	knowledge := usecase.NewKnowledge(store, einoDisabledEmbedder{})
-	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), knowledge, usecase.NewWebSearch(httpSearchClient{}), httpAuthenticator{}, httpauth.RequireRole(httpAuthenticator{}, auth.RoleAdmin))
-
-	t.Run("use case rejects an unprotected anonymous write", func(t *testing.T) {
-		unprotectedStore := &httpKnowledgeStore{}
-		unprotected := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), usecase.NewKnowledge(unprotectedStore, einoDisabledEmbedder{}), nil, nil)
-		response := ut.PerformRequest(unprotected.server.Engine, "POST", "/api/knowledge/documents", &ut.Body{Body: bytes.NewBufferString(`{"sourceType":"note","title":"Guide","contentText":"body"}`), Len: -1})
-		if response.Code != 401 || !strings.Contains(response.Body.String(), `"code":"unauthenticated"`) || unprotectedStore.createCalls != 0 {
-			t.Fatalf("status=%d body=%s create calls=%d", response.Code, response.Body.String(), unprotectedStore.createCalls)
-		}
-	})
-
-	anonymous := ut.PerformRequest(h.server.Engine, "POST", "/api/knowledge/documents", &ut.Body{Body: bytes.NewBufferString(`{"sourceType":"note","title":"Guide","contentText":"body"}`), Len: -1})
-	if anonymous.Code != 401 {
-		t.Fatalf("anonymous status=%d body=%s", anonymous.Code, anonymous.Body.String())
-	}
-	created := ut.PerformRequest(h.server.Engine, "POST", "/api/knowledge/documents", &ut.Body{Body: bytes.NewBufferString(`{"sourceType":"note","title":"Guide","contentText":"body"}`), Len: -1}, ut.Header{Key: "Cookie", Value: httpauth.CookieName + "=admin"})
-	if created.Code != 200 || !strings.Contains(created.Body.String(), `"documentId":11`) || len(store.chunks) != 1 {
-		t.Fatalf("status=%d body=%s chunks=%v", created.Code, created.Body.String(), store.chunks)
-	}
-
-	searched := ut.PerformRequest(h.server.Engine, "GET", "/api/knowledge/search?query=guide&limit=5", nil)
-	if searched.Code != 200 || !strings.Contains(searched.Body.String(), `"snippet":"fact"`) {
-		t.Fatalf("status=%d body=%s", searched.Code, searched.Body.String())
-	}
-	searchCalls := store.searchCalls
-	for _, path := range []string{
-		"/api/knowledge/search?query=%20%20",
-		"/api/knowledge/search?query=" + strings.Repeat("a", 101),
-		"/api/knowledge/search?query=guide&limit=bad",
-		"/api/knowledge/search?query=guide&limit=0",
-		"/api/knowledge/search?query=guide&limit=11",
-	} {
-		response := ut.PerformRequest(h.server.Engine, "GET", path, nil)
-		if response.Code != 400 {
-			t.Fatalf("path=%s status=%d body=%s", path, response.Code, response.Body.String())
-		}
-	}
-	if store.searchCalls != searchCalls {
-		t.Fatalf("invalid requests reached knowledge store: before=%d after=%d", searchCalls, store.searchCalls)
 	}
 }
 
@@ -907,7 +956,7 @@ func (httpAuthenticator) Authenticate(_ context.Context, token string) (auth.Pri
 }
 
 func TestHTTPWebSearchAndPing(t *testing.T) {
-	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), nil, usecase.NewWebSearch(httpSearchClient{}), nil)
+	h := NewHTTPWithServices(":0", usecase.NewChat(&httpStore{}, httpAssistant{}), usecase.NewWebSearch(httpSearchClient{}), nil)
 	searched := ut.PerformRequest(h.server.Engine, "GET", "/api/search/web?query=guide", nil)
 	if searched.Code != 200 || !strings.Contains(searched.Body.String(), `"provider":"searxng"`) || !strings.Contains(searched.Body.String(), `"title":"A"`) || strings.Contains(searched.Body.String(), `"cacheHit"`) {
 		t.Fatalf("status=%d body=%s", searched.Code, searched.Body.String())
@@ -943,7 +992,7 @@ func (s *httpStore) FindOrCreateSession(_ context.Context, sessionKey string, us
 	}
 	return s.id, nil
 }
-func (s *httpStore) SaveMessage(_ context.Context, _ int64, role, _, _ string) error {
+func (s *httpStore) SaveMessageWithKey(_ context.Context, _ int64, _, role, _, _ string) error {
 	s.roles = append(s.roles, role)
 	return nil
 }
@@ -1046,32 +1095,6 @@ func (*disconnectAwareHTTPStream) Model() string { return "fake" }
 
 func (s *disconnectAwareHTTPStream) release() {
 	s.releaseOnce.Do(func() { close(s.released) })
-}
-
-type einoDisabledEmbedder struct{}
-
-func (einoDisabledEmbedder) Embed(context.Context, []string) ([][]float32, error) {
-	return nil, usecase.ErrEmbeddingUnavailable
-}
-
-type httpKnowledgeStore struct {
-	chunks      []string
-	items       []usecase.KnowledgeSnippet
-	createCalls int
-	searchCalls int
-}
-
-func (s *httpKnowledgeStore) CreateDocument(_ context.Context, _ usecase.KnowledgeDocument, chunks []string, _ [][]float32) (int64, error) {
-	s.createCalls++
-	s.chunks = chunks
-	return 11, nil
-}
-func (s *httpKnowledgeStore) SearchKeyword(context.Context, string, string, string, int) ([]usecase.KnowledgeSnippet, error) {
-	s.searchCalls++
-	return s.items, nil
-}
-func (*httpKnowledgeStore) SearchVector(context.Context, []float32, string, string, int) ([]usecase.KnowledgeSnippet, error) {
-	return nil, nil
 }
 
 type httpSearchClient struct{}

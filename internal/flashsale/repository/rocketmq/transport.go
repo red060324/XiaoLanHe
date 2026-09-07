@@ -21,7 +21,20 @@ import (
 	platformmetrics "github.com/red060324/XiaoLanHe/internal/platform/metrics"
 )
 
-const reservationTagV1 = "RESERVED_V1"
+const (
+	reservationTagV1 = "RESERVED_V1"
+
+	// rocketmq-client-go v2.1.2 performs one six-second route request per
+	// configured name server when a route cannot be resolved. Keep the
+	// caller-controlled multiplier finite before any client is constructed.
+	maxNameServers = 4
+
+	// Readiness rejects unexpectedly large publish topologies before the
+	// SDK's non-context-aware Consumer.Start walks the discovered brokers.
+	// These are safety limits, not capacity targets.
+	maxPublishQueues  = 1024
+	maxPublishBrokers = 64
+)
 
 var rocketNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,126}$`)
 
@@ -121,6 +134,10 @@ func (p *Producer) Reserve(ctx context.Context, command flashsale.AdmissionComma
 		slog.WarnContext(ctx, "flash sale transaction unavailable", "request_id", command.RequestID, "activity_id", command.ActivityID, "transaction_state", "unknown", "outcome", "dependency_unavailable")
 		return flashsale.AdmissionResult{}, flashsale.ErrUnavailable
 	}
+	// Redis persists the reservation marker as Unix milliseconds. Canonicalize
+	// the event before both the Lua transaction and RocketMQ serialization so a
+	// broker transaction check observes the same durable timestamp.
+	reservedAt = time.UnixMilli(reservedAt.UTC().UnixMilli()).UTC()
 	command.ReservedAt = reservedAt
 	event := flashsale.Event{
 		Version: 1, RequestID: command.RequestID, ActivityID: command.ActivityID, ActivityVersion: command.ActivityVersion,
@@ -319,6 +336,8 @@ func (p *ReadinessProbe) Ready(ctx context.Context) error {
 			probeErr = fmt.Errorf("fetch RocketMQ topic route: %w", err)
 		} else if len(queues) == 0 {
 			probeErr = errors.New("RocketMQ topic has no writable queues")
+		} else if err := validatePublishTopology(queues); err != nil {
+			probeErr = err
 		}
 		if err := client.Close(); err != nil {
 			probeErr = errors.Join(probeErr, fmt.Errorf("close RocketMQ admin client: %w", err))
@@ -331,6 +350,23 @@ func (p *ReadinessProbe) Ready(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func validatePublishTopology(queues []*primitive.MessageQueue) error {
+	if len(queues) > maxPublishQueues {
+		return fmt.Errorf("RocketMQ topic has too many writable queues: %d exceeds %d", len(queues), maxPublishQueues)
+	}
+	brokers := make(map[string]struct{}, min(len(queues), maxPublishBrokers+1))
+	for _, queue := range queues {
+		if queue == nil || strings.TrimSpace(queue.BrokerName) == "" {
+			return errors.New("RocketMQ topic route contains an invalid writable queue")
+		}
+		brokers[queue.BrokerName] = struct{}{}
+		if len(brokers) > maxPublishBrokers {
+			return fmt.Errorf("RocketMQ topic has too many writable brokers: %d exceeds %d", len(brokers), maxPublishBrokers)
+		}
+	}
+	return nil
 }
 
 func (c Config) validateProducer() error {
@@ -354,7 +390,7 @@ func (c Config) validateConsumer() error {
 }
 
 func (c Config) validateCommon() error {
-	if len(c.NameServers) == 0 || !rocketNamePattern.MatchString(c.Topic) || (c.AccessKey == "") != (c.SecretKey == "") {
+	if len(c.NameServers) == 0 || len(c.NameServers) > maxNameServers || !rocketNamePattern.MatchString(c.Topic) || (c.AccessKey == "") != (c.SecretKey == "") {
 		return errors.New("invalid RocketMQ configuration")
 	}
 	if c.AccessKey != "" && (!rocketNamePattern.MatchString(c.AccessKey) || len(c.SecretKey) > 512 || strings.ContainsAny(c.SecretKey, "\r\n")) {

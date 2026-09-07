@@ -12,7 +12,7 @@ import (
 
 type ConversationStore interface {
 	FindOrCreateSession(context.Context, string, int64) (int64, error)
-	SaveMessage(context.Context, int64, string, string, string) error
+	SaveMessageWithKey(context.Context, int64, string, string, string, string) error
 	LoadContext(context.Context, int64, int) (string, error)
 }
 
@@ -64,15 +64,16 @@ type ChatStream struct {
 }
 
 type Chat struct {
-	store     ConversationStore
-	assistant Assistant
-	now       func() time.Time
-	newID     func() (string, error)
-	memory    MemoryRefresher
+	store         ConversationStore
+	assistant     Assistant
+	now           func() time.Time
+	newID         func() (string, error)
+	newMessageKey func() (string, error)
+	memory        MemoryRefresher
 }
 
 func NewChat(store ConversationStore, assistant Assistant) *Chat {
-	return &Chat{store: store, assistant: assistant, now: time.Now, newID: newSessionID}
+	return &Chat{store: store, assistant: assistant, now: time.Now, newID: newSessionID, newMessageKey: newSessionID}
 }
 
 func (c *Chat) WithMemory(memory MemoryRefresher) *Chat {
@@ -81,7 +82,11 @@ func (c *Chat) WithMemory(memory MemoryRefresher) *Chat {
 }
 
 func (c *Chat) Run(ctx context.Context, in ChatInput) (ChatResult, error) {
-	sessionID, sessionDBID, contextText, err := c.prepare(ctx, in)
+	userMessageKey, assistantMessageKey, err := c.newMessageKeys()
+	if err != nil {
+		return ChatResult{}, err
+	}
+	sessionID, sessionDBID, contextText, err := c.prepare(ctx, in, userMessageKey)
 	if err != nil {
 		return ChatResult{}, err
 	}
@@ -90,7 +95,7 @@ func (c *Chat) Run(ctx context.Context, in ChatInput) (ChatResult, error) {
 	if err != nil {
 		return ChatResult{}, fmt.Errorf("generate answer: %w", err)
 	}
-	if err := c.store.SaveMessage(ctx, sessionDBID, "assistant", answer.Text, answer.Model); err != nil {
+	if err := c.store.SaveMessageWithKey(ctx, sessionDBID, assistantMessageKey, "assistant", answer.Text, answer.Model); err != nil {
 		return ChatResult{}, fmt.Errorf("save assistant message: %w", err)
 	}
 	c.refreshMemory(ctx, sessionDBID)
@@ -98,7 +103,11 @@ func (c *Chat) Run(ctx context.Context, in ChatInput) (ChatResult, error) {
 }
 
 func (c *Chat) Stream(ctx context.Context, in ChatInput) (ChatStream, error) {
-	sessionID, sessionDBID, contextText, err := c.prepare(ctx, in)
+	userMessageKey, assistantMessageKey, err := c.newMessageKeys()
+	if err != nil {
+		return ChatStream{}, err
+	}
+	sessionID, sessionDBID, contextText, err := c.prepare(ctx, in, userMessageKey)
 	if err != nil {
 		return ChatStream{}, err
 	}
@@ -119,6 +128,7 @@ func (c *Chat) Stream(ctx context.Context, in ChatInput) (ChatStream, error) {
 			ctx:          ctx,
 			store:        c.store,
 			sessionDBID:  sessionDBID,
+			messageKey:   assistantMessageKey,
 			memory:       c.memory,
 		},
 	}, nil
@@ -133,7 +143,7 @@ func (c *Chat) refreshMemory(ctx context.Context, sessionID int64) {
 	}
 }
 
-func (c *Chat) prepare(ctx context.Context, in ChatInput) (string, int64, string, error) {
+func (c *Chat) prepare(ctx context.Context, in ChatInput, userMessageKey string) (string, int64, string, error) {
 	sessionID := in.SessionID
 	if strings.TrimSpace(sessionID) == "" {
 		var err error
@@ -150,7 +160,7 @@ func (c *Chat) prepare(ctx context.Context, in ChatInput) (string, int64, string
 	if err != nil {
 		return "", 0, "", fmt.Errorf("load conversation context: %w", err)
 	}
-	if err := c.store.SaveMessage(ctx, sessionDBID, "user", in.Message, ""); err != nil {
+	if err := c.store.SaveMessageWithKey(ctx, sessionDBID, userMessageKey, "user", in.Message, ""); err != nil {
 		return "", 0, "", fmt.Errorf("save user message: %w", err)
 	}
 	return sessionID, sessionDBID, contextText, nil
@@ -161,6 +171,7 @@ type persistingStream struct {
 	ctx         context.Context
 	store       ConversationStore
 	sessionDBID int64
+	messageKey  string
 	answer      []byte
 	done        bool
 	memory      MemoryRefresher
@@ -175,14 +186,29 @@ func (s *persistingStream) Recv() (string, error) {
 	if !errors.Is(err, io.EOF) || s.done {
 		return "", err
 	}
-	s.done = true
-	if err := s.store.SaveMessage(s.ctx, s.sessionDBID, "assistant", string(s.answer), s.Model()); err != nil {
+	if err := s.store.SaveMessageWithKey(s.ctx, s.sessionDBID, s.messageKey, "assistant", string(s.answer), s.Model()); err != nil {
 		return "", fmt.Errorf("save streamed assistant message: %w", err)
 	}
+	s.done = true
 	if s.memory != nil {
 		_ = s.memory.Refresh(s.ctx, s.sessionDBID)
 	}
 	return "", io.EOF
+}
+
+func (c *Chat) newMessageKeys() (string, string, error) {
+	userKey, err := c.newMessageKey()
+	if err != nil {
+		return "", "", fmt.Errorf("create user message key: %w", err)
+	}
+	assistantKey, err := c.newMessageKey()
+	if err != nil {
+		return "", "", fmt.Errorf("create assistant message key: %w", err)
+	}
+	if userKey == "" || assistantKey == "" || userKey == assistantKey {
+		return "", "", errors.New("create distinct non-empty message keys")
+	}
+	return userKey, assistantKey, nil
 }
 
 func newSessionID() (string, error) {

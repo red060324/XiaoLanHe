@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +20,6 @@ import (
 	"github.com/cloudwego/hertz/pkg/protocol/http1/ext"
 	"github.com/cloudwego/hertz/pkg/protocol/sse"
 
-	"github.com/red060324/XiaoLanHe/internal/platform/auth"
 	"github.com/red060324/XiaoLanHe/internal/platform/httpauth"
 	"github.com/red060324/XiaoLanHe/internal/platform/httpx"
 	platformmetrics "github.com/red060324/XiaoLanHe/internal/platform/metrics"
@@ -30,25 +28,26 @@ import (
 )
 
 const maxRequestBytes = presenter.MaxMessageLength + 1024
-const maxKnowledgeBody = 1 << 20
+const maxDefaultRequestBytes = 1 << 20
 const requestBodyPrefetchBytes = 8 << 10
 const webRoot = "frontend/xiaolanhe-web/dist"
+const readinessOverallTimeout = 2 * time.Second
+const readinessDependencyTimeout = 1500 * time.Millisecond
 
 type HTTP struct {
-	server    *server.Hertz
-	chat      *usecase.Chat
-	knowledge *usecase.Knowledge
-	search    *usecase.WebSearch
+	server *server.Hertz
+	chat   *usecase.Chat
+	search *usecase.WebSearch
 }
 
 const prometheusContentType = "text/plain; version=0.0.4; charset=utf-8"
 
 func NewHTTP(address string, chat *usecase.Chat) *HTTP {
-	return NewHTTPWithServices(address, chat, nil, nil, nil)
+	return NewHTTPWithServices(address, chat, nil, nil)
 }
 
-func NewHTTPWithServices(address string, chat *usecase.Chat, knowledge *usecase.Knowledge, search *usecase.WebSearch, chatAuthenticator httpauth.Authenticator, knowledgeWriteMiddleware ...app.HandlerFunc) *HTTP {
-	return newHTTPWithServices(newHertzServer(address), chat, knowledge, search, chatAuthenticator, knowledgeWriteMiddleware...)
+func NewHTTPWithServices(address string, chat *usecase.Chat, search *usecase.WebSearch, chatAuthenticator httpauth.Authenticator) *HTTP {
+	return newHTTPWithServices(newHertzServer(address), chat, search, chatAuthenticator)
 }
 
 func newHertzServer(address string, extraOptions ...config.Option) *server.Hertz {
@@ -64,15 +63,14 @@ func newHertzServer(address string, extraOptions ...config.Option) *server.Hertz
 	return server.Default(append(options, extraOptions...)...)
 }
 
-func newHTTPWithServices(hertzServer *server.Hertz, chat *usecase.Chat, knowledge *usecase.Knowledge, search *usecase.WebSearch, chatAuthenticator httpauth.Authenticator, knowledgeWriteMiddleware ...app.HandlerFunc) *HTTP {
+func newHTTPWithServices(hertzServer *server.Hertz, chat *usecase.Chat, search *usecase.WebSearch, chatAuthenticator httpauth.Authenticator) *HTTP {
 	hertzServer.Engine.ContinueHandler = func(header *protocol.RequestHeader) bool {
 		return header.ContentLength() <= requestBodyLimit(header.RequestURI())
 	}
 	h := &HTTP{
-		server:    hertzServer,
-		chat:      chat,
-		knowledge: knowledge,
-		search:    search,
+		server: hertzServer,
+		chat:   chat,
+		search: search,
 	}
 	h.server.Use(httpx.RequestIDMiddleware, limitRequestBody())
 	h.server.GET("/healthz", h.health)
@@ -83,14 +81,6 @@ func newHTTPWithServices(hertzServer *server.Hertz, chat *usecase.Chat, knowledg
 	} else {
 		h.server.POST("/api/chat/message", httpauth.Optional(chatAuthenticator), h.message)
 		h.server.POST("/api/chat/stream", httpauth.Optional(chatAuthenticator), h.stream)
-	}
-	if knowledge != nil {
-		if len(knowledgeWriteMiddleware) == 0 {
-			h.server.POST("/api/knowledge/documents", h.createKnowledge)
-		} else {
-			h.server.POST("/api/knowledge/documents", append(knowledgeWriteMiddleware, h.createKnowledge)...)
-		}
-		h.server.GET("/api/knowledge/search", h.searchKnowledge)
 	}
 	if search != nil {
 		h.server.GET("/api/search/web", h.searchWeb)
@@ -107,7 +97,7 @@ func requestBodyLimit(requestURI []byte) int {
 	if path == "/api/chat/message" || path == "/api/chat/stream" {
 		return maxRequestBytes
 	}
-	return maxKnowledgeBody
+	return maxDefaultRequestBytes
 }
 
 func limitRequestBody() app.HandlerFunc {
@@ -180,10 +170,12 @@ func releaseRejectedRequestBody(c *app.RequestContext, stream io.Reader) {
 func (h *HTTP) Router() *server.Hertz { return h.server }
 
 func (h *HTTP) RegisterReadiness(check func(context.Context) error) {
+	h.RegisterReadinessChecks(check)
+}
+
+func (h *HTTP) RegisterReadinessChecks(checks ...func(context.Context) error) {
 	h.server.GET("/readyz", func(ctx context.Context, c *app.RequestContext) {
-		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		if err := check(checkCtx); err != nil {
+		if err := runReadinessChecks(ctx, readinessOverallTimeout, readinessDependencyTimeout, checks); err != nil {
 			httpx.WriteError(c, consts.StatusServiceUnavailable, "dependency_unavailable", "service is not ready", nil)
 			return
 		}
@@ -191,18 +183,49 @@ func (h *HTTP) RegisterReadiness(check func(context.Context) error) {
 	})
 }
 
-func (h *HTTP) RegisterReadinessChecks(checks ...func(context.Context) error) {
-	h.server.GET("/readyz", func(ctx context.Context, c *app.RequestContext) {
-		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		for _, check := range checks {
-			if err := check(checkCtx); err != nil {
-				httpx.WriteError(c, consts.StatusServiceUnavailable, "dependency_unavailable", "service is not ready", nil)
-				return
+// runReadinessChecks starts every dependency check at the same time. Each check
+// receives an independent deadline while the caller retains a separate overall
+// response bound. The buffered result channel lets a context-aware check finish
+// after the caller has already timed out without blocking its goroutine.
+func runReadinessChecks(ctx context.Context, overallTimeout, dependencyTimeout time.Duration, checks []func(context.Context) error) error {
+	if overallTimeout <= 0 || dependencyTimeout <= 0 || len(checks) == 0 {
+		return errors.New("invalid readiness configuration")
+	}
+	overallCtx, cancel := context.WithTimeout(ctx, overallTimeout)
+	defer cancel()
+	results := make(chan error, len(checks))
+	for _, check := range checks {
+		check := check
+		go func() {
+			checkCtx, checkCancel := context.WithTimeout(overallCtx, dependencyTimeout)
+			defer checkCancel()
+			results <- runReadinessCheck(checkCtx, check)
+		}()
+	}
+	var firstError error
+	for range checks {
+		select {
+		case err := <-results:
+			if err != nil && firstError == nil {
+				firstError = err
 			}
+		case <-overallCtx.Done():
+			return overallCtx.Err()
 		}
-		c.JSON(consts.StatusOK, map[string]string{"status": "ready"})
-	})
+	}
+	return firstError
+}
+
+func runReadinessCheck(ctx context.Context, check func(context.Context) error) (err error) {
+	if check == nil {
+		return errors.New("readiness check is nil")
+	}
+	defer func() {
+		if recover() != nil {
+			err = errors.New("readiness check panicked")
+		}
+	}()
+	return check(ctx)
 }
 
 // RegisterMetrics exposes process metrics only when a distinct operator token
@@ -246,69 +269,6 @@ func registerWeb(h *server.Hertz, root string) {
 
 func (h *HTTP) ping(_ context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, map[string]string{"name": "xiaolanhe", "status": "ok"})
-}
-
-func (h *HTTP) createKnowledge(ctx context.Context, c *app.RequestContext) {
-	var request presenter.KnowledgeDocumentRequest
-	if err := httpx.DecodeJSON(c.Request.Body(), maxKnowledgeBody, &request); err != nil {
-		writeError(c, consts.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	document, err := request.Input()
-	if err != nil {
-		writeError(c, consts.StatusBadRequest, err.Error())
-		return
-	}
-	principal, _ := httpauth.Principal(c)
-	id, count, err := h.knowledge.Create(ctx, principal, document)
-	if err != nil {
-		if httpx.WriteDeadlineError(c, err) {
-			return
-		}
-		if errors.Is(err, auth.ErrUnauthenticated) {
-			httpx.WriteError(c, consts.StatusUnauthorized, "unauthenticated", "authentication required", nil)
-			return
-		}
-		if errors.Is(err, usecase.ErrKnowledgeForbidden) {
-			httpx.WriteError(c, consts.StatusForbidden, "forbidden", "permission denied", nil)
-			return
-		}
-		slog.ErrorContext(ctx, "create knowledge document", "error", err)
-		writeError(c, consts.StatusInternalServerError, "create knowledge document failed")
-		return
-	}
-	c.JSON(consts.StatusOK, presenter.KnowledgeDocumentResponse{DocumentID: id, ChunkCount: count, Title: document.Title, GameCode: document.GameCode, RegionCode: document.RegionCode})
-}
-
-func (h *HTTP) searchKnowledge(ctx context.Context, c *app.RequestContext) {
-	query := strings.TrimSpace(string(c.Query("query")))
-	if query == "" {
-		writeError(c, consts.StatusBadRequest, "query cannot be blank")
-		return
-	}
-	limit := 5
-	if raw := string(c.Query("limit")); raw != "" {
-		var err error
-		limit, err = strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > 10 {
-			writeError(c, consts.StatusBadRequest, "limit must be between 1 and 10")
-			return
-		}
-	}
-	items, err := h.knowledge.Search(ctx, query, string(c.Query("gameCode")), string(c.Query("regionCode")), limit)
-	if err != nil {
-		if httpx.WriteDeadlineError(c, err) {
-			return
-		}
-		if errors.Is(err, usecase.ErrInvalidSearchQuery) {
-			writeError(c, consts.StatusBadRequest, "query must contain 1 to 100 characters")
-			return
-		}
-		slog.ErrorContext(ctx, "search knowledge", "error", err)
-		writeError(c, consts.StatusInternalServerError, "knowledge search failed")
-		return
-	}
-	c.JSON(consts.StatusOK, presenter.PresentKnowledge(query, items))
 }
 
 func (h *HTTP) searchWeb(ctx context.Context, c *app.RequestContext) {
