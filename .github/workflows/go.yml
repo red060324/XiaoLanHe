@@ -93,6 +93,7 @@ jobs:
         run: make lightrag-static
       - name: Official LightRAG image and runtime contract
         run: |
+          set -o pipefail
           fence_dir="$RUNNER_TEMP/xlh-lightrag-fence-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           writer_dir="$RUNNER_TEMP/xlh-lightrag-writer-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           contract_sha256=$(bash deploy/lightrag-contract-hash.sh)
@@ -104,8 +105,7 @@ jobs:
             echo "XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR=$writer_dir"
           } >> "$GITHUB_ENV"
           bootstrap_output=$(bash deploy/lightrag-bootstrap-empty.sh \
-            deploy/docker-compose.lightrag.yml "$XLH_CI_COMPOSE_PROJECT")
-          printf '%s\n' "$bootstrap_output"
+            deploy/docker-compose.lightrag.yml "$XLH_CI_COMPOSE_PROJECT" | tee /dev/stderr)
           reported_generation=$(awk -F= '$1 == "XLH_LIGHTRAG_DEPLOYMENT_GENERATION" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
           reported_attempt=$(awk -F= '$1 == "XLH_LIGHTRAG_ATTEMPT_ID" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
           writer_sha256=$(awk -F= '$1 == "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
@@ -114,6 +114,7 @@ jobs:
           [[ "$reported_attempt" == "$XLH_LIGHTRAG_ATTEMPT_ID" ]]
           [[ "$reported_contract" == "$contract_sha256" ]]
           [[ "$writer_sha256" =~ ^sha256:[0-9a-f]{64}$ ]]
+          export XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256="$reported_contract"
           export XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256="$writer_sha256"
           bash deploy/check-lightrag-milvus.sh deploy/docker-compose.lightrag.yml "$XLH_CI_COMPOSE_PROJECT"
           docker compose -p "$XLH_CI_COMPOSE_PROJECT" -f deploy/docker-compose.lightrag.yml \
@@ -206,7 +207,7 @@ jobs:
         run: |
           mkdir -p "$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR" "$XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR"
           docker compose -p "$XLH_CI_COMPOSE_PROJECT" -f deploy/docker-compose.lightrag.yml \
-            logs --no-color lightrag milvus milvus-etcd milvus-minio
+            logs --no-color lightrag lightrag-bootstrap milvus-init milvus milvus-etcd milvus-minio
       - name: Middleware logs
         if: failure()
         continue-on-error: true
