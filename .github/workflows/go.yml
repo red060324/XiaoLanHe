@@ -91,7 +91,7 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Validate official LightRAG Milvus manifest
         run: make lightrag-static
-      - name: Official LightRAG image and runtime contract
+      - name: Bootstrap empty LightRAG knowledge store
         run: |
           set -o pipefail
           fence_dir="$RUNNER_TEMP/xlh-lightrag-fence-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -114,16 +114,21 @@ jobs:
           [[ "$reported_attempt" == "$XLH_LIGHTRAG_ATTEMPT_ID" ]]
           [[ "$reported_contract" == "$contract_sha256" ]]
           [[ "$writer_sha256" =~ ^sha256:[0-9a-f]{64}$ ]]
-          export XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256="$reported_contract"
-          export XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256="$writer_sha256"
-          bash deploy/check-lightrag-milvus.sh deploy/docker-compose.lightrag.yml "$XLH_CI_COMPOSE_PROJECT"
-          docker compose -p "$XLH_CI_COMPOSE_PROJECT" -f deploy/docker-compose.lightrag.yml \
-            up --detach --wait --no-deps lightrag
-          bash deploy/check-lightrag-live.sh http://127.0.0.1:9621 "$XLH_LIGHTRAG_API_KEY" "$fence_dir" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$contract_sha256"
           {
             echo "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$writer_sha256"
-            echo "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=$contract_sha256"
+            echo "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=$reported_contract"
           } >> "$GITHUB_ENV"
+      - name: Validate bootstrapped Milvus runtime contract
+        run: bash deploy/check-lightrag-milvus.sh deploy/docker-compose.lightrag.yml "$XLH_CI_COMPOSE_PROJECT"
+      - name: Start guarded LightRAG steady service
+        run: |
+          docker compose -p "$XLH_CI_COMPOSE_PROJECT" -f deploy/docker-compose.lightrag.yml \
+            up --detach --wait --no-deps lightrag
+      - name: Validate live LightRAG API contract
+        run: |
+          bash deploy/check-lightrag-live.sh http://127.0.0.1:9621 "$XLH_LIGHTRAG_API_KEY" \
+            "$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" \
+            "$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256"
       - name: Repository gates
         run: |
           if [ -n "${{ github.base_ref }}" ] && git rev-parse --verify "origin/${{ github.base_ref }}" >/dev/null 2>&1; then
