@@ -2340,6 +2340,65 @@ class TransitionAndParserTests(FenceTestCase):
                 MODULE.main()
             self.assertEqual(raised.exception.code, 0)
 
+    def test_setup_tool_isolates_and_restores_controller_arguments(self):
+        for setup_result in (True, False):
+            with self.subTest(setup_result=setup_result):
+                observed = []
+
+                class Tool:
+                    def __init__(self):
+                        observed.append(list(sys.argv))
+
+                    async def setup_storages(self):
+                        observed.append(list(sys.argv))
+                        return setup_result
+
+                shared_storage = SimpleNamespace(
+                    initialize_share_data=lambda workers: observed.append(
+                        (workers, list(sys.argv))
+                    )
+                )
+                rebuild_module = SimpleNamespace(RebuildTool=Tool)
+                lightrag_kg = SimpleNamespace(shared_storage=shared_storage)
+                lightrag_tools = SimpleNamespace(rebuild_vdb=rebuild_module)
+                modules = {
+                    "lightrag": SimpleNamespace(
+                        kg=lightrag_kg, tools=lightrag_tools
+                    ),
+                    "lightrag.kg": lightrag_kg,
+                    "lightrag.kg.shared_storage": shared_storage,
+                    "lightrag.tools": lightrag_tools,
+                    "lightrag.tools.rebuild_vdb": rebuild_module,
+                }
+                controller_argv = [
+                    str(MODULE_PATH),
+                    "bootstrap",
+                    "--fence-dir",
+                    "/rebuild-fence",
+                ]
+                with mock.patch.dict(sys.modules, modules), mock.patch.object(
+                    sys, "argv", controller_argv
+                ):
+                    if setup_result:
+                        tool, imported = asyncio.run(MODULE.setup_tool())
+                        self.assertIsInstance(tool, Tool)
+                        self.assertIs(imported, rebuild_module)
+                    else:
+                        with self.assertRaisesRegex(
+                            RuntimeError, "official storage initialization failed"
+                        ):
+                            asyncio.run(MODULE.setup_tool())
+                    self.assertIs(sys.argv, controller_argv)
+
+                self.assertEqual(
+                    observed,
+                    [
+                        (1, [str(MODULE_PATH)]),
+                        [str(MODULE_PATH)],
+                        [str(MODULE_PATH)],
+                    ],
+                )
+
 
 class SignalAndFixtureTests(FenceTestCase):
     def test_signal_wrapper_installs_both_handlers_and_cancels_once(self):

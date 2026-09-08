@@ -63,7 +63,7 @@ PostgreSQL-to-MySQL cutover rehearsal was run.
 | AC7 — LightRAG-only knowledge | architecture and client/importer tests prove no SQL knowledge fallback or direct application Milvus path | PASS — LOCAL |
 | AC8 — official Milvus backend | pinned Compose, exact configuration, RBAC initializer and schema/fence static tests pass | PARTIAL — DOCKER/LIVE BLOCKED |
 | AC9 — Milvus lifecycle | lifecycle/backup/restore runner and fault contracts are implemented | BLOCKED — LIVE LIFECYCLE NOT RUN |
-| AC10 — controlled vector migration | all three pinned rebuild calls, exact evidence validation and 189 host/preparer/controller/guard metadata and fault tests pass | PARTIAL — PAID LIVE REBUILD NOT RUN |
+| AC10 — controlled vector migration | all three pinned rebuild calls, exact evidence validation and 190 host/preparer/controller/guard metadata and fault tests pass | PARTIAL — PAID LIVE REBUILD NOT RUN |
 | AC11 — safe data cutover | copy/resume/authenticated read-only verify implementation and adversarial tests pass | BLOCKED — V27/V28 NOT RUN |
 | AC12 — deployment/security | fail-closed TLS/HTTPS/ACL/config tests and static deployment checks pass | PARTIAL — REAL INFRASTRUCTURE BLOCKED |
 | AC13 — compatibility/safety | full local Go/race/HTTP/eval suite and public-search capacity tests pass | PARTIAL — DEPLOYMENT SMOKE BLOCKED |
@@ -81,7 +81,7 @@ PostgreSQL-to-MySQL cutover rehearsal was run.
 | Frontend | Vitest: 6 files / 80 tests; production build; entry 246161/512000 bytes | PASS |
 | MySQL static | repository, transaction and schema packages through `make ci` | PASS |
 | LightRAG/Milvus static | Compose Go checker, Bash contract checks and 3 Milvus init tests through `make ci` | PASS |
-| Rebuild fence static | 189 Python metadata/static tests: 64 full-tree ownership-preparer, 29 host path, 85 controller and 11 guarded-start cases, including zero-mutation rejection, symlink/hardlink/alias/device defense, stable lock-inode and shared-`flock`-domain checks, sealed final-publish failure injection, post-operation staging faults, real SIGKILL publish boundaries and host recovery recognition, exact ownership/modes, report-to-marker recovery, serving-lease exclusion, fixed-directory reads, lock-error cleanup, signal forwarding and process-group cleanup; this count does not simulate real UID 1000/65532 container reads, which remain a separate blocked lifecycle gate | PASS — LOCAL STATIC |
+| Rebuild fence static | 190 Python metadata/static tests: 64 full-tree ownership-preparer, 29 host path, 86 controller and 11 guarded-start cases, including zero-mutation rejection, symlink/hardlink/alias/device defense, stable lock-inode and shared-`flock`-domain checks, sealed final-publish failure injection, post-operation staging faults, real SIGKILL publish boundaries and host recovery recognition, exact ownership/modes, report-to-marker recovery, serving-lease exclusion, fixed-directory reads, deferred-LightRAG argv isolation, lock-error cleanup, signal forwarding and process-group cleanup; this count does not simulate real UID 1000/65532 container reads, which remain a separate blocked lifecycle gate | PASS — LOCAL STATIC |
 | Milvus bootstrap static | 3 Python RBAC/bootstrap tests plus Go Compose/workflow contract tests, including mandatory guarded bootstrap/steady commands and explicit shared-GID propagation | PASS |
 | Flash-sale precision regression | unit and race tests for entity, RocketMQ, MySQL repository and usecase packages | PASS |
 | Working-tree hygiene | `git diff --check` | PASS |

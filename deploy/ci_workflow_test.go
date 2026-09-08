@@ -29,6 +29,7 @@ func TestLightRAGWorkflowPersistsVerifiedContractBeforeLaterStages(t *testing.T)
 	if !strings.Contains(step, `deploy/docker-compose.lightrag.yml "$XLH_CI_COMPOSE_PROJECT" | tee /dev/stderr`) {
 		t.Fatal("bootstrap output must remain visible when the command fails")
 	}
+	bootstrapStarted := strings.Index(step, `bootstrap_output=$(bash deploy/lightrag-bootstrap-empty.sh`)
 
 	validated := strings.Index(step, `[[ "$reported_contract" == "$contract_sha256" ]]`)
 	persisted := strings.Index(step, `echo "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=$reported_contract"`)
@@ -37,10 +38,11 @@ func TestLightRAGWorkflowPersistsVerifiedContractBeforeLaterStages(t *testing.T)
 	groupValidated := strings.Index(step, `[[ "$shared_gid" =~ ^[1-9][0-9]{0,9}$ ]]`)
 	groupBounded := strings.Index(step, `(( shared_gid <= 2147483647 ))`)
 	groupPersisted := strings.Index(step, `echo "XLH_LIGHTRAG_SHARED_GID=$shared_gid"`)
-	if validated < 0 || persisted < 0 || writerValidated < 0 || writerPersisted < 0 || groupValidated < 0 || groupBounded < 0 || groupPersisted < 0 {
+	groupConfirmed := strings.Index(step, `[[ "$reported_shared_gid" == "$shared_gid" ]]`)
+	if bootstrapStarted < 0 || validated < 0 || persisted < 0 || writerValidated < 0 || writerPersisted < 0 || groupValidated < 0 || groupBounded < 0 || groupPersisted < 0 || groupConfirmed < 0 {
 		t.Fatalf("bootstrap step must validate and persist digests and shared GID: contract=(%d,%d) writer=(%d,%d) group=(%d,%d,%d)", validated, persisted, writerValidated, writerPersisted, groupValidated, groupBounded, groupPersisted)
 	}
-	if validated >= persisted || writerValidated >= writerPersisted || groupValidated >= groupBounded || groupBounded >= groupPersisted {
+	if validated >= persisted || writerValidated >= writerPersisted || groupValidated >= groupBounded || groupBounded >= groupPersisted || groupPersisted >= bootstrapStarted || bootstrapStarted >= groupConfirmed {
 		t.Fatalf("bootstrap propagation order is unsafe: contract=(%d,%d) writer=(%d,%d) group=(%d,%d,%d)", validated, persisted, writerValidated, writerPersisted, groupValidated, groupBounded, groupPersisted)
 	}
 

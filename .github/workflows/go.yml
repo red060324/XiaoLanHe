@@ -97,12 +97,17 @@ jobs:
           fence_dir="$RUNNER_TEMP/xlh-lightrag-fence-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           writer_dir="$RUNNER_TEMP/xlh-lightrag-writer-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           contract_sha256=$(bash deploy/lightrag-contract-hash.sh)
+          shared_gid=$(id -g)
+          [[ "$shared_gid" =~ ^[1-9][0-9]{0,9}$ ]]
+          (( shared_gid <= 2147483647 ))
           export XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR="$fence_dir"
           export XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR="$writer_dir"
+          export XLH_LIGHTRAG_SHARED_GID="$shared_gid"
           {
             echo "XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR=$fence_dir"
             echo "XLH_LIGHTRAG_REBUILD_FENCE_DIR=$fence_dir"
             echo "XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR=$writer_dir"
+            echo "XLH_LIGHTRAG_SHARED_GID=$shared_gid"
           } >> "$GITHUB_ENV"
           bootstrap_output=$(bash deploy/lightrag-bootstrap-empty.sh \
             deploy/docker-compose.lightrag.yml "$XLH_CI_COMPOSE_PROJECT" | tee /dev/stderr)
@@ -110,17 +115,15 @@ jobs:
           reported_attempt=$(awk -F= '$1 == "XLH_LIGHTRAG_ATTEMPT_ID" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
           writer_sha256=$(awk -F= '$1 == "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
           reported_contract=$(awk -F= '$1 == "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
-          shared_gid=$(awk -F= '$1 == "XLH_LIGHTRAG_SHARED_GID" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
+          reported_shared_gid=$(awk -F= '$1 == "XLH_LIGHTRAG_SHARED_GID" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
           [[ "$reported_generation" == "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" ]]
           [[ "$reported_attempt" == "$XLH_LIGHTRAG_ATTEMPT_ID" ]]
           [[ "$reported_contract" == "$contract_sha256" ]]
           [[ "$writer_sha256" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "$shared_gid" =~ ^[1-9][0-9]{0,9}$ ]]
-          (( shared_gid <= 2147483647 ))
+          [[ "$reported_shared_gid" == "$shared_gid" ]]
           {
             echo "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$writer_sha256"
             echo "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=$reported_contract"
-            echo "XLH_LIGHTRAG_SHARED_GID=$shared_gid"
           } >> "$GITHUB_ENV"
       - name: Validate bootstrapped Milvus runtime contract
         run: bash deploy/check-lightrag-milvus.sh deploy/docker-compose.lightrag.yml "$XLH_CI_COMPOSE_PROJECT"

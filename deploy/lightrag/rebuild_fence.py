@@ -1849,13 +1849,23 @@ async def inspect_target(name: str, storage: Any, expected: set[str], prepared: 
 
 
 async def setup_tool() -> tuple[Any, Any]:
-    from lightrag.kg.shared_storage import initialize_share_data
-    from lightrag.tools import rebuild_vdb
-    initialize_share_data(workers=1)
-    tool = rebuild_vdb.RebuildTool()
-    if not await tool.setup_storages():
-        raise RuntimeError("official storage initialization failed")
-    return tool, rebuild_vdb
+    # LightRAG v1.5.7 initializes its API configuration lazily from sys.argv
+    # while RebuildTool sets up its embedding function. Fence-controller flags
+    # belong only to this process, so expose no foreign options during that
+    # initialization and restore the exact argv object on every exit path.
+    controller_argv = sys.argv
+    try:
+        sys.argv = controller_argv[:1]
+        from lightrag.kg.shared_storage import initialize_share_data
+        from lightrag.tools import rebuild_vdb
+
+        initialize_share_data(workers=1)
+        tool = rebuild_vdb.RebuildTool()
+        if not await tool.setup_storages():
+            raise RuntimeError("official storage initialization failed")
+        return tool, rebuild_vdb
+    finally:
+        sys.argv = controller_argv
 
 
 async def finalize_tool(tool: Any) -> None:
