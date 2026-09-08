@@ -2,6 +2,8 @@ package main
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -109,4 +111,279 @@ func TestLightRAGFailureLogsIncludeOneShotServices(t *testing.T) {
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("LightRAG diagnostic services mismatch: got %q, want %q", got, want)
 	}
+}
+
+func TestLightRAGBootstrapEmitsSafePhaseAnnotations(t *testing.T) {
+	sourceBytes, err := os.ReadFile("lightrag-bootstrap-empty.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(sourceBytes)
+	if !strings.Contains(source, "trap report_bootstrap_exit EXIT") {
+		t.Fatal("LightRAG bootstrap must annotate every nonzero exit")
+	}
+	if !strings.Contains(source, "::error title=LightRAG bootstrap failed::phase=%s exit_code=%s") {
+		t.Fatal("LightRAG bootstrap failure annotation is missing")
+	}
+
+	phases := []string{
+		"bootstrap_phase=preflight",
+		"bootstrap_phase=managed_service_absence",
+		"bootstrap_phase=writer_evidence",
+		"bootstrap_phase=dependency_start",
+		"bootstrap_phase=milvus_rbac",
+		"bootstrap_phase=fence_controller",
+		"bootstrap_phase=fence_verify",
+		"bootstrap_phase=complete",
+	}
+	previous := -1
+	for _, phase := range phases {
+		position := strings.Index(source, phase)
+		if position < 0 {
+			t.Fatalf("LightRAG bootstrap phase is missing: %s", phase)
+		}
+		if position <= previous {
+			t.Fatalf("LightRAG bootstrap phase is out of order: %s", phase)
+		}
+		previous = position
+	}
+
+	if !strings.Contains(source, `for service in milvus-etcd milvus-minio milvus`) ||
+		!strings.Contains(source, `service=%s state=%s health=%s exit_code=%s`) {
+		t.Fatal("dependency startup failures must expose bounded container state")
+	}
+}
+
+func TestLightRAGBootstrapAnnotatesExpansionAndExplicitExitFailures(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      []string
+		wantCode int
+	}{
+		{name: "missing required variable", env: nil, wantCode: 2},
+		{
+			name: "invalid generation",
+			env: append(validBootstrapEnvironment(t),
+				"XLH_LIGHTRAG_DEPLOYMENT_GENERATION=invalid!generation",
+			),
+			wantCode: 2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command := exec.Command("bash", "deploy/lightrag-bootstrap-empty.sh")
+			command.Dir = ".."
+			command.Env = append([]string{"GITHUB_ACTIONS=true"}, test.env...)
+			output, err := command.CombinedOutput()
+			var exitError *exec.ExitError
+			if !strings.Contains(string(output), "::error title=LightRAG bootstrap failed::phase=preflight exit_code=") {
+				t.Fatalf("missing preflight annotation in %q", output)
+			}
+			if !isExitCode(err, test.wantCode, &exitError) {
+				t.Fatalf("exit error = %v, want code %d; output=%q", err, test.wantCode, output)
+			}
+			if strings.Count(string(output), "title=LightRAG bootstrap failed") != 1 {
+				t.Fatalf("failure annotation must be emitted once: %q", output)
+			}
+		})
+	}
+}
+
+func TestLightRAGBootstrapAnnotatesCommandSubstitutionFailureOnce(t *testing.T) {
+	fakeBin := t.TempDir()
+	fakeDocker := `#!/bin/bash
+set -eu
+if [[ "${1:-}" == "compose" && "${2:-}" == "version" ]]; then exit 0; fi
+exit 2
+`
+	if err := os.WriteFile(filepath.Join(fakeBin, "docker"), []byte(fakeDocker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fakePython := "#!/usr/bin/env bash\nexit 7\n"
+	if err := os.WriteFile(filepath.Join(fakeBin, "python3"), []byte(fakePython), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	environment := validBootstrapEnvironment(t)
+	environment = append(environment, "PATH="+fakeBin+":"+os.Getenv("PATH"))
+	command := exec.Command("bash", "deploy/lightrag-bootstrap-empty.sh")
+	command.Dir = ".."
+	command.Env = environment
+	output, err := command.CombinedOutput()
+	var exitError *exec.ExitError
+	if !isExitCode(err, 7, &exitError) {
+		t.Fatalf("exit error = %v, want code 7; output=%q", err, output)
+	}
+	annotation := "::error title=LightRAG bootstrap failed::phase=preflight exit_code=7"
+	if strings.Count(string(output), annotation) != 1 {
+		t.Fatalf("command substitution failure must annotate exactly once: %q", output)
+	}
+}
+
+func TestLightRAGBootstrapSuccessDoesNotAnnotate(t *testing.T) {
+	fakeBin := t.TempDir()
+	fakeDocker := `#!/usr/bin/env bash
+set -eu
+if [[ "${1:-}" == "compose" ]]; then
+  for argument in "$@"; do
+    if [[ "$argument" == "version" || "$argument" == "up" || "$argument" == "run" ]]; then exit 0; fi
+    if [[ "$argument" == "ps" ]]; then exit 0; fi
+  done
+fi
+exit 2
+`
+	fakeBash := `#!/bin/bash
+set -eu
+case "${1:-}" in
+  deploy/lightrag-contract-hash.sh) printf 'sha256:%064d\n' 0 ;;
+  deploy/check-lightrag-fence.sh) exit 0 ;;
+  *) exec /bin/bash "$@" ;;
+esac
+`
+	for name, content := range map[string]string{"docker": fakeDocker, "bash": fakeBash} {
+		if err := os.WriteFile(filepath.Join(fakeBin, name), []byte(content), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	command := exec.Command("/bin/bash", "deploy/lightrag-bootstrap-empty.sh")
+	command.Dir = ".."
+	command.Env = append(validBootstrapEnvironment(t), "PATH="+fakeBin+":"+os.Getenv("PATH"))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("successful bootstrap failed: %v; output=%q", err, output)
+	}
+	if strings.Contains(string(output), "::error") {
+		t.Fatalf("successful bootstrap emitted an error annotation: %q", output)
+	}
+	for _, name := range []string{"XLH_LIGHTRAG_DEPLOYMENT_GENERATION", "XLH_LIGHTRAG_ATTEMPT_ID", "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256", "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256"} {
+		if !strings.Contains(string(output), name+"=") {
+			t.Fatalf("successful bootstrap omitted %s: %q", name, output)
+		}
+	}
+}
+
+func TestLightRAGBootstrapPreservesDependencyFailureAndReportsBoundedState(t *testing.T) {
+	fakeBin := t.TempDir()
+	fakeDocker := `#!/usr/bin/env bash
+set -eu
+if [[ "${1:-}" == "compose" && "${2:-}" == "version" ]]; then
+  exit 0
+fi
+if [[ "${1:-}" == "compose" ]]; then
+  for argument in "$@"; do
+    if [[ "$argument" == "up" ]]; then
+      exit 9
+    fi
+    if [[ "$argument" == "ps" ]]; then
+      service=${!#}
+      if [[ "$service" != "lightrag" ]]; then
+        printf '%s-id\n' "$service"
+      fi
+      exit 0
+    fi
+  done
+fi
+if [[ "${1:-}" == "inspect" ]]; then
+  printf 'running|unhealthy|42\n'
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(filepath.Join(fakeBin, "docker"), []byte(fakeDocker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("bash", "deploy/lightrag-bootstrap-empty.sh", "deploy/docker-compose.lightrag.yml", "testproject")
+	command.Dir = ".."
+	command.Env = append(validBootstrapEnvironment(t), "PATH="+fakeBin+":"+os.Getenv("PATH"))
+	output, err := command.CombinedOutput()
+	var exitError *exec.ExitError
+	if !isExitCode(err, 9, &exitError) {
+		t.Fatalf("exit error = %v, want code 9; output=%q", err, output)
+	}
+	text := string(output)
+	if strings.Count(text, "::error title=LightRAG bootstrap failed::phase=dependency_start exit_code=9") != 1 {
+		t.Fatalf("dependency failure annotation mismatch: %q", output)
+	}
+	for _, service := range []string{"milvus-etcd", "milvus-minio", "milvus"} {
+		want := "::error title=LightRAG dependency state::service=" + service + " state=running health=unhealthy exit_code=42"
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing bounded dependency state %q in %q", want, output)
+		}
+	}
+	if strings.Contains(text, "test-secret") {
+		t.Fatalf("bootstrap diagnostics leaked a credential: %q", output)
+	}
+}
+
+func TestLightRAGBootstrapDependencyDiagnosticsDegradeWithoutMaskingFailure(t *testing.T) {
+	fakeBin := t.TempDir()
+	fakeDocker := `#!/usr/bin/env bash
+set -eu
+if [[ "${1:-}" == "compose" && "${2:-}" == "version" ]]; then exit 0; fi
+if [[ "${1:-}" == "compose" ]]; then
+  for argument in "$@"; do
+    if [[ "$argument" == "up" ]]; then exit 9; fi
+    if [[ "$argument" == "ps" ]]; then
+      service=${!#}
+      if [[ "$service" != "lightrag" ]]; then printf 'container-id\n'; fi
+      exit 0
+    fi
+  done
+fi
+if [[ "${1:-}" == "inspect" ]]; then exit 17; fi
+exit 2
+`
+	if err := os.WriteFile(filepath.Join(fakeBin, "docker"), []byte(fakeDocker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("bash", "deploy/lightrag-bootstrap-empty.sh", "deploy/docker-compose.lightrag.yml", "testproject")
+	command.Dir = ".."
+	command.Env = append(validBootstrapEnvironment(t), "PATH="+fakeBin+":"+os.Getenv("PATH"))
+	output, err := command.CombinedOutput()
+	var exitError *exec.ExitError
+	if !isExitCode(err, 9, &exitError) {
+		t.Fatalf("exit error = %v, want code 9; output=%q", err, output)
+	}
+	text := string(output)
+	for _, service := range []string{"milvus-etcd", "milvus-minio", "milvus"} {
+		want := "service=" + service + " state=unknown health=unknown exit_code=unknown"
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing degraded dependency state %q in %q", want, output)
+		}
+	}
+}
+
+func validBootstrapEnvironment(t *testing.T) []string {
+	t.Helper()
+	root := t.TempDir()
+	return []string{
+		"GITHUB_ACTIONS=true",
+		"XLH_LIGHTRAG_DEPLOYMENT_GENERATION=test-generation",
+		"XLH_LIGHTRAG_ATTEMPT_ID=test-attempt",
+		"XLH_LIGHTRAG_UNCONTROLLED_WRITERS_ATTESTATION=no_uncontrolled_writers",
+		"XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR=" + filepath.Join(root, "writer"),
+		"XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR=" + filepath.Join(root, "fence"),
+		"XLH_LIGHTRAG_API_KEY=test-secret-api-key",
+		"XLH_LIGHTRAG_LLM_API_KEY=test-secret-llm-key",
+		"XLH_LIGHTRAG_EMBEDDING_API_KEY=test-secret-embedding-key",
+		"XLH_MILVUS_MINIO_USER=test-user",
+		"XLH_MILVUS_MINIO_PASSWORD=test-secret-minio-password",
+		"XLH_MILVUS_ROOT_PASSWORD=test-secret-root-password",
+		"XLH_MILVUS_TOKEN=test-user:test-secret-runtime-password",
+		"PATH=" + os.Getenv("PATH"),
+	}
+}
+
+func isExitCode(err error, want int, target **exec.ExitError) bool {
+	if err == nil {
+		return false
+	}
+	exitError, ok := err.(*exec.ExitError)
+	if ok {
+		*target = exitError
+	}
+	return ok && exitError.ExitCode() == want
 }

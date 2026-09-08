@@ -1,17 +1,73 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-generation=${XLH_LIGHTRAG_DEPLOYMENT_GENERATION:?XLH_LIGHTRAG_DEPLOYMENT_GENERATION is required}
-attempt_id=${XLH_LIGHTRAG_ATTEMPT_ID:?XLH_LIGHTRAG_ATTEMPT_ID is required}
-uncontrolled_writers_attestation=${XLH_LIGHTRAG_UNCONTROLLED_WRITERS_ATTESTATION:?XLH_LIGHTRAG_UNCONTROLLED_WRITERS_ATTESTATION is required}
-evidence_dir=${XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR:?XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR is required}
-fence_dir=${XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:?XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR is required}
+bootstrap_phase=preflight
+compose=()
+
+run_bounded_diagnostic() {
+  python3 -c 'import subprocess, sys
+try:
+    result = subprocess.run(sys.argv[2:], timeout=float(sys.argv[1]))
+except (OSError, subprocess.TimeoutExpired):
+    raise SystemExit(124)
+raise SystemExit(result.returncode)' 5 "$@"
+}
+
+report_bootstrap_exit() {
+  exit_code=$?
+  trap - EXIT
+  if (( exit_code == 0 )); then
+    return
+  fi
+  set +e +u
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    printf '::error title=LightRAG bootstrap failed::phase=%s exit_code=%s\n' "$bootstrap_phase" "$exit_code" >&2
+  else
+    printf 'LightRAG bootstrap failed: phase=%s exit_code=%s\n' "$bootstrap_phase" "$exit_code" >&2
+  fi
+
+  if [[ "$bootstrap_phase" == "dependency_start" && ${#compose[@]} -gt 0 ]]; then
+    for service in milvus-etcd milvus-minio milvus; do
+      container_id=$(run_bounded_diagnostic "${compose[@]}" ps --all --quiet "$service" 2>/dev/null | head -n 1)
+      state=absent
+      health=none
+      container_exit_code=unknown
+      if [[ -n "$container_id" ]]; then
+        details=$(run_bounded_diagnostic docker inspect \
+          --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.State.ExitCode}}' \
+          "$container_id" 2>/dev/null || true)
+        if [[ "$details" =~ ^(created|running|paused|restarting|removing|exited|dead)\|(starting|healthy|unhealthy|none)\|([0-9]+)$ ]]; then
+          state=${BASH_REMATCH[1]}
+          health=${BASH_REMATCH[2]}
+          container_exit_code=${BASH_REMATCH[3]}
+        else
+          state=unknown
+          health=unknown
+        fi
+      fi
+      if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        printf '::error title=LightRAG dependency state::service=%s state=%s health=%s exit_code=%s\n' \
+          "$service" "$state" "$health" "$container_exit_code" >&2
+      else
+        printf 'LightRAG dependency state: service=%s state=%s health=%s exit_code=%s\n' \
+          "$service" "$state" "$health" "$container_exit_code" >&2
+      fi
+    done
+  fi
+  exit "$exit_code"
+}
+trap report_bootstrap_exit EXIT
+
+for name in XLH_LIGHTRAG_DEPLOYMENT_GENERATION XLH_LIGHTRAG_ATTEMPT_ID XLH_LIGHTRAG_UNCONTROLLED_WRITERS_ATTESTATION XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR; do
+  [[ -n "${!name:-}" ]] || { echo "$name is required" >&2; exit 2; }
+done
+generation=$XLH_LIGHTRAG_DEPLOYMENT_GENERATION
+attempt_id=$XLH_LIGHTRAG_ATTEMPT_ID
+uncontrolled_writers_attestation=$XLH_LIGHTRAG_UNCONTROLLED_WRITERS_ATTESTATION
+evidence_dir=$XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR
+fence_dir=$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR
 compose_file=${1:-deploy/docker-compose.lightrag.yml}
 project=${2:-}
-compose_overrides=()
-if (( $# > 2 )); then
-  compose_overrides=("${@:3}")
-fi
 if [[ "$project" == "-" ]]; then
   project=
 fi
@@ -46,10 +102,12 @@ if [[ -n "$project" ]]; then
   compose+=(--project-name "$project")
 fi
 compose+=(-f "$compose_file")
-for override in "${compose_overrides[@]}"; do
-  [[ -n "$override" ]] || { echo "Compose override path must not be empty" >&2; exit 2; }
-  compose+=(-f "$override")
-done
+if (( $# > 2 )); then
+  for override in "${@:3}"; do
+    [[ -n "$override" ]] || { echo "Compose override path must not be empty" >&2; exit 2; }
+    compose+=(-f "$override")
+  done
+fi
 compose+=(--profile bootstrap)
 
 # Compose interpolates every service even for `ps`, including the inactive steady
@@ -63,6 +121,7 @@ export XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=sha256:000000000000000000000000000000
 # Writer evidence is produced outside the controller. Docker proves that the managed
 # service is absent; the caller separately attests that no uncontrolled writer can
 # reach the same working directory or Milvus namespace.
+bootstrap_phase=managed_service_absence
 lightrag_containers=$("${compose[@]}" ps --all --quiet lightrag)
 container_count=$(printf '%s\n' "$lightrag_containers" | awk 'NF { count++ } END { print count+0 }')
 if (( container_count != 0 )); then
@@ -70,6 +129,7 @@ if (( container_count != 0 )); then
   exit 1
 fi
 
+bootstrap_phase=writer_evidence
 evidence_path="$evidence_dir/$attempt_id.json"
 writer_evidence_sha256=$(python3 - "$evidence_path" "$attempt_id" "$generation" "$contract_sha256" "$uncontrolled_writers_attestation" <<'PY'
 import datetime
@@ -116,11 +176,16 @@ export XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$writer_evidence_sha256
 
 # Starts dependencies and a fresh empty bootstrap attempt, but never starts LightRAG.
 # The bootstrap refuses nonempty sources/targets and therefore cannot erase real data.
+bootstrap_phase=dependency_start
 "${compose[@]}" up --detach --wait milvus-etcd milvus-minio milvus
+bootstrap_phase=milvus_rbac
 "${compose[@]}" run --rm --no-deps milvus-init
+bootstrap_phase=fence_controller
 "${compose[@]}" run --rm --no-deps lightrag-bootstrap
 
+bootstrap_phase=fence_verify
 bash deploy/check-lightrag-fence.sh "$fence_dir" "$generation" "$contract_sha256"
+bootstrap_phase=complete
 printf 'XLH_LIGHTRAG_DEPLOYMENT_GENERATION=%s\n' "$generation"
 printf 'XLH_LIGHTRAG_ATTEMPT_ID=%s\n' "$attempt_id"
 printf 'XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=%s\n' "$writer_evidence_sha256"
