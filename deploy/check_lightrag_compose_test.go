@@ -48,6 +48,42 @@ func TestRuntimeIdentityMustBeOnLightRAGService(t *testing.T) {
 	}
 }
 
+func TestLightRAGServicesConnectDirectlyToTargetDatabase(t *testing.T) {
+	for _, serviceName := range []string{"lightrag", "lightrag-bootstrap"} {
+		for _, uri := range []string{milvusServerURI, milvusServerURI + "/default"} {
+			t.Run(serviceName+"/"+uri, func(t *testing.T) {
+				document := cloneCompose(t, checkedInCompose(t))
+				service := document.Services[serviceName]
+				service.Environment["MILVUS_URI"] = uri
+				document.Services[serviceName] = service
+				if err := checkCompose(document); err == nil || !strings.Contains(err.Error(), serviceName+".MILVUS_URI must equal") {
+					t.Fatalf("got %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestMilvusInitUsesServerURIWithoutDatabasePath(t *testing.T) {
+	document := cloneCompose(t, checkedInCompose(t))
+	service := document.Services["milvus-init"]
+	service.Environment["MILVUS_URI"] = milvusLightRAGURI
+	document.Services["milvus-init"] = service
+	if err := checkCompose(document); err == nil || !strings.Contains(err.Error(), "milvus-init.MILVUS_URI must equal") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestMilvusInitNamesTargetDatabase(t *testing.T) {
+	document := cloneCompose(t, checkedInCompose(t))
+	service := document.Services["milvus-init"]
+	delete(service.Environment, "MILVUS_DB_NAME")
+	document.Services["milvus-init"] = service
+	if err := checkCompose(document); err == nil || !strings.Contains(err.Error(), "milvus-init.MILVUS_DB_NAME must equal") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestBootstrapMustReceiveRequiredWriterEvidenceHostDir(t *testing.T) {
 	tests := []struct {
 		name  string

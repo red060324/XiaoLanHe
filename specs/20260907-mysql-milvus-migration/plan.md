@@ -1,6 +1,6 @@
 # Technical Plan
 
-- Status: `IMPLEMENTED — PRE_MERGE ENVIRONMENT BLOCKED`
+- Status: `IMPLEMENTED — LOCAL CI PASS; PRE_MERGE ENVIRONMENT BLOCKED`
 - Authoritative spec: `./spec.md`
 
 ## Selected Runtime Design
@@ -286,7 +286,8 @@ LIGHTRAG_GRAPH_STORAGE=NetworkXStorage
 LIGHTRAG_DOC_STATUS_STORAGE=JsonDocStatusStorage
 WORKSPACE=xiaolanhe_v1
 WORKING_DIR=/app/data/rag_storage
-MILVUS_URI=http://milvus:19530
+# lightrag-bootstrap and steady-state lightrag
+MILVUS_URI=http://milvus:19530/lightrag
 MILVUS_DB_NAME=lightrag
 MILVUS_INDEX_TYPE=AUTOINDEX
 MILVUS_METRIC_TYPE=COSINE
@@ -297,13 +298,23 @@ EMBEDDING_ASYMMETRIC=false
 # EMBEDDING_DOCUMENT_PREFIX and EMBEDDING_QUERY_PREFIX are deliberately unset
 ```
 
-`MILVUS_WORKSPACE` stays unset. A deployment init job creates database `lightrag` with a
-bootstrap identity, then exits; the steady-state LightRAG identity has only required
-database/collection privileges. This avoids relying on the adapter's otherwise valid
-auto-create path in production. Authentication variables are supplied only when the
-target supports them. Production configuration must not use example MinIO or database
-passwords. LightRAG keeps one service replica; its supported Gunicorn workers coordinate
-only within that service instance.
+`MILVUS_WORKSPACE` stays unset. A deployment init job connects with the short-lived root
+identity and `MILVUS_URI=http://milvus:19530`, lists/creates database `lightrag`,
+provisions the runtime identity, then exits. Both `lightrag-bootstrap` and steady-state
+`lightrag` connect with `MILVUS_URI=http://milvus:19530/lightrag` and
+`MILVUS_DB_NAME=lightrag`. With the selected PyMilvus 3.0.0 this URI path makes the first
+client context the target database instead of `default`; the explicit database variable
+remains part of LightRAG configuration and validation.
+
+The runtime role keeps exactly `DatabaseAdmin` and `CollectionReadWrite` scoped to
+`lightrag`, plus cluster-scoped `ListDatabases` and `RenameCollection`. Role inspection
+queries all database scopes so named-database grants are not omitted. No runtime grant
+is added to `default`; create-database, create-user and RBAC-management probes remain
+denied. This avoids relying on the adapter's otherwise valid auto-create path without
+forking the official LightRAG adapter. Authentication variables are supplied only when
+the target supports them. Production configuration must not use example MinIO or
+database passwords. LightRAG keeps one service replica; its supported Gunicorn workers
+coordinate only within that service instance.
 
 The embedding contract hash includes binding/provider, normalized endpoint identity,
 model, dimension, `EMBEDDING_SEND_DIM`, asymmetric mode, document/query prefix values,
@@ -605,6 +616,9 @@ dual write exists; stop writes, reconcile and make an explicit operator decision
   LightRAG Milvus support and MySQL 8.4 is not the existing pgvector equivalent.
 - **Point LightRAG at Milvus without rebuild:** rejected because existing vector data
   remains in NanoVectorDB and LightRAG has no automatic cross-backend migration.
+- **Grant the runtime role access to `default` or fork the Milvus adapter:** rejected
+  because the PyMilvus 3.0.0 URI path selects `lightrag` before the first client RPC while
+  preserving the upstream adapter and the existing least-privilege grant set.
 - **Move all four LightRAG stores to MySQL:** rejected because the requirement is
   business MySQL plus Milvus vector storage; it would conflate ownership and is not an
   official LightRAG all-store MySQL configuration.

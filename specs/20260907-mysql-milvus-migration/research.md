@@ -1,6 +1,6 @@
 # Research Notes
 
-- Status: `COMPLETE FOR SPEC REVIEW`
+- Status: `COMPLETE FOR SPEC REVIEW — LOCAL CI PASS; LIVE VERIFICATION PENDING`
 - Authoritative spec: `./spec.md`
 - Research date: 2026-09-07
 
@@ -49,7 +49,9 @@ uniqueness behavior.
 
 The official tag is fixed to commit
 `28ff1b05f2ac3f3e6fa14dd2cd33656579bd0c9c`. It natively includes
-`MilvusVectorDBStorage` and reads these server variables:
+`MilvusVectorDBStorage` and reads these server variables. The bare URI below is the
+server-level value used by database initialization, not the selected LightRAG runtime
+value:
 
 ```text
 LIGHTRAG_VECTOR_STORAGE=MilvusVectorDBStorage
@@ -59,12 +61,18 @@ MILVUS_USER / MILVUS_PASSWORD / MILVUS_TOKEN (optional)
 MILVUS_WORKSPACE (optional override; deliberately unset here)
 ```
 
+For this deployment, `milvus-init` retains the bare URI so root can list/create
+databases. `lightrag-bootstrap` and steady-state `lightrag` instead use
+`MILVUS_URI=http://milvus:19530/lightrag` together with
+`MILVUS_DB_NAME=lightrag`.
+
 Milvus implements only LightRAG's vector port. KV, graph and document status must each
 have their own selected implementation. This spec keeps JsonKV, NetworkX and
 JsonDocStatus, so a single LightRAG replica and persistent workspace are still required.
 
-The v1.5.7 package declares `pymilvus>=2.6.2,<4.0.0`. Its official CPU standalone
-template selects Milvus 2.6.11, etcd 3.5.25 and MinIO
+The v1.5.7 package declares `pymilvus>=2.6.2,<4.0.0`; the selected immutable image
+resolves PyMilvus 3.0.0. Its official CPU standalone template selects Milvus 2.6.11,
+etcd 3.5.25 and MinIO
 `RELEASE.2025-09-07T16-13-09Z`. Milvus standalone depends on both etcd and MinIO; all
 three stores require durable volumes.
 
@@ -73,8 +81,16 @@ embedding function and fails on dimension mismatch. Embedding model/dimension th
 belong to the persisted index contract.
 
 LightRAG's Milvus adapter can create a missing configured database through
-`list_databases/create_database`. This design instead uses a short-lived deployment init
-identity to create `lightrag`, then runs LightRAG with narrower steady-state privileges.
+`list_databases/create_database`. This design instead uses a short-lived root deployment
+init identity and the bare server URI to create `lightrag`, then connects LightRAG with
+the separate runtime identity and the `/lightrag` URI path. In PyMilvus 3.0.0 that path
+selects the named database for the initial client context; retaining
+`MILVUS_DB_NAME=lightrag` keeps the LightRAG and deployment checks explicit but does not
+justify an initial connection to `default`. The runtime role retains only
+database-scoped `DatabaseAdmin`/`CollectionReadWrite` on `lightrag` and cluster-scoped
+`ListDatabases`/`RenameCollection`. No grant is added in `default`, and no adapter fork
+is needed. Because `describe_role()` defaults to an empty database scope and omits named
+database grants, exact audit uses `db_name="*"` (or an equivalent all-scope query).
 The pinned embedding contract is symmetric `text-embedding-v4`/1024 with
 `EMBEDDING_SEND_DIM=false` and both prefixes unset. Model, dimension, provider behavior,
 send-dimension, asymmetric mode or either prefix changes vector semantics and requires

@@ -125,10 +125,13 @@ also remains a single-node deployment.
     official LightRAG client; disabling the advanced Multi-Agent path changes
     orchestration, not the knowledge owner. The old PostgreSQL knowledge source may
     remain only in a separately built migration utility during the cutover window.
-12. Pin official LightRAG 1.5.7/API 0344 and its existing immutable image digest. Set
-    `LIGHTRAG_VECTOR_STORAGE=MilvusVectorDBStorage`,
-    `MILVUS_URI=http://milvus:19530`, `MILVUS_DB_NAME=lightrag`, common
-    `WORKSPACE=xiaolanhe_v1`, `AUTOINDEX` and `COSINE`. Do not set
+12. Pin official LightRAG 1.5.7/API 0344, PyMilvus 3.0.0 and the existing immutable
+    LightRAG image digest. Set `LIGHTRAG_VECTOR_STORAGE=MilvusVectorDBStorage`. The
+    short-lived `milvus-init` phase uses `MILVUS_URI=http://milvus:19530` so root can
+    list/create databases; `lightrag-bootstrap` and steady-state `lightrag` use
+    `MILVUS_URI=http://milvus:19530/lightrag` so their first client context is already
+    the target database. All three keep `MILVUS_DB_NAME=lightrag`; the LightRAG phases
+    also keep common `WORKSPACE=xiaolanhe_v1`, `AUTOINDEX` and `COSINE`. Do not set
     `MILVUS_WORKSPACE`, so it inherits the common workspace.
 13. Run Milvus standalone 2.6.11 with etcd 3.5.25 and MinIO
     `RELEASE.2025-09-07T16-13-09Z`. Persist and back up all three data volumes. Milvus
@@ -162,10 +165,13 @@ also remains a single-node deployment.
     re-embeds content, so legacy `knowledge_chunk` rows and 1536-dimensional pgvector
     values are deliberately discarded as derived data. The source tables remain
     read-only through the rollback window; physical deletion needs separate approval.
-20. Milvus database `lightrag` is created by an explicit deployment init step using a
-    narrowly scoped bootstrap identity. The steady-state LightRAG identity is granted
-    only the permissions needed for its database/collections and does not depend on
-    database-create privilege.
+20. Milvus database `lightrag` is created by an explicit deployment init step using the
+    short-lived root identity and the server URI without a database path. Bootstrap and
+    steady-state LightRAG then connect directly to `/lightrag` with the separate runtime
+    identity. Preserve its existing grants: database-scoped `DatabaseAdmin` and
+    `CollectionReadWrite` on `lightrag`, plus cluster-scoped `ListDatabases` and
+    `RenameCollection`. Do not add privileges in database `default`, grant database or
+    user/RBAC creation, or fork the official LightRAG adapter.
 21. Go-to-LightRAG transport defaults to HTTPS: `XLH_LIGHTRAG_BASE_URL` defaults to
     `https://127.0.0.1:9621` and `XLH_LIGHTRAG_ALLOW_INSECURE` defaults to `false`. An
     HTTP URL is accepted only when the override strictly parses as boolean `true`, for
@@ -369,7 +375,12 @@ also remains a single-node deployment.
 
 - LightRAG 1.5.7 resolves to commit
   `28ff1b05f2ac3f3e6fa14dd2cd33656579bd0c9c` and declares
-  `pymilvus>=2.6.2,<4.0.0`.
+  `pymilvus>=2.6.2,<4.0.0`; the selected immutable image resolves PyMilvus 3.0.0.
+- With PyMilvus 3.0.0 the database path in the runtime URI establishes the initial
+  client context. `MILVUS_DB_NAME=lightrag` remains an explicit LightRAG/configuration
+  contract, but is not used as a reason to start bootstrap/runtime in `default`. Role
+  inspection must request all database scopes because the PyMilvus default scope omits
+  grants attached to a named database.
 - Its official CPU standalone template uses Milvus 2.6.11, etcd 3.5.25 and the pinned
   MinIO release selected here.
 - The Milvus adapter derives vector dimension from the embedding function, checks an
@@ -418,10 +429,14 @@ also remains a single-node deployment.
   collection schema and healthy Milvus 2.6.11. The authenticated LightRAG health
   contract, pinned configuration, Milvus health and collection inspection are distinct
   evidence; `/health` alone is not claimed to expose all of them. NanoVectorDB is
-  rejected. Milvus database bootstrap uses a separate least-privilege init identity.
-  Operator inspection requires database `lightrag`, the three exact pinned final
-  namespaces and exact field/type/length/nullability/primary/dynamic/index/metric
-  contracts; substring/suffix collection discovery is not evidence.
+  rejected. The root-only init phase uses the bare server URI, while bootstrap and
+  steady-state LightRAG use `/lightrag` plus `MILVUS_DB_NAME=lightrag`, on PyMilvus
+  3.0.0, so the first runtime client context is never `default`. Operator inspection
+  requires no LightRAG target collections or database-scoped runtime grants in
+  `default`, the unchanged exact runtime grant set, database `lightrag`, the three exact
+  pinned final namespaces and exact field/type/length/nullability/primary/dynamic/index/
+  metric contracts;
+  substring/suffix collection discovery is not evidence.
 - **AC9 — Milvus data lifecycle:** A live isolated run ingests a relationship corpus,
   retrieves entity/relation/chunk evidence in supported modes, survives clean restart,
   and restores from a backup containing the LightRAG workspace plus Milvus, etcd and
@@ -527,5 +542,9 @@ also remains a single-node deployment.
   attestation; verify was fixed as authenticated and strictly read-only; arbitrary
   `--target-migration-commit` input was removed in favor of embedded/live migration
   provenance.
+- 2026-09-08: approved the two-stage PyMilvus 3.0.0 connection contract: root init uses
+  the bare server URI, LightRAG bootstrap/runtime use `/lightrag`, existing runtime
+  grants remain unchanged, and neither `default` privileges nor an adapter fork are
+  permitted. Remote CI and real environment verification remain pending.
 - Production infrastructure purchase/provisioning, destructive source retirement and
   paid live embedding/rebuild remain separate rollout approvals.

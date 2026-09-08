@@ -49,7 +49,6 @@ require_literal 'LIGHTRAG_KV_STORAGE: JsonKVStorage'
 require_literal 'LIGHTRAG_VECTOR_STORAGE: MilvusVectorDBStorage'
 require_literal 'LIGHTRAG_GRAPH_STORAGE: NetworkXStorage'
 require_literal 'LIGHTRAG_DOC_STATUS_STORAGE: JsonDocStatusStorage'
-require_literal 'MILVUS_URI: http://milvus:19530'
 require_literal 'MILVUS_DB_NAME: lightrag'
 require_literal 'MILVUS_INDEX_TYPE: AUTOINDEX'
 require_literal 'MILVUS_METRIC_TYPE: COSINE'
@@ -83,6 +82,8 @@ require_literal '${XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:?XLH_LIGHTRAG_REBUILD_FEN
 require_literal '${XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR:?XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR is required}:/writer-evidence:ro'
 require_literal_count '      XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR: ${XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR:?XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR must be an absolute path}' 1
 require_literal_count '      XLH_LIGHTRAG_SHARED_GID: ${XLH_LIGHTRAG_SHARED_GID:?XLH_LIGHTRAG_SHARED_GID must be a nonzero numeric group ID}' 2
+require_literal_count '      MILVUS_URI: http://milvus:19530/lightrag' 2
+require_literal_count '      MILVUS_URI: http://milvus:19530' 1
 require_literal 'MINIO_ROOT_USER: ${XLH_MILVUS_MINIO_USER:?XLH_MILVUS_MINIO_USER is required}'
 require_literal 'MINIO_ROOT_PASSWORD: ${XLH_MILVUS_MINIO_PASSWORD:?XLH_MILVUS_MINIO_PASSWORD is required}'
 require_literal 'XLH_LIGHTRAG_DEPLOYMENT_GENERATION: ${XLH_LIGHTRAG_DEPLOYMENT_GENERATION:?XLH_LIGHTRAG_DEPLOYMENT_GENERATION is required}'

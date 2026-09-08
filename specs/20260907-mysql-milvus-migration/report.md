@@ -1,6 +1,6 @@
 # Delivery Report
 
-- Status: `IMPLEMENTATION DELIVERED — PRODUCTION READINESS BLOCKED`
+- Status: `IMPLEMENTATION DELIVERED — LOCAL CI PASS; REMOTE/LIVE PRODUCTION READINESS BLOCKED`
 - Authoritative spec: `./spec.md`
 - Evidence date: 2026-09-08
 
@@ -13,12 +13,13 @@ Milvus 2.6.11 for its vector projections. PostgreSQL remains only in explicit
 operator-run migration/import packages, and the Go application does not access Milvus
 directly.
 
-All repository-local PRE_MERGE gates available on this host passed, including the full Go
-suite and race detector, deterministic AI evaluation, frontend tests/build, architecture
-and spec checks, MySQL static tests, and the LightRAG/Milvus/fence static suites. This is
-not production-ready evidence: this host has no Docker and no configured real MySQL,
-Redis or RocketMQ targets, and no authorized provider-backed LightRAG lifecycle or real
-PostgreSQL-to-MySQL cutover rehearsal was run.
+All repository-local PRE_MERGE gates available on this host passed for the current
+two-stage PyMilvus 3.0.0 URI fix, including the full Go suite and race detector,
+deterministic AI evaluation, frontend tests/build, architecture and spec checks, MySQL
+static tests, and the LightRAG/Milvus/fence static suites. This is not production-ready
+evidence: clean Linux remote CI is still pending, this host has no Docker and no
+configured real MySQL, Redis or RocketMQ targets, and no authorized provider-backed
+LightRAG lifecycle or real PostgreSQL-to-MySQL cutover rehearsal was run.
 
 ## Delivered Architecture
 
@@ -32,9 +33,13 @@ PostgreSQL-to-MySQL cutover rehearsal was run.
   NetworkX and JsonDocStatus persistence, and MilvusVectorDBStorage for chunk/entity/
   relationship vectors only.
 - Authenticated Milvus with separate bootstrap root and steady-state runtime identities.
-  The runtime role is pinned to `DatabaseAdmin` and `CollectionReadWrite` in database
-  `lightrag`, plus `ListDatabases` and `RenameCollection`; broad cluster/admin groups are
-  rejected and runtime create-database/create-user probes must be denied.
+  `milvus-init` keeps the bare server URI so root can list/create `lightrag`;
+  `lightrag-bootstrap` and steady-state `lightrag` use `/lightrag` plus
+  `MILVUS_DB_NAME=lightrag`, making the first PyMilvus 3.0.0 client context the target DB.
+  The runtime role retains `DatabaseAdmin` and `CollectionReadWrite` in `lightrag`, plus
+  cluster-scoped `ListDatabases` and `RenameCollection`; it receives no database-scoped
+  grant in `default`, and create-database/create-user and broad cluster/admin access
+  remain denied. The official LightRAG adapter is not forked.
 - Guarded LightRAG empty bootstrap, steady-state startup, five-state rebuild fence,
   immutable attempt/report evidence, exact schema/ID checks, crash recovery, bounded
   signal cleanup, and complete four-component backup/restore contracts. Host bind roots
@@ -61,34 +66,36 @@ PostgreSQL-to-MySQL cutover rehearsal was run.
 | AC5 — transactional invariants | lock order, replay, commit ambiguity, state CHECK and retry tests pass | PARTIAL — LIVE CONTENTION BLOCKED |
 | AC6 — flash-sale integrity | Redis Lua/RocketMQ/MySQL paths and unit/race tests pass; timestamp precision is normalized to the Redis millisecond contract | PARTIAL — LIVE MIDDLEWARE BLOCKED |
 | AC7 — LightRAG-only knowledge | architecture and client/importer tests prove no SQL knowledge fallback or direct application Milvus path | PASS — LOCAL |
-| AC8 — official Milvus backend | pinned Compose, exact configuration, RBAC initializer and schema/fence static tests pass | PARTIAL — DOCKER/LIVE BLOCKED |
+| AC8 — official Milvus backend | two-stage URI and unchanged RBAC contracts pass complete local CI, but a real PyMilvus/Milvus first-connection check remains | PARTIAL — DOCKER/LIVE BLOCKED |
 | AC9 — Milvus lifecycle | lifecycle/backup/restore runner and fault contracts are implemented | BLOCKED — LIVE LIFECYCLE NOT RUN |
 | AC10 — controlled vector migration | all three pinned rebuild calls, exact evidence validation and 190 host/preparer/controller/guard metadata and fault tests pass | PARTIAL — PAID LIVE REBUILD NOT RUN |
 | AC11 — safe data cutover | copy/resume/authenticated read-only verify implementation and adversarial tests pass | BLOCKED — V27/V28 NOT RUN |
 | AC12 — deployment/security | fail-closed TLS/HTTPS/ACL/config tests and static deployment checks pass | PARTIAL — REAL INFRASTRUCTURE BLOCKED |
 | AC13 — compatibility/safety | full local Go/race/HTTP/eval suite and public-search capacity tests pass | PARTIAL — DEPLOYMENT SMOKE BLOCKED |
-| AC14 — verification/delivery | local `make ci` passes and evidence is recorded below | BLOCKED — LIVE/CUTOVER/CLEAN REMOTE CI REQUIRED |
+| AC14 — verification/delivery | the current local `make ci` pass is recorded below; clean Linux remote CI, live integration and cutover evidence remain | BLOCKED — REMOTE CI/LIVE/CUTOVER REQUIRED |
 
 ## Executed Verification
 
 | Gate | Executed command/evidence | Result |
 |---|---|---|
-| Complete local PRE_MERGE | `GOCACHE=/private/tmp/xlh-go-cache PYTHONPYCACHEPREFIX=/private/tmp/xlh-pycache make ci BASE_REF=HEAD^` | PASS |
+| Complete local PRE_MERGE | `GOCACHE=/private/tmp/xlh-go-cache PYTHONPYCACHEPREFIX=/private/tmp/xlh-pycache make ci BASE_REF=HEAD^` | PASS — CURRENT URI FIX |
 | Go unit packages | `go test -count=1 ./...` through `make ci` | PASS |
 | Go race packages | `go test -race -count=1 ./...` through `make ci`; importer completed in about 231 seconds | PASS |
 | Go static/style | `go vet ./...`, `fmt-check`, hooks, architecture and spec-drift through `make ci` | PASS |
 | Deterministic Agent eval | `go run ./cmd/eval-assistant`; `passed: true`, exact Milvus/embedding metadata | PASS |
 | Frontend | Vitest: 6 files / 80 tests; production build; entry 246161/512000 bytes | PASS |
 | MySQL static | repository, transaction and schema packages through `make ci` | PASS |
-| LightRAG/Milvus static | Compose Go checker, Bash contract checks and 3 Milvus init tests through `make ci` | PASS |
+| LightRAG/Milvus static | current Compose Go checker, Bash contract checks and 3 Milvus init tests through `make ci` | PASS |
 | Rebuild fence static | 190 Python metadata/static tests: 64 full-tree ownership-preparer, 29 host path, 86 controller and 11 guarded-start cases, including zero-mutation rejection, symlink/hardlink/alias/device defense, stable lock-inode and shared-`flock`-domain checks, sealed final-publish failure injection, post-operation staging faults, real SIGKILL publish boundaries and host recovery recognition, exact ownership/modes, report-to-marker recovery, serving-lease exclusion, fixed-directory reads, deferred-LightRAG argv isolation, lock-error cleanup, signal forwarding and process-group cleanup; this count does not simulate real UID 1000/65532 container reads, which remain a separate blocked lifecycle gate | PASS — LOCAL STATIC |
 | Milvus bootstrap static | 3 Python RBAC/bootstrap tests plus Go Compose/workflow contract tests, including mandatory guarded bootstrap/steady commands and explicit shared-GID propagation | PASS |
+| Two-stage Milvus URI checks | one bare `milvus-init` URI, two `/lightrag` LightRAG URIs, shared `MILVUS_DB_NAME=lightrag` and wrong-URI rejection through focused tests and full `make ci` | PASS — LOCAL STATIC/UNIT |
 | Flash-sale precision regression | unit and race tests for entity, RocketMQ, MySQL repository and usecase packages | PASS |
 | Working-tree hygiene | `git diff --check` | PASS |
 
-The complete local command above was run from scratch after the final V30 observability,
-failed-report vocabulary, serving-lease, Compose-contract and documentation patches. It
-completed with exit code zero; no earlier partial run is used as final evidence.
+The complete local command above was run from scratch after the two-stage URI, checker,
+test and specification changes and completed with exit code zero. Evidence-only status
+text was updated afterward; `git diff --check` and the spec-drift gate are rerun before
+commit.
 
 ## Environment-Blocked Verification
 
@@ -98,7 +105,7 @@ completed with exit code zero; no earlier partial run is used as final evidence.
 | `make redis-live` | `XLH_TEST_REDIS_URL is required` | ENVIRONMENT BLOCKED — NOT RUN |
 | `make rocketmq-live` | `XLH_TEST_ROCKETMQ_NAMESERVERS is required` | ENVIRONMENT BLOCKED — NOT RUN |
 | `make fence-live` | real fence directory/generation/contract were not provided | ENVIRONMENT BLOCKED — NOT RUN |
-| `make milvus-live` / `make lightrag-live` | `docker: command not found` | ENVIRONMENT BLOCKED — NOT RUN |
+| `make milvus-live` / `make lightrag-live` | `docker: command not found`; PyMilvus 3.0.0 initial `/lightrag` context, empty `default` target set and live RBAC probes remain unobserved | ENVIRONMENT BLOCKED — NOT RUN |
 | `make docker-build` | Docker is unavailable | ENVIRONMENT BLOCKED — NOT RUN |
 | Isolated LightRAG lifecycle | requires Docker plus separate destructive-test/provider-cost authorization | BLOCKED — NOT RUN |
 | V27 relational copy/resume | no real PostgreSQL source and isolated MySQL 8.4 target were supplied | BLOCKED — NOT RUN |
@@ -115,9 +122,11 @@ production traffic. Before a production decision, operators must still:
    affected-row, lock-plan and concurrent transaction suites.
 2. Run real authenticated Redis and RocketMQ integration, recovery, retry and DLQ
    exercises, then the V45 black-box container smoke.
-3. Run the isolated official LightRAG/Milvus lifecycle, including ingestion/query, clean
-   restart, whole consistency-unit backup/restore, schema/ID verification and negative
-   restore cases. Paid rebuild calls require separate approval.
+3. Run the isolated official LightRAG/Milvus lifecycle, including PyMilvus 3.0.0 version
+   and first-client database selection, no target collections or database-scoped grants
+   in `default`, exact runtime RBAC allow/deny probes, ingestion/query, clean restart,
+   whole consistency-unit backup/restore, schema/ID verification and negative restore
+   cases. Paid rebuild calls require separate approval.
 4. Complete V27 copy/resume and V28 strictly read-only verification against disposable
    real PostgreSQL and MySQL 8.4 systems, preserving signed immutable evidence.
 5. Provision private production services, rotate distinct credentials, configure verified

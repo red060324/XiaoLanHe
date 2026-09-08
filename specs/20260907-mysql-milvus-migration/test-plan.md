@@ -1,14 +1,14 @@
 # Test Plan
 
-- Status: `IMPLEMENTED — PRE_MERGE ENVIRONMENT BLOCKED`
+- Status: `IMPLEMENTED — LOCAL CI PASS; PRE_MERGE ENVIRONMENT BLOCKED`
 - Authoritative spec: `./spec.md`
 
 ## Scope And Environments
 
 PRE_MERGE uses Go unit/race tests, a pinned MySQL 8.4 container, the existing Redis
 7.4 and RocketMQ 5.3.2 integration environments, frontend Vitest/build gates, mock
-LightRAG HTTP servers and an isolated pinned official LightRAG 1.5.7 + Milvus 2.6.11 +
-etcd 3.5.25 + MinIO lifecycle stack.
+LightRAG HTTP servers and an isolated pinned official LightRAG 1.5.7 + PyMilvus 3.0.0 +
+Milvus 2.6.11 + etcd 3.5.25 + MinIO lifecycle stack.
 
 MySQL schema/concurrency results must come from real MySQL 8.4. LightRAG/Milvus
 ingestion, rebuild, persistence and restore must exercise the official containers and
@@ -41,8 +41,8 @@ the corresponding live cases remain blocked rather than being replaced with mock
 | V19 | PRE_MERGE | knowledge boundary | baseline/advanced/public search/admin with SQL capture and direct-Milvus fake | all knowledge calls go to LightRAG; zero SQL knowledge/direct Milvus/fallback calls | composition/architecture tests | PASS — LOCAL |
 | V20 | PRE_MERGE | LightRAG config/client | runtime and importer HTTPS defaults; explicit HTTPS URL; HTTP with missing/false/true insecure override; malformed boolean; direct construction of repository and migration-verifier clients; authenticated health with expected stores plus Nano/wrong workspace/version/recovery/down responses | config loaders and client boundaries prevent API keys/query bodies from reaching HTTP unless local/controlled opt-in is explicit; health fields actually exposed by `/health` are validated without unsupported inference | config/command unit tests + both client `httptest` adversarial suites | PASS — LOCAL |
 | V20A | PRE_MERGE | public knowledge capacity | initial allow, five-request burst, deterministic lazy refill, global sharing across spoofed forwarded addresses, full four-request concurrency, malformed input, cancellation and slot release | endpoint stays unauthenticated; excess work returns `429 capacity_exceeded` with integer `Retry-After >= 1`; rejected/canceled-before-admission/malformed requests never call LightRAG and malformed input does not consume capacity; limiter has no caller map or refill goroutine | `GOCACHE=/private/tmp/xlh-go-cache go test -race ./internal/knowledge/entry -run 'Test(SearchCapacity|KnowledgeSearchCapacity)' -count=1 -v`; package vet | PASS — LOCAL |
-| V21 | PRE_MERGE | Compose/security | exact image pins, stores, private ports, secrets, one LightRAG replica, three Milvus dependencies, four data volumes and environment-specific LightRAG/Redis/RocketMQ security settings | manifest is valid; local/CI insecure transports or ACL-free brokers are explicitly opted in, production examples use HTTPS/rediss and RocketMQ ACL with overrides false, and unsupported topology is rejected | static scripts + compose config | PARTIAL — DOCKER BLOCKED |
-| V22 | PRE_MERGE | Milvus health | etcd, MinIO, Milvus 9091/version/database/exact pinned final namespaces and LightRAG authenticated health sequencing | operator gate proves exact dynamic-field and field/type/length/nullability/primary/vector/index contracts; Go gate proves LightRAG health/pipeline/strict fence report | isolated container + schema fixtures | PARTIAL — DOCKER BLOCKED |
+| V21 | PRE_MERGE | Compose/security | exact image pins, stores, private ports, secrets, one LightRAG replica, three Milvus dependencies, four data volumes, `milvus-init` bare server URI, bootstrap/runtime `/lightrag` URI, `MILVUS_DB_NAME=lightrag` on all three phases and environment-specific LightRAG/Redis/RocketMQ security settings | static gates require exactly one bare init URI and two `/lightrag` LightRAG URIs; wrong URI, missing database name and unsupported topology are rejected; local/CI insecure transports or ACL-free brokers are explicit and production examples remain fail closed | static scripts + Compose checker unit tests | PARTIAL — LOCAL CI PASS; DOCKER BLOCKED |
+| V22 | PRE_MERGE | Milvus health | PyMilvus 3.0.0, etcd, MinIO, Milvus 9091/version/database/exact pinned final namespaces, initial runtime database context, exact grants and LightRAG authenticated health sequencing | first bootstrap/runtime client context is `lightrag`; no target collection or database-scoped runtime grant exists in `default`; the unchanged named-database and cluster-scope grant set passes while create-database/create-user remains denied; operator schema and Go health/fence gates pass | isolated container + schema/RBAC fixtures | PARTIAL — CURRENT URI STATIC/UNIT PASS; LIVE ENVIRONMENT BLOCKED |
 | V23 | PRE_MERGE | live ingestion/query | ingest relationship corpus and query local/global/hybrid/mix | official LightRAG writes and returns managed chunk/entity/relation evidence from Milvus | lifecycle runner | ENVIRONMENT BLOCKED — NOT RUN |
 | V24 | PRE_MERGE | persistence/restore | clean restart and empty-volume cold restore of all four components using the checksum-bound source-generation/config manifest | every archive and regular member size/hash validates before extraction; missing component, truncation, unsafe member and mixed generation fail; restored marker first becomes `stale/restore_pending_verification`; only forced `restore_verify` for a new generation can verify before service start | lifecycle backup/restore + manifest unit/negative fixtures | PARTIAL — LIFECYCLE NOT RUN |
 | V25 | PRE_MERGE | vector rebuild | Nano workspace -> externally proven stopped/restart-disabled writers -> three official library rebuild functions -> Milvus | writer artifact binds digest/attempt/generation/operation/contract/expiry; strict stats reject skipped/duplicates by default; only a separate reviewed bounded duplicate policy may waive duplicates; unchanged source digests, exact three target ID sets and retrieval pass | guarded migration runner + evidence/policy fixtures | PARTIAL — LIVE/COST AUTHORIZATION BLOCKED |
@@ -51,7 +51,7 @@ the corresponding live cases remain blocked rather than being replaced with mock
 | V28 | PRE_MERGE | authenticated read-only verification | separate trusted source and target key/key-ID verification of both manifest-embedded evidence records, target canonical payload/digests, expected deployment generation and referenced immutable reconciliation report; table counts, canonical row digests, orphan/uniqueness/status, coupon/stock/order/payment/entitlement/flash-sale totals; snapshot checkpoint directory and both databases before/after | wrong/missing/cross-used key, key ID or generation, tampered evidence/payload/digest/report and every data mismatch fail closed; verify accepts neither external attestation path, creates no lock/artifact and changes zero filesystem/database bytes | real PostgreSQL -> MySQL 8.4 verification rehearsal plus before/after filesystem and database evidence | BLOCKED — NOT RUN |
 | V29 | PRE_MERGE | dependencies/static | normal binaries/import graph/config/docs contain no PostgreSQL/pgvector/Nano runtime assumption | pgx absent or isolated only to migration tool; architecture follows spec | static checks | PASS — LOCAL |
 | V30 | PRE_MERGE | observability/privacy | DB retries/pool/migration/rebuild metrics and logs under errors | bounded labels; no SQL text, DSN, keys, content or user IDs leak | telemetry tests | PASS — LOCAL |
-| V31 | PRE_MERGE | full regression | Go tests/race/vet/fmt, eval, frontend, hooks, architecture, MySQL/Redis/RocketMQ and container build | all required gates exit zero without skip | canonical Make/CI evidence | PARTIAL — LOCAL CI PASS; LIVE/CONTAINER BLOCKED |
+| V31 | PRE_MERGE | full regression | Go tests/race/vet/fmt, eval, frontend, hooks, architecture, MySQL/Redis/RocketMQ, two-stage Milvus URI checks and container build | all required gates exit zero without skip; focused tests alone are not complete-gate evidence | canonical Make/remote-CI evidence | PARTIAL — LOCAL CI PASS; REMOTE CI PENDING; LIVE/CONTAINER BLOCKED |
 | V32 | PRE_MERGE | connection lifecycle | force pool growth/replacement beyond idle capacity and inspect each physical connection | every connection has TLS/UTC/strict mode; none bypass connector initialization | MySQL integration with connection IDs | ENVIRONMENT BLOCKED — NOT RUN |
 | V33 | PRE_MERGE | affected-row semantics | insert/update/no-op/upsert paths with `clientFoundRows=false` | every `RowsAffected` branch matches actual changed-row semantics | repository + MySQL integration | PARTIAL — LIVE MYSQL BLOCKED |
 | V34 | PRE_MERGE | utf8mb4 capacity | maximum-rune game descriptions, conversation messages/summaries, post/comment text and 4-byte code points | accepted values round trip; over-limit values fail without truncation/warning | schema/repository boundary tests | PARTIAL — LIVE MYSQL BLOCKED |
@@ -60,7 +60,7 @@ the corresponding live cases remain blocked rather than being replaced with mock
 | V37 | PRE_MERGE | legacy knowledge import | success/replay/409 mismatch/failure mid-batch/resume and more than 4,000 documents | contiguous success watermark never skips failure; unbounded verifier proves exact processed source-key set | PostgreSQL + official LightRAG lifecycle | PARTIAL — LIVE LIFECYCLE BLOCKED |
 | V38 | PRE_MERGE | legacy knowledge retirement | source/target counts and content lengths, terminal states, pipeline state, new chunk totals and four query modes/citations | all retirement gates pass; legacy tables remain read-only and runtime has no SQL fallback | reconciliation + lifecycle report | ENVIRONMENT BLOCKED — NOT RUN |
 | V39 | PRE_MERGE | rebuild fence | command-to-operation mapping, legal absent/stale/rebuilding/failed/verified transitions, abandoned attempt, atomic rename/fsync, canonical strict report schema, digest tamper, generation/contract mismatch, concurrent runner, canonical host roots, ancestor/leaf symlink, nesting/alias/device/hardlink attacks, full-tree validation before privileged mutation, stable lock inodes and one `flock` domain, exact UID/GID/mode metadata contracts, sealed final-publish and frozen recovery, pinned read-directory descriptors, shared-GID wiring and controller/deferred-LightRAG argv isolation | Python controller and Go readiness accept only the same complete verified report; `restore-verify` cannot be relabeled; locks and atomic state survive crashes; unsafe host trees cause zero privileged mutation; readiness cannot follow rebound parent directories or rely on world permissions; official LightRAG configuration cannot parse controller-only arguments | 190 Python metadata/static tests (64 preparer, 29 host validator, 86 controller, 11 guarded-start) + Go deployment/readiness contract tests; real Linux container UID 1000/65532 cross-UID lifecycle remains required and is not represented by the Python count | PASS — LOCAL STATIC; CROSS-UID LIFECYCLE BLOCKED |
-| V40 | PRE_MERGE | fresh Milvus bootstrap | empty and nonempty source/targets under no-credential bootstrap | only independently empty valid schemas can verify without embedding; nonempty sources require full rebuild | isolated lifecycle | ENVIRONMENT BLOCKED — NOT RUN |
+| V40 | PRE_MERGE | fresh Milvus bootstrap | ordered root `milvus-init` -> runtime `lightrag-bootstrap` -> steady-state `lightrag` against empty and nonempty sources/targets | init alone uses the bare URI/root; both LightRAG phases start in `lightrag` without root or `default` privileges or a selection race; only independently empty valid schemas can verify without embedding and nonempty sources require full rebuild | isolated lifecycle | ENVIRONMENT BLOCKED — NOT RUN |
 | V44 | PRE_MERGE | runtime readiness/startup | one slow/erroring MySQL, Redis, RocketMQ or LightRAG check while peers complete; RocketMQ preflight failure/timeout; fast or blocked synchronous SDK `Start` | checks run concurrently with independent deadlines, the whole response is bounded, no private error leaks, and no check inherits another dependency's spent budget; the SDK adapter admits at most one residual readiness request, failed preflight never starts a client, fast Start cancels its watchdog, and blocked Start causes process exit within the hard deadline without an orphan client | deterministic HTTP/adapter/startup/subprocess tests + race | PASS — LOCAL |
 | V45 | PRE_MERGE | deployment smoke | Go public knowledge search, admin read/write authorization, baseline chat-to-LightRAG and enabled flash sale over real Redis/RocketMQ | wiring failures fail the smoke; missing real middleware is NOT RUN rather than PASS | container smoke + integration logs | ENVIRONMENT BLOCKED — NOT RUN |
 | V41 | ROLLOUT | production restore | provider MySQL backup and complete knowledge stack backup restore | measured RPO/RTO and verified application reads | approved production-like target | TODO |
@@ -110,20 +110,25 @@ the corresponding live cases remain blocked rather than being replaced with mock
 
 The isolated runner must prove:
 
-1. official pinned component versions and authenticated storage configuration;
-2. exact database `lightrag`, exact pinned final namespaces and exact official
+1. official pinned component versions, including PyMilvus 3.0.0, and authenticated
+   storage configuration;
+2. init with the bare server URI, bootstrap/runtime with `/lightrag` plus
+   `MILVUS_DB_NAME=lightrag`, first runtime context in `lightrag`, no LightRAG target
+   collections or database-scoped runtime grants in `default`, and the unchanged exact
+   runtime grant set;
+3. exact database `lightrag`, exact pinned final namespaces and exact official
    dynamic-field/field/type/length/nullability/primary schema for entity, relationship
    and chunk collections with dimension 1024, AUTOINDEX and COSINE search;
-3. create -> terminal status -> all supported query modes -> exact delete;
-4. clean LightRAG/Milvus stack restart;
-5. complete per-file/per-archive checksum backup and new-generation restore into empty
+4. create -> terminal status -> all supported query modes -> exact delete;
+5. clean LightRAG/Milvus stack restart;
+6. complete per-file/per-archive checksum backup and new-generation restore into empty
    volumes, including missing/truncated/mixed-generation rejection;
-6. NanoVectorDB source backup, external attempt-bound stopped-writer evidence, all three official rebuild
+7. NanoVectorDB source backup, external attempt-bound stopped-writer evidence, all three official rebuild
    library functions, structured stats, source digests and exact target ID sets;
-7. all five fence states, generation/contract/report integrity and fresh-empty bootstrap;
-8. rejection of partial backup, restored verified marker, wrong workspace/embedding
+8. all five fence states, generation/contract/report integrity and fresh-empty bootstrap;
+9. rejection of partial backup, restored verified marker, wrong workspace/embedding
    contract/dimension, expired/tampered evidence, unreviewed duplicates and interrupted rebuild;
-9. legacy manifest/import/reconciliation when source rows exist.
+10. legacy manifest/import/reconciliation when source rows exist.
 
 ## Agent Cases
 
@@ -159,4 +164,7 @@ security, privacy or provenance defect remains. V41-V43 remain rollout-only unti
 user separately authorizes infrastructure, credentials, cost and live mutations.
 V27 and V28 require a real PostgreSQL source and MySQL 8.4 target; until that rehearsal is
 captured they remain `BLOCKED — not run`, and overall PRE_MERGE readiness is `BLOCKED`
-rather than inferred from unit, mock, or documentation evidence.
+rather than inferred from unit, mock, or documentation evidence. The current two-stage
+Milvus URI fix passed the complete local `make ci` gate; clean Linux remote CI, real
+container and production checks remain pending or `ENVIRONMENT BLOCKED` as identified
+above.

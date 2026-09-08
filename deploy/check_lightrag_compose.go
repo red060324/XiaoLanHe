@@ -12,6 +12,8 @@ import (
 
 const (
 	lightRAGImage                 = "ghcr.io/hkuds/lightrag:v1.5.7@sha256:5bdbd524931b011df246fe20888d110cef691e6804c12cde636a2b746d7de27e"
+	milvusServerURI               = "http://milvus:19530"
+	milvusLightRAGURI             = "http://milvus:19530/lightrag"
 	writerEvidenceHostDirRequired = "${XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR:?XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR must be an absolute path}"
 	sharedGIDRequired             = "${XLH_LIGHTRAG_SHARED_GID:?XLH_LIGHTRAG_SHARED_GID must be a nonzero numeric group ID}"
 )
@@ -26,7 +28,7 @@ var (
 		"LIGHTRAG_VECTOR_STORAGE":     "MilvusVectorDBStorage",
 		"LIGHTRAG_GRAPH_STORAGE":      "NetworkXStorage",
 		"LIGHTRAG_DOC_STATUS_STORAGE": "JsonDocStatusStorage",
-		"MILVUS_URI":                  "http://milvus:19530",
+		"MILVUS_URI":                  milvusLightRAGURI,
 		"MILVUS_DB_NAME":              "lightrag",
 		"MILVUS_INDEX_TYPE":           "AUTOINDEX",
 		"MILVUS_METRIC_TYPE":          "COSINE",
@@ -122,6 +124,12 @@ func checkCompose(document composeFile) error {
 	}
 	if env(init, "MILVUS_BOOTSTRAP_TOKEN") != "root:${XLH_MILVUS_ROOT_PASSWORD:?XLH_MILVUS_ROOT_PASSWORD is required}" {
 		return fmt.Errorf("milvus-init must use only the bootstrap identity")
+	}
+	if env(init, "MILVUS_URI") != milvusServerURI {
+		return fmt.Errorf("milvus-init.MILVUS_URI must equal %q", milvusServerURI)
+	}
+	if env(init, "MILVUS_DB_NAME") != "lightrag" {
+		return fmt.Errorf("milvus-init.MILVUS_DB_NAME must equal %q", "lightrag")
 	}
 	if env(init, "MILVUS_RUNTIME_TOKEN") != "${XLH_MILVUS_TOKEN:?XLH_MILVUS_TOKEN is required}" {
 		return fmt.Errorf("milvus-init must provision a required runtime identity")
