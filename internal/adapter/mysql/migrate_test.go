@@ -150,6 +150,154 @@ func TestCanonicalSQLExpressionPreservesSemanticParentheses(t *testing.T) {
 	}
 }
 
+func TestCanonicalSQLExpressionNormalizesMySQL84IntroducedMetadataLiterals(t *testing.T) {
+	want, err := canonicalSQLExpression(`REGEXP_LIKE(user_name,'^[a-z0-9_]{3,32}$','c')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expression := range []string{
+		"regexp_like(`user_name`,_utf8mb4'^[a-z0-9_]{3,32}$',_utf8mb4'c')",
+		"regexp_like(`user_name`,_utf8mb4\\'^[a-z0-9_]{3,32}$\\',_utf8mb4\\'c\\')",
+		"regexp_like(`user_name`,_UTF8MB4\\'^[a-z0-9_]{3,32}$\\',_UTF8MB4\\'c\\')",
+	} {
+		got, err := canonicalSQLExpression(expression)
+		if err != nil {
+			t.Fatalf("normalize %q: %v", expression, err)
+		}
+		if got != want {
+			t.Fatalf("introduced metadata literal mismatch\nwant=%s\n got=%s", want, got)
+		}
+	}
+
+	open := "_utf8mb4" + `\'`
+	close := `\'`
+	outerEscapedQuote := strings.Repeat("\\", 3) + "'"
+	outerEscapedBackslash := strings.Repeat("\\", 4)
+	outerEscapedControl := strings.Repeat("\\", 2)
+	cases := []struct {
+		name     string
+		metadata string
+		source   string
+	}{
+		{name: "empty", metadata: open + close, source: `''`},
+		{name: "apostrophe", metadata: open + "player" + outerEscapedQuote + "s" + close, source: `'player''s'`},
+		{name: "apostrophe only", metadata: open + outerEscapedQuote + close, source: `''''`},
+		{name: "backslash", metadata: open + "C:" + outerEscapedBackslash + "tmp" + close, source: `'C:\\tmp'`},
+		{name: "trailing backslash", metadata: open + "tail" + outerEscapedBackslash + close, source: `'tail\\'`},
+		{name: "backslash then apostrophe", metadata: open + outerEscapedBackslash + outerEscapedQuote + close, source: "'" + strings.Repeat("\\", 2) + "'''"},
+		{name: "NUL", metadata: open + outerEscapedControl + "0" + close, source: `'\0'`},
+		{name: "line feed", metadata: open + outerEscapedControl + "n" + close, source: `'\n'`},
+		{name: "carriage return", metadata: open + outerEscapedControl + "r" + close, source: `'\r'`},
+		{name: "control Z", metadata: open + outerEscapedControl + "Z" + close, source: `'\Z'`},
+		{name: "raw backspace", metadata: open + string([]byte{'\b'}) + close, source: `'\b'`},
+		{name: "raw tab", metadata: open + string([]byte{'\t'}) + close, source: `'\t'`},
+		{name: "pattern percent", metadata: open + outerEscapedBackslash + "%" + close, source: `'\%'`},
+		{name: "pattern underscore", metadata: open + outerEscapedBackslash + "_" + close, source: `'\_'`},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			want, err := canonicalSQLExpression(test.source)
+			if err != nil {
+				t.Fatalf("normalize source %q: %v", test.source, err)
+			}
+			got, err := canonicalSQLExpression(test.metadata)
+			if err != nil {
+				t.Fatalf("normalize metadata %q: %v", test.metadata, err)
+			}
+			if got != want {
+				t.Fatalf("two-layer metadata mismatch for %s\nwant=%s\n got=%s", test.name, want, got)
+			}
+		})
+	}
+}
+
+func TestCanonicalSQLExpressionRejectsUnsupportedIntroducedMetadataLiterals(t *testing.T) {
+	open := "_utf8mb4" + `\'`
+	close := `\'`
+	for _, expression := range []string{
+		`_utf8mb4evil\'active\'`,
+		`_utf8mb4_0900_ai_ci\'active\'`,
+		`_utf8mb4evil'active'`,
+		`_latin1\'active\'`,
+		`_utf8mb4 \'active\'`,
+		`_utf8mb4\'active`,
+		open + "a'b" + close,
+		open + strings.Repeat("\\", 1) + "q" + close,
+		open + strings.Repeat("\\", 2) + "q" + close,
+		open + strings.Repeat("\\", 3) + "q" + close,
+		open + strings.Repeat("\\", 2) + "b" + close,
+		open + strings.Repeat("\\", 2) + "t" + close,
+		open + strings.Repeat("\\", 2) + "'" + close,
+		open + strings.Repeat("\\", 4) + "'" + close,
+		open + strings.Repeat("\\", 2),
+		open + string([]byte{0}) + close,
+		open + "raw\nline" + close,
+		open + "raw\rline" + close,
+		open + string([]byte{0x1a}) + close,
+	} {
+		if _, err := canonicalSQLExpression(expression); err == nil {
+			t.Fatalf("unsupported introduced literal %q must fail closed", expression)
+		}
+	}
+}
+
+func TestCanonicalSQLExpressionDoesNotHideIntroducedLiteralTampering(t *testing.T) {
+	expected, err := canonicalSQLExpression(`status='active'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := canonicalSQLExpression(`status=_utf8mb4\'disabled\'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual == expected {
+		t.Fatal("different introduced literal values must remain distinguishable")
+	}
+
+	open := "_utf8mb4" + `\'`
+	close := `\'`
+	withBackslash, err := canonicalSQLExpression(open + "a" + strings.Repeat("\\", 4) + "tb" + close)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutBackslash, err := canonicalSQLExpression(`'atb'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withBackslash == withoutBackslash {
+		t.Fatal("literal backslash must not collide with plain text")
+	}
+
+	withLineFeed, err := canonicalSQLExpression(open + "a" + strings.Repeat("\\", 2) + "n" + "b" + close)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutLineFeed, err := canonicalSQLExpression(`'anb'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withLineFeed == withoutLineFeed {
+		t.Fatal("line-feed escape must not collide with plain text")
+	}
+}
+
+func TestRepairCreateTableAcceptsMySQL84CheckMetadataLiterals(t *testing.T) {
+	ddl := strings.Replace(widgetMigrationSQL, "CHECK(score>=0)", "CHECK(REGEXP_LIKE(slug,'^[a-z]+$','c'))", 1)
+	files, checksum := widgetMigrationFiles(t, ddl)
+	schema := completeWidgetSchema()
+	schema.checks[0][1] = "regexp_like(`slug`,_utf8mb4\\'^[a-z]+$\\',_utf8mb4\\'c\\')"
+	state := &migrationFakeState{lock: ptr(1), release: ptr(1), storedChecksum: checksum, storedDirty: true, schema: schema}
+	db := sql.OpenDB(migrationFakeConnector{state: state})
+	defer db.Close()
+
+	if err := Repair(context.Background(), db, files, "001_create_widget.sql"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(state.execs, "\n"), "SET dirty=0") {
+		t.Fatalf("complete MySQL 8.4 contract was not marked clean: %v", state.execs)
+	}
+}
+
 func TestRepairCreateTableRejectsCheckPrecedenceTampering(t *testing.T) {
 	ddl := strings.Replace(widgetMigrationSQL, "CHECK(score>=0)", "CHECK((score>=0 AND owner_id IS NULL) OR (score<0 AND owner_id IS NOT NULL))", 1)
 	files, checksum := widgetMigrationFiles(t, ddl)

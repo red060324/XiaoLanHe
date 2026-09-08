@@ -1,6 +1,6 @@
 # Research Notes
 
-- Status: `COMPLETE FOR SPEC REVIEW — LOCAL CI PASS; LIVE VERIFICATION PENDING`
+- Status: `IMPLEMENTED — LOCAL CI PASS; MYSQL 8.4 REMOTE REVERIFY PENDING`
 - Authoritative spec: `./spec.md`
 - Research date: 2026-09-07
 
@@ -44,6 +44,19 @@ uniqueness behavior.
 - Connection session initialization is per physical connection, not per pool. A wrapped
   connector applies/verifies UTC and strict SQL mode whenever the pool opens or replaces
   a connection; production additionally requires certificate/hostname-verified TLS.
+- MySQL 8.4 serializes charset-introduced string literals read from
+  `information_schema.CHECK_CONSTRAINTS.CHECK_CLAUSE` in an escaped-delimiter form such
+  as `_utf8mb4\'^[a-z0-9_]{3,32}$\'`, even though the migration source uses ordinary
+  quoted literals. GitHub Actions run `34241868418` observed this behavior against the
+  pinned server. Migration postcondition comparison therefore needs a narrowly scoped
+  canonicalization rule: accept the exact `_utf8mb4` introducer case-insensitively in
+  ordinary or escaped-delimiter form. The latter is decoded according to the two
+  `String::print` layers: three slashes plus quote is a value apostrophe, four slashes
+  is a value backslash, and doubled slash plus `0/n/r/Z` is the corresponding control
+  byte. Unknown charsets, lookalike prefixes, whitespace-separated or unterminated
+  forms, impossible slash runs and unknown outer escapes are rejected. A global
+  backslash/quote replacement would hide malformed metadata or alter regular-expression
+  contents and is not allowed.
 
 ## Official LightRAG 1.5.7 Findings
 
@@ -134,6 +147,10 @@ set checks close the readiness gap.
 
 ## Sources
 
+- [MySQL 8.4.6 CHECK expression printing](https://github.com/mysql/mysql-server/blob/mysql-8.4.6/sql/sql_check_constraint.cc#L86-L91)
+- [MySQL 8.4.6 introduced string printing](https://github.com/mysql/mysql-server/blob/mysql-8.4.6/sql/item.cc#L3584-L3637)
+- [MySQL 8.4.6 `String::print` escaping](https://github.com/mysql/mysql-server/blob/mysql-8.4.6/sql-common/sql_string.cc#L949-L979)
+- [MySQL 8.4.6 CHECK metadata conversion](https://github.com/mysql/mysql-server/blob/mysql-8.4.6/sql/dd/dd_table.cc#L10872-L10883)
 - [LightRAG v1.5.7 release](https://github.com/HKUDS/LightRAG/releases/tag/v1.5.7)
 - [LightRAG v1.5.7 source](https://github.com/HKUDS/LightRAG/tree/v1.5.7)
 - [LightRAG API server storage documentation](https://github.com/HKUDS/LightRAG/blob/v1.5.7/docs/LightRAG-API-Server.md)

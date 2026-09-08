@@ -123,6 +123,27 @@ statement's information-schema/data postcondition, and emits an audit report bef
 may mark that exact version clean or run a versioned compensating statement. It never
 blindly reruns DDL and the application never guesses.
 
+### Strict CHECK metadata canonicalization
+
+Repair and postcondition verification read CHECK expressions from
+`information_schema.CHECK_CONSTRAINTS.CHECK_CLAUSE`. MySQL 8.4 can serialize a source
+literal such as `'active'` as `_utf8mb4\'active\'`. The expression lexer maps both the
+ordinary `_utf8mb4'...'` representation and this escaped-delimiter representation to
+the same string token used for migration source comparison. The introducer must equal
+`_utf8mb4` case-insensitively; prefix matches such as `_utf8mb4evil`, other charsets,
+separated introducers, raw quotes inside the escaped form and unterminated literals are
+errors. The escaped form follows the exact two-layer MySQL 8.4 emitter grammar: slash
+runs before a quote distinguish a closing delimiter from a value apostrophe and any
+preceding value backslashes; four slashes encode one value backslash; doubled slashes
+plus `0`, `n`, `r` or `Z` encode the control byte escaped by `String::print`. Raw bytes
+that the emitter must escape, impossible slash-run remainders and unknown outer escapes
+are rejected, so no lossy slash removal can collapse different literal values.
+
+This normalization is local to the CHECK expression grammar. It does not rewrite the
+raw metadata string, change SQL mode, modify historical migrations or weaken the
+expected constraint. Unsupported syntax remains fail-closed, and the canonical values
+of different literal contents must remain different so repair cannot bless tampering.
+
 ## MySQL Data Model And SQL Translation
 
 The exact schema is in `data-model.md`. Core mappings are:

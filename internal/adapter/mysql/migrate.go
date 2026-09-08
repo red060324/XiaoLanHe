@@ -1970,11 +1970,20 @@ func (parser *sqlExpressionParser) next() {
 			parser.pos++
 		}
 		value := parser.text[start:parser.pos]
-		if strings.HasPrefix(strings.ToLower(value), "_utf8mb4") && parser.pos < len(parser.text) && (parser.text[parser.pos] == '\'' || parser.text[parser.pos] == '"') {
+		if strings.EqualFold(value, "_utf8mb4") && parser.pos < len(parser.text) && (parser.text[parser.pos] == '\'' || parser.text[parser.pos] == '"') {
 			quote := parser.text[parser.pos]
 			literal, ok := parser.quotedString(quote)
 			if !ok {
 				parser.fail("unterminated introduced string literal")
+				return
+			}
+			parser.token = sqlExpressionToken{kind: 's', value: literal}
+			return
+		}
+		if strings.EqualFold(value, "_utf8mb4") && parser.pos+1 < len(parser.text) && parser.text[parser.pos] == '\\' && parser.text[parser.pos+1] == '\'' {
+			literal, ok := parser.escapedIntroducedString()
+			if !ok {
+				parser.fail("invalid or unterminated escaped introduced string literal")
 				return
 			}
 			parser.token = sqlExpressionToken{kind: 's', value: literal}
@@ -2028,8 +2037,32 @@ func (parser *sqlExpressionParser) quotedString(quote byte) (string, bool) {
 	var value strings.Builder
 	for parser.pos < len(parser.text) {
 		ch := parser.text[parser.pos]
-		if ch == '\\' && parser.pos+1 < len(parser.text) {
-			value.WriteByte(parser.text[parser.pos+1])
+		if ch == '\\' {
+			if parser.pos+1 >= len(parser.text) {
+				return "", false
+			}
+			escaped := parser.text[parser.pos+1]
+			switch escaped {
+			case '0':
+				value.WriteByte(0)
+			case 'b':
+				value.WriteByte('\b')
+			case 'n':
+				value.WriteByte('\n')
+			case 'r':
+				value.WriteByte('\r')
+			case 't':
+				value.WriteByte('\t')
+			case 'Z':
+				value.WriteByte(0x1a)
+			case '%', '_':
+				// MySQL preserves these two escapes for pattern matching.
+				value.WriteByte('\\')
+				value.WriteByte(escaped)
+			default:
+				// MySQL ignores the slash for every other escape.
+				value.WriteByte(escaped)
+			}
 			parser.pos += 2
 			continue
 		}
@@ -2045,6 +2078,82 @@ func (parser *sqlExpressionParser) quotedString(quote byte) (string, bool) {
 		}
 		parser.pos++
 		return value.String(), true
+	}
+	return "", false
+}
+
+// escapedIntroducedString decodes the two String::print layers used by MySQL
+// 8.4 for INFORMATION_SCHEMA.CHECK_CONSTRAINTS: the inner Item_string::print
+// escapes the literal value, then check-clause conversion escapes that printed
+// expression again. It is intentionally only called after the exact _utf8mb4
+// introducer and opening \' are recognized.
+func (parser *sqlExpressionParser) escapedIntroducedString() (string, bool) {
+	parser.pos += 2
+	var value strings.Builder
+	for parser.pos < len(parser.text) {
+		ch := parser.text[parser.pos]
+		if ch == '\'' {
+			return "", false
+		}
+		if ch != '\\' {
+			// The outer String::print always escapes these bytes. Their raw
+			// presence cannot be output by the MySQL 8.4 metadata path.
+			if ch == 0 || ch == '\n' || ch == '\r' || ch == 0x1a {
+				return "", false
+			}
+			value.WriteByte(ch)
+			parser.pos++
+			continue
+		}
+
+		start := parser.pos
+		for parser.pos < len(parser.text) && parser.text[parser.pos] == '\\' {
+			parser.pos++
+		}
+		slashes := parser.pos - start
+		if parser.pos < len(parser.text) && parser.text[parser.pos] == '\'' {
+			for range slashes / 4 {
+				value.WriteByte('\\')
+			}
+			switch slashes % 4 {
+			case 1:
+				parser.pos++
+				return value.String(), true
+			case 3:
+				value.WriteByte('\'')
+				parser.pos++
+				continue
+			default:
+				return "", false
+			}
+		}
+
+		for range slashes / 4 {
+			value.WriteByte('\\')
+		}
+		switch slashes % 4 {
+		case 0:
+			continue
+		case 2:
+			if parser.pos >= len(parser.text) {
+				return "", false
+			}
+			switch parser.text[parser.pos] {
+			case '0':
+				value.WriteByte(0)
+			case 'n':
+				value.WriteByte('\n')
+			case 'r':
+				value.WriteByte('\r')
+			case 'Z':
+				value.WriteByte(0x1a)
+			default:
+				return "", false
+			}
+			parser.pos++
+		default:
+			return "", false
+		}
 	}
 	return "", false
 }

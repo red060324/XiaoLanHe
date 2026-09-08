@@ -1,6 +1,6 @@
 # Test Plan
 
-- Status: `IMPLEMENTED — LOCAL CI PASS; PRE_MERGE ENVIRONMENT BLOCKED`
+- Status: `IMPLEMENTED — LOCAL CI PASS; MYSQL 8.4 REMOTE REVERIFY PENDING; PRE_MERGE BLOCKED`
 - Authoritative spec: `./spec.md`
 
 ## Scope And Environments
@@ -22,9 +22,9 @@ the corresponding live cases remain blocked rather than being replaced with mock
 |---|---|---|---|---|---|---|
 | V1 | PRE_MERGE | baseline | freeze public REST/SSE, auth, money/time/error/idempotency, Agent/eval and flash-sale fixtures | storage migration causes no unexplained contract drift | existing + versioned golden tests | PASS — LOCAL |
 | V2 | PRE_MERGE | config | valid/invalid MySQL DSNs, timeout, parseTime, UTC, multiStatements, clientFoundRows, TLS, SQL mode and server version | only bounded MySQL 8.4 configuration starts; production verifies TLS peer/hostname | config/unit + live startup tests | PARTIAL — LIVE ENVIRONMENT BLOCKED |
-| V3 | PRE_MERGE | migration | fresh/repeat/concurrent execution | schema applies exactly once under same-connection lock | isolated MySQL 8.4 integration | ENVIRONMENT BLOCKED — NOT RUN |
+| V3 | PRE_MERGE | migration | fresh/repeat/concurrent execution plus dirty-repair verification when `CHECK_CONSTRAINTS.CHECK_CLAUSE` returns ordinary `_utf8mb4'...'` or MySQL 8.4 escaped `_utf8mb4\'...\'` literals | schema applies exactly once under same-connection lock; exact supported metadata forms compare equal without weakening the expected CHECK; unknown/lookalike/malformed introducers and impossible or unknown outer escape encodings fail closed without canonical collision | isolated MySQL 8.4 integration + focused canonicalizer/repair tests | PARTIAL — MYSQL 8.4 FORMAT OBSERVED IN RUN 34241868418; FIX LOCAL PASS; REMOTE REVERIFY PENDING |
 | V4 | PRE_MERGE | migration failure | checksum mismatch, dirty version, process death after implicit DDL, `GET_LOCK` 1/0/NULL and `RELEASE_LOCK` 1/0/NULL/error | startup fails closed; inspect/repair is authorized and postcondition-bound; lock result is never guessed | fault-injection integration | PARTIAL — LIVE ENVIRONMENT BLOCKED |
-| V5 | PRE_MERGE | schema | FKs, checks, JSON, UTC DATETIME(6), BINARY(32), auto increments and all indexes | exact relational invariants and round trips hold | information_schema + repository tests | PARTIAL — LIVE ENVIRONMENT BLOCKED |
+| V5 | PRE_MERGE | schema | FKs, checks including exact MySQL 8.4 charset-introduced metadata normalization, JSON, UTC DATETIME(6), BINARY(32), auto increments and all indexes | exact relational invariants and round trips hold; different literal values cannot canonicalize to the same CHECK | information_schema + repository and negative canonicalizer tests | PARTIAL — LIVE MYSQL REVERIFY PENDING |
 | V6 | PRE_MERGE | collation | case/accent variants for usernames, slugs and codes | equality matches application ASCII normalization only | MySQL integration | ENVIRONMENT BLOCKED — NOT RUN |
 | V7 | PRE_MERGE | partial uniqueness | open prices, active entitlements and nullable source/coupon/order/profile references | duplicate active/non-null values fail; valid history/NULL rows coexist | concurrent MySQL integration | ENVIRONMENT BLOCKED — NOT RUN |
 | V8 | PRE_MERGE | account/chat | register/login/session ownership, conversation create/list/messages | unchanged behavior with MySQL IDs/times/errors | repository + HTTP tests | PARTIAL — LIVE ENVIRONMENT BLOCKED |
@@ -51,7 +51,7 @@ the corresponding live cases remain blocked rather than being replaced with mock
 | V28 | PRE_MERGE | authenticated read-only verification | separate trusted source and target key/key-ID verification of both manifest-embedded evidence records, target canonical payload/digests, expected deployment generation and referenced immutable reconciliation report; table counts, canonical row digests, orphan/uniqueness/status, coupon/stock/order/payment/entitlement/flash-sale totals; snapshot checkpoint directory and both databases before/after | wrong/missing/cross-used key, key ID or generation, tampered evidence/payload/digest/report and every data mismatch fail closed; verify accepts neither external attestation path, creates no lock/artifact and changes zero filesystem/database bytes | real PostgreSQL -> MySQL 8.4 verification rehearsal plus before/after filesystem and database evidence | BLOCKED — NOT RUN |
 | V29 | PRE_MERGE | dependencies/static | normal binaries/import graph/config/docs contain no PostgreSQL/pgvector/Nano runtime assumption | pgx absent or isolated only to migration tool; architecture follows spec | static checks | PASS — LOCAL |
 | V30 | PRE_MERGE | observability/privacy | DB retries/pool/migration/rebuild metrics and logs under errors | bounded labels; no SQL text, DSN, keys, content or user IDs leak | telemetry tests | PASS — LOCAL |
-| V31 | PRE_MERGE | full regression | Go tests/race/vet/fmt, eval, frontend, hooks, architecture, MySQL/Redis/RocketMQ, two-stage Milvus URI checks and container build | all required gates exit zero without skip; focused tests alone are not complete-gate evidence | canonical Make/remote-CI evidence | PARTIAL — LOCAL CI PASS; REMOTE CI PENDING; LIVE/CONTAINER BLOCKED |
+| V31 | PRE_MERGE | full regression | Go tests/race/vet/fmt, eval, frontend, hooks, architecture, MySQL/Redis/RocketMQ, two-stage Milvus URI checks and container build | all required gates exit zero without skip; focused tests alone are not complete-gate evidence | canonical Make/remote-CI evidence | PARTIAL — CURRENT PATCH LOCAL CI PASS; RUN 34241868418 REPOSITORY/LIGHTRAG GATES PASS; MYSQL REMOTE REVERIFY PENDING |
 | V32 | PRE_MERGE | connection lifecycle | force pool growth/replacement beyond idle capacity and inspect each physical connection | every connection has TLS/UTC/strict mode; none bypass connector initialization | MySQL integration with connection IDs | ENVIRONMENT BLOCKED — NOT RUN |
 | V33 | PRE_MERGE | affected-row semantics | insert/update/no-op/upsert paths with `clientFoundRows=false` | every `RowsAffected` branch matches actual changed-row semantics | repository + MySQL integration | PARTIAL — LIVE MYSQL BLOCKED |
 | V34 | PRE_MERGE | utf8mb4 capacity | maximum-rune game descriptions, conversation messages/summaries, post/comment text and 4-byte code points | accepted values round trip; over-limit values fail without truncation/warning | schema/repository boundary tests | PARTIAL — LIVE MYSQL BLOCKED |
@@ -164,7 +164,9 @@ security, privacy or provenance defect remains. V41-V43 remain rollout-only unti
 user separately authorizes infrastructure, credentials, cost and live mutations.
 V27 and V28 require a real PostgreSQL source and MySQL 8.4 target; until that rehearsal is
 captured they remain `BLOCKED — not run`, and overall PRE_MERGE readiness is `BLOCKED`
-rather than inferred from unit, mock, or documentation evidence. The current two-stage
-Milvus URI fix passed the complete local `make ci` gate; clean Linux remote CI, real
-container and production checks remain pending or `ENVIRONMENT BLOCKED` as identified
-above.
+rather than inferred from unit, mock, or documentation evidence. GitHub Actions run
+`34241868418` passed the Linux repository and LightRAG gates but failed the real MySQL
+8.4 migration check on its escaped charset-introduced CHECK literal representation. The
+strict compatibility patch now passes the complete local `make ci` gate but still needs
+the same remote integration gate. Production checks remain pending or
+`ENVIRONMENT BLOCKED` as identified above.

@@ -1,6 +1,6 @@
 # Delivery Report
 
-- Status: `IMPLEMENTATION DELIVERED — LOCAL CI PASS; REMOTE/LIVE PRODUCTION READINESS BLOCKED`
+- Status: `IMPLEMENTATION DELIVERED — LOCAL CI PASS; MYSQL 8.4 REMOTE REVERIFY/LIVE READINESS BLOCKED`
 - Authoritative spec: `./spec.md`
 - Evidence date: 2026-09-08
 
@@ -13,13 +13,17 @@ Milvus 2.6.11 for its vector projections. PostgreSQL remains only in explicit
 operator-run migration/import packages, and the Go application does not access Milvus
 directly.
 
-All repository-local PRE_MERGE gates available on this host passed for the current
-two-stage PyMilvus 3.0.0 URI fix, including the full Go suite and race detector,
-deterministic AI evaluation, frontend tests/build, architecture and spec checks, MySQL
-static tests, and the LightRAG/Milvus/fence static suites. This is not production-ready
-evidence: clean Linux remote CI is still pending, this host has no Docker and no
-configured real MySQL, Redis or RocketMQ targets, and no authorized provider-backed
-LightRAG lifecycle or real PostgreSQL-to-MySQL cutover rehearsal was run.
+GitHub Actions run `34241868418` passed the Linux repository gates and again passed the
+LightRAG manifest, empty-bootstrap, runtime RBAC, guarded-service and live API contract
+checks. Its real middleware gate then exposed one MySQL 8.4 compatibility gap: CHECK
+metadata returned `_utf8mb4\'...\'` delimiters that the strict migration verifier did
+not yet recognize. The implementation now decodes the exact two-layer MySQL 8.4
+`String::print` representation while rejecting unsupported introducers and impossible
+outer encodings; the focused and complete local suites pass, but the patch still
+requires the same remote MySQL gate. This is not production-ready evidence: this host
+has no Docker or configured real middleware,
+and no authorized provider-backed LightRAG lifecycle or real PostgreSQL-to-MySQL
+cutover rehearsal was run.
 
 ## Delivered Architecture
 
@@ -72,13 +76,15 @@ LightRAG lifecycle or real PostgreSQL-to-MySQL cutover rehearsal was run.
 | AC11 — safe data cutover | copy/resume/authenticated read-only verify implementation and adversarial tests pass | BLOCKED — V27/V28 NOT RUN |
 | AC12 — deployment/security | fail-closed TLS/HTTPS/ACL/config tests and static deployment checks pass | PARTIAL — REAL INFRASTRUCTURE BLOCKED |
 | AC13 — compatibility/safety | full local Go/race/HTTP/eval suite and public-search capacity tests pass | PARTIAL — DEPLOYMENT SMOKE BLOCKED |
-| AC14 — verification/delivery | the current local `make ci` pass is recorded below; clean Linux remote CI, live integration and cutover evidence remain | BLOCKED — REMOTE CI/LIVE/CUTOVER REQUIRED |
+| AC14 — verification/delivery | Linux repository/LightRAG gates pass in run `34241868418`; the MySQL metadata fix passes complete local CI but still needs the remote integration rerun | BLOCKED — MYSQL REMOTE REVERIFY/LIVE/CUTOVER REQUIRED |
 
 ## Executed Verification
 
 | Gate | Executed command/evidence | Result |
 |---|---|---|
-| Complete local PRE_MERGE | `GOCACHE=/private/tmp/xlh-go-cache PYTHONPYCACHEPREFIX=/private/tmp/xlh-pycache make ci BASE_REF=HEAD^` | PASS — CURRENT URI FIX |
+| Complete local PRE_MERGE | `GOCACHE=/private/tmp/xlh-go-cache PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/private/tmp/xlh-pycache make ci BASE_REF=HEAD^` | PASS — CURRENT MYSQL METADATA PATCH |
+| Current MySQL metadata regression | `GOCACHE=/private/tmp/xlh-go-cache-mysql go test -count=1 ./internal/adapter/mysql -run 'TestCanonicalSQLExpression|TestRepairCreateTableAcceptsMySQL84|TestRepairCreateTableRejects'` | PASS |
+| Linux GitHub Actions | run `34241868418`, commit `84dcdd6231631689d070ae0d5ea7cd7da3650052` | REPOSITORY/LIGHTRAG GATES PASS; MYSQL 8.4 INTEGRATION FAILED ON `_utf8mb4\'...\'`; FIX NOT YET PUSHED |
 | Go unit packages | `go test -count=1 ./...` through `make ci` | PASS |
 | Go race packages | `go test -race -count=1 ./...` through `make ci`; importer completed in about 231 seconds | PASS |
 | Go static/style | `go vet ./...`, `fmt-check`, hooks, architecture and spec-drift through `make ci` | PASS |
@@ -92,10 +98,12 @@ LightRAG lifecycle or real PostgreSQL-to-MySQL cutover rehearsal was run.
 | Flash-sale precision regression | unit and race tests for entity, RocketMQ, MySQL repository and usecase packages | PASS |
 | Working-tree hygiene | `git diff --check` | PASS |
 
-The complete local command above was run from scratch after the two-stage URI, checker,
-test and specification changes and completed with exit code zero. Evidence-only status
-text was updated afterward; `git diff --check` and the spec-drift gate are rerun before
-commit.
+The complete local command above ran after the strict MySQL 8.4 metadata state machine,
+tests and specification changes and completed with exit code zero. It covered the full
+Go and race suites, deterministic Agent evaluation, 6 frontend files / 80 tests and
+production build, architecture/spec hooks, MySQL/deployment static gates and all 190
+LightRAG fence metadata/static tests. Evidence-only status text was updated afterward;
+`git diff --check` and the spec-drift gate are rerun before commit.
 
 ## Environment-Blocked Verification
 
