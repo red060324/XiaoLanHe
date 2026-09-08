@@ -27,11 +27,42 @@ BASE_ENV = {
     "XLH_LIGHTRAG_DEPLOYMENT_GENERATION": "generation-secret-canary",
     "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256": "sha256:" + "a" * 64,
     "XLH_EXPECTED_CONTRACT_SHA256": "sha256:" + "b" * 64,
+    "XLH_LIGHTRAG_SHARED_GID": "1234",
 }
 
 
 def parse_lines(output):
     return [json.loads(line) for line in output.getvalue().splitlines() if line]
+
+
+def prepare_fence_layout(root):
+    root = pathlib.Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    root.chmod(0o2750)
+    for name in ("reports", "attempts"):
+        directory = root / name
+        directory.mkdir(exist_ok=True)
+        directory.chmod(0o2750)
+    for name in ("serving.lock", "rebuild.lock"):
+        lock = root / name
+        lock.touch(exist_ok=True)
+        lock.chmod(0o640)
+    return root
+
+
+def make_layout_group_nonzero(root):
+    root = pathlib.Path(root)
+    groups = [group for group in (os.getgid(), *os.getgroups()) if group > 0]
+    group = groups[0] if groups else 1
+    directories = (root, root / "reports", root / "attempts")
+    files = (root / "serving.lock", root / "rebuild.lock")
+    for path in (*directories, *files):
+        os.chown(path, -1, group)
+    for path in directories:
+        path.chmod(0o2750)
+    for path in files:
+        path.chmod(0o640)
+    return root.stat().st_uid, group
 
 
 class TrackingOutput(io.StringIO):
@@ -154,6 +185,10 @@ class GuardedStartTests(unittest.TestCase):
 
         with contextlib.redirect_stdout(output), mock.patch.object(
             MODULE.rebuild_fence.FenceStore,
+            "__init__",
+            return_value=None,
+        ), mock.patch.object(
+            MODULE.rebuild_fence.FenceStore,
             "serving_lease",
             autospec=True,
             side_effect=lease,
@@ -186,6 +221,14 @@ class GuardedStartTests(unittest.TestCase):
             with self.subTest(mode=mode, reason=reason), mock.patch.dict(
                 os.environ, environment, clear=True
             ), mock.patch.object(sys, "argv", [str(MODULE_PATH), mode]), mock.patch.object(
+                MODULE.rebuild_fence.FenceStore,
+                "__init__",
+                return_value=None,
+            ), mock.patch.object(
+                MODULE.rebuild_fence.FenceStore,
+                "serving_lease",
+                return_value=contextlib.nullcontext(123),
+            ), mock.patch.object(
                 MODULE.rebuild_fence.FenceStore,
                 "verify_current",
                 side_effect=RuntimeError(canary),
@@ -237,7 +280,8 @@ class GuardedStartTests(unittest.TestCase):
 
     def test_supervisor_holds_real_shared_lease_until_child_exit(self):
         with tempfile.TemporaryDirectory() as directory:
-            store = MODULE.rebuild_fence.FenceStore(pathlib.Path(directory))
+            root = prepare_fence_layout(pathlib.Path(directory))
+            store = MODULE.rebuild_fence.FenceStore(root)
             lifecycle = []
             test_case = self
 
@@ -247,7 +291,7 @@ class GuardedStartTests(unittest.TestCase):
                 def wait(self, timeout=None):
                     lifecycle.append("wait")
                     contender = MODULE.rebuild_fence.FenceStore(
-                        pathlib.Path(directory)
+                        root
                     )
                     with test_case.assertRaises(
                         MODULE.rebuild_fence.ClassifiedFailure
@@ -275,7 +319,7 @@ class GuardedStartTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 0)
             self.assertEqual(lifecycle, ["wait"])
             with MODULE.rebuild_fence.FenceStore(
-                pathlib.Path(directory)
+                root
             ).serving_lease(exclusive=True):
                 pass
             self.assert_event(
@@ -288,9 +332,14 @@ class GuardedStartTests(unittest.TestCase):
 
     def test_controller_exclusion_rejects_steady_before_verify_or_spawn(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
+            root = prepare_fence_layout(pathlib.Path(directory))
             store = MODULE.rebuild_fence.FenceStore(root)
+            owner_uid, owner_gid = make_layout_group_nonzero(root)
             with store.serving_lease(exclusive=True), mock.patch.object(
+                MODULE, "required_shared_gid", return_value=owner_gid
+            ), mock.patch.object(
+                MODULE, "LIGHTRAG_UID", owner_uid
+            ), mock.patch.object(
                 MODULE, "FENCE_CONTAINER_DIR", root
             ), mock.patch.object(
                 MODULE.rebuild_fence.FenceStore, "verify_current", autospec=True
@@ -375,6 +424,10 @@ class GuardedStartTests(unittest.TestCase):
             side_effect=MODULE.GuardFailure("exec", "process_failed"),
         ), mock.patch.object(
             sys, "argv", [str(MODULE_PATH), "steady"]
+        ), mock.patch.object(
+            MODULE.rebuild_fence.FenceStore,
+            "__init__",
+            return_value=None,
         ), mock.patch.object(
             MODULE.rebuild_fence.FenceStore, "serving_lease", autospec=True
         ) as lease, mock.patch.object(

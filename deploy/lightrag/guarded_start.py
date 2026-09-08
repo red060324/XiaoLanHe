@@ -47,6 +47,7 @@ GUARD_CLASSIFICATIONS = frozenset(
 FENCE_CONTAINER_DIR = pathlib.Path("/rebuild-fence")
 SERVER_TERMINATION_GRACE_SECONDS = 30.0
 PROCESS_GROUP_POLL_SECONDS = 0.05
+LIGHTRAG_UID = 1000
 
 
 class GuardFailure(Exception):
@@ -90,6 +91,18 @@ def required(name: str) -> str:
     if not value:
         raise GuardFailure("preflight", "required_config")
     return value
+
+
+def required_shared_gid() -> int:
+    value = required("XLH_LIGHTRAG_SHARED_GID")
+    if (
+        not value.isascii()
+        or not value.isdecimal()
+        or value.startswith("0")
+        or int(value) > 2_147_483_647
+    ):
+        raise GuardFailure("preflight", "required_config")
+    return int(value)
 
 
 def require_absolute_host_path(name: str) -> None:
@@ -221,6 +234,7 @@ def bootstrap() -> None:
     require_absolute_host_path("XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR")
     require_absolute_host_path("XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR")
     attempt = required("XLH_LIGHTRAG_ATTEMPT_ID")
+    shared_gid = required_shared_gid()
     exec_guarded(
         "bootstrap",
         "python",
@@ -234,6 +248,10 @@ def bootstrap() -> None:
             required("XLH_LIGHTRAG_DEPLOYMENT_GENERATION"),
             "--attempt-id",
             attempt,
+            "--expected-uid",
+            str(LIGHTRAG_UID),
+            "--expected-gid",
+            str(shared_gid),
             "--writer-evidence",
             f"/writer-evidence/{attempt}.json",
             "--writer-evidence-sha256",
@@ -246,7 +264,13 @@ def steady() -> None:
     require_absolute_host_path("XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR")
     generation = required("XLH_LIGHTRAG_DEPLOYMENT_GENERATION")
     contract = required("XLH_EXPECTED_CONTRACT_SHA256")
-    store = rebuild_fence.FenceStore(FENCE_CONTAINER_DIR, create=False)
+    shared_gid = required_shared_gid()
+    store = rebuild_fence.FenceStore(
+        FENCE_CONTAINER_DIR,
+        create=False,
+        expected_uid=LIGHTRAG_UID,
+        expected_gid=shared_gid,
+    )
     try:
         # The shared lease is acquired before verification and is retained by
         # this supervisor until the complete LightRAG process group exits.

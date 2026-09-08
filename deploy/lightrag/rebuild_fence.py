@@ -14,9 +14,10 @@ import pathlib
 import re
 import signal
 import stat
+import sys
 import tarfile
-import tempfile
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
@@ -24,6 +25,10 @@ SCHEMA_VERSION = 2
 MAX_FENCE_BYTES = 2 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 1_000_000
 FIXTURE_TERMINATION_GRACE_SECONDS = 5
+FENCE_ROOT_MODE = 0o2750
+FENCE_SUBDIRECTORY_MODE = 0o2750
+FENCE_FILE_MODE = 0o640
+MAX_IDENTITY_ID = 2_147_483_647
 TARGETS = ("entities", "relationships", "chunks")
 TRANSITION_COUNT_FIELDS = (
     "source_total",
@@ -545,49 +550,384 @@ def assert_transition(previous: str, following: str) -> None:
 
 
 class FenceStore:
-    def __init__(self, root: pathlib.Path, *, create: bool = True):
-        self.root = root.resolve()
+    def __init__(
+        self,
+        root: pathlib.Path,
+        *,
+        create: bool = True,
+        expected_uid: int | None = None,
+        expected_gid: int | None = None,
+    ):
+        if (expected_uid is None) != (expected_gid is None):
+            raise ValueError("expected fence UID and GID must be provided together")
+        if expected_uid is not None and (
+            not isinstance(expected_uid, int)
+            or isinstance(expected_uid, bool)
+            or not 0 <= expected_uid <= MAX_IDENTITY_ID
+        ):
+            raise ValueError("invalid expected fence UID")
+        if expected_gid is not None and (
+            not isinstance(expected_gid, int)
+            or isinstance(expected_gid, bool)
+            or not 1 <= expected_gid <= MAX_IDENTITY_ID
+        ):
+            raise ValueError("invalid expected fence GID")
+        self.expected_uid = expected_uid
+        self.expected_gid = expected_gid
+        self.root = self._safe_root_path(root)
         self.reports = self.root / "reports"
         self.attempts = self.root / "attempts"
         self.current = self.root / "current.json"
         self.lock_path = self.root / "rebuild.lock"
         self.serving_lock_path = self.root / "serving.lock"
-        if create:
-            self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-            self.reports.mkdir(mode=0o700, exist_ok=True)
-            self.attempts.mkdir(mode=0o700, exist_ok=True)
-            descriptor = os.open(
-                self.serving_lock_path,
-                os.O_RDWR
-                | os.O_CREAT
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NONBLOCK", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-                0o600,
-            )
-            try:
-                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                    raise ValueError("serving lock is not a regular file")
-                os.fchmod(descriptor, 0o600)
-            finally:
-                os.close(descriptor)
+        self._root_descriptor = -1
+        self._managed_directory_descriptors: dict[str, int] = {}
         self._lock: Any = None
+        try:
+            if create:
+                self._root_descriptor = self._validated_root_descriptor(
+                    create=True
+                )
+                for name in ("reports", "attempts"):
+                    self._managed_directory_descriptors[name] = (
+                        self._ensure_managed_directory(
+                            name, FENCE_SUBDIRECTORY_MODE
+                        )
+                    )
+                for path, label in (
+                    (self.serving_lock_path, "serving lock"),
+                    (self.lock_path, "controller lock"),
+                ):
+                    descriptor = self._open_lock(
+                        path, os.O_RDWR, label, create=True
+                    )
+                    os.close(descriptor)
+            else:
+                self._root_descriptor = self._validated_root_descriptor(
+                    create=False
+                )
+                strict_layout = self.expected_uid is not None
+                for name in ("reports", "attempts"):
+                    descriptor = self._open_child_directory(
+                        name, missing_ok=not strict_layout
+                    )
+                    if descriptor is not None:
+                        self._managed_directory_descriptors[name] = descriptor
+                if strict_layout:
+                    for path, label in (
+                        (self.serving_lock_path, "serving lock"),
+                        (self.lock_path, "controller lock"),
+                    ):
+                        descriptor = self._open_lock(
+                            path, os.O_RDONLY, label, create=False
+                        )
+                        os.close(descriptor)
+        except BaseException:
+            self._close_directory_descriptors()
+            raise
+
+    @staticmethod
+    def _safe_root_path(root: pathlib.Path) -> pathlib.Path:
+        root = root.absolute()
+        if ".." in root.parts:
+            raise ValueError("fence root must not contain parent traversal")
+        if sys.platform == "darwin":
+            # These are fixed macOS system aliases, not caller-controlled
+            # symlinks. Normalize only them before the no-follow walk.
+            for alias in (pathlib.Path("/var"), pathlib.Path("/tmp")):
+                if root == alias or root.is_relative_to(alias):
+                    root = pathlib.Path("/private") / root.relative_to("/")
+                    break
+        return root
+
+    @staticmethod
+    def _open_directory_chain(
+        path: pathlib.Path, *, create: bool, mode: int
+    ) -> tuple[int, bool]:
+        if not path.is_absolute():
+            raise ValueError("fence root must be absolute")
+        flags = (
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | os.O_DIRECTORY
+            | os.O_NOFOLLOW
+        )
+        descriptor = os.open("/", flags)
+        created_final = False
+        try:
+            for index, component in enumerate(path.parts[1:]):
+                final = index == len(path.parts) - 2
+                try:
+                    child = os.open(component, flags, dir_fd=descriptor)
+                except FileNotFoundError:
+                    if not create or not final:
+                        raise
+                    os.mkdir(component, mode=mode, dir_fd=descriptor)
+                    child = os.open(component, flags, dir_fd=descriptor)
+                    created_final = final
+                previous = descriptor
+                descriptor = child
+                os.close(previous)
+            return descriptor, created_final
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def _validated_root_descriptor(self, *, create: bool) -> int:
+        descriptor, created = self._open_directory_chain(
+            self.root, create=create, mode=FENCE_ROOT_MODE
+        )
+        try:
+            if create:
+                self._validate_directory_descriptor(
+                    descriptor, FENCE_ROOT_MODE, created=created
+                )
+            else:
+                info = os.fstat(descriptor)
+                if not stat.S_ISDIR(info.st_mode):
+                    raise ValueError("fence root is not a directory")
+                self._validate_ownership(info, "fence root")
+                if self.expected_uid is not None:
+                    self._validate_directory_mode(info, FENCE_ROOT_MODE)
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    @staticmethod
+    def _directory_flags() -> int:
+        return os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+
+    def _validate_ownership(self, info: os.stat_result, label: str) -> None:
+        if self.expected_uid is not None and (
+            info.st_uid != self.expected_uid or info.st_gid != self.expected_gid
+        ):
+            raise ValueError(f"{label} ownership is unsafe")
+
+    def _validate_directory_descriptor(
+        self, descriptor: int, expected_mode: int, *, created: bool
+    ) -> None:
+        info = os.fstat(descriptor)
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError("fence path is not a directory")
+        if created:
+            os.fchmod(descriptor, expected_mode)
+            info = os.fstat(descriptor)
+        self._validate_directory_mode(info, expected_mode)
+        self._validate_ownership(info, "fence directory")
+
+    @staticmethod
+    def _validate_directory_mode(info: os.stat_result, expected_mode: int) -> None:
+        actual_mode = stat.S_IMODE(info.st_mode)
+        allowed_modes = {expected_mode}
+        if sys.platform == "darwin":
+            # APFS clears setgid on directories, so local macOS verification
+            # can only enforce the remaining owner/group/other permission bits.
+            allowed_modes.add(expected_mode & ~stat.S_ISGID)
+        if actual_mode not in allowed_modes:
+            raise ValueError("fence directory permissions are unsafe")
+
+    def _open_root(self) -> int:
+        if self._root_descriptor < 0:
+            raise ValueError("fence store is closed")
+        descriptor = os.dup(self._root_descriptor)
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISDIR(info.st_mode):
+                raise ValueError("fence root is not a directory")
+            self._validate_ownership(info, "fence root")
+            if self.expected_uid is not None:
+                self._validate_directory_mode(info, FENCE_ROOT_MODE)
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def _open_child_directory(
+        self, name: str, *, missing_ok: bool = False
+    ) -> int | None:
+        root_descriptor = self._open_root()
+        try:
+            try:
+                descriptor = os.open(
+                    name, self._directory_flags(), dir_fd=root_descriptor
+                )
+            except FileNotFoundError:
+                if missing_ok:
+                    return None
+                raise
+        finally:
+            os.close(root_descriptor)
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISDIR(info.st_mode):
+                raise ValueError("fence path is not a directory")
+            self._validate_ownership(info, "fence directory")
+            if self.expected_uid is not None:
+                self._validate_directory_mode(info, FENCE_SUBDIRECTORY_MODE)
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def _open_managed_directory(
+        self, name: str, *, missing_ok: bool = False
+    ) -> int | None:
+        original = self._managed_directory_descriptors.get(name)
+        if original is None:
+            if missing_ok:
+                return None
+            raise FileNotFoundError(name)
+        descriptor = os.dup(original)
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISDIR(info.st_mode):
+                raise ValueError("fence path is not a directory")
+            self._validate_ownership(info, "fence directory")
+            if self.expected_uid is not None:
+                self._validate_directory_mode(info, FENCE_SUBDIRECTORY_MODE)
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def _ensure_managed_directory(
+        self, name: str, expected_mode: int
+    ) -> int:
+        created = False
+        root_descriptor = self._open_root()
+        descriptor = -1
+        try:
+            try:
+                os.mkdir(name, mode=expected_mode, dir_fd=root_descriptor)
+                created = True
+            except FileExistsError:
+                pass
+            descriptor = os.open(
+                name, self._directory_flags(), dir_fd=root_descriptor
+            )
+        finally:
+            os.close(root_descriptor)
+        try:
+            self._validate_directory_descriptor(
+                descriptor, expected_mode, created=created
+            )
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def _open_lock(
+        self, path: pathlib.Path, flags: int, label: str, *, create: bool
+    ) -> int:
+        flags |= (
+            getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        try:
+            relative = path.relative_to(self.root)
+        except ValueError as error:
+            raise ValueError(f"{label} escapes fence root") from error
+        if len(relative.parts) != 1:
+            raise ValueError(f"{label} is not directly under fence root")
+        root_descriptor = self._open_root()
+        created = False
+        try:
+            if create:
+                try:
+                    descriptor = os.open(
+                        relative.name,
+                        flags | os.O_CREAT | os.O_EXCL,
+                        FENCE_FILE_MODE,
+                        dir_fd=root_descriptor,
+                    )
+                    created = True
+                except FileExistsError:
+                    descriptor = os.open(
+                        relative.name, flags, dir_fd=root_descriptor
+                    )
+            else:
+                descriptor = os.open(
+                    relative.name, flags, dir_fd=root_descriptor
+                )
+        finally:
+            os.close(root_descriptor)
+        try:
+            os.set_inheritable(descriptor, False)
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError(f"{label} is not a regular file")
+            if info.st_nlink != 1:
+                raise ValueError(f"{label} has an unsafe link count")
+            if created:
+                if self.expected_uid is not None and info.st_uid != self.expected_uid:
+                    raise ValueError(f"{label} owner is unsafe")
+                if self.expected_gid is not None and info.st_gid != self.expected_gid:
+                    os.fchown(descriptor, -1, self.expected_gid)
+                os.fchmod(descriptor, FENCE_FILE_MODE)
+                info = os.fstat(descriptor)
+            if stat.S_IMODE(info.st_mode) != FENCE_FILE_MODE:
+                raise ValueError(f"{label} permissions are unsafe")
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError(f"{label} metadata changed during validation")
+            self._validate_ownership(info, label)
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
 
     def __enter__(self) -> "FenceStore":
-        self._lock = self.lock_path.open("a+", encoding="utf-8")
+        descriptor = self._open_lock(
+            self.lock_path,
+            os.O_RDWR | os.O_APPEND,
+            "controller lock",
+            create=False,
+        )
         try:
-            fcntl.flock(self._lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            self._lock.close()
-            self._lock = None
-            raise ClassifiedFailure("controller_lock_busy", retryable=True) from None
+            handle = os.fdopen(descriptor, "a+", encoding="utf-8")
+        except BaseException:
+            os.close(descriptor)
+            raise
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BaseException as error:
+            handle.close()
+            if isinstance(error, BlockingIOError):
+                raise ClassifiedFailure(
+                    "controller_lock_busy", retryable=True
+                ) from None
+            raise
+        self._lock = handle
         return self
 
     def __exit__(self, *_: Any) -> None:
-        if self._lock:
-            fcntl.flock(self._lock.fileno(), fcntl.LOCK_UN)
-            self._lock.close()
-            self._lock = None
+        handle = self._lock
+        self._lock = None
+        if handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                handle.close()
+
+    def __del__(self) -> None:
+        self._close_directory_descriptors()
+
+    def _close_directory_descriptors(self) -> None:
+        descriptors = getattr(self, "_managed_directory_descriptors", {})
+        for descriptor in descriptors.values():
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        descriptors.clear()
+        descriptor = getattr(self, "_root_descriptor", -1)
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            self._root_descriptor = -1
 
     @contextlib.contextmanager
     def serving_lease(self, *, exclusive: bool) -> Iterator[int]:
@@ -598,21 +938,13 @@ class FenceStore:
         retains it until the complete server process group has stopped.
         """
 
-        flags = os.O_RDONLY
-        if exclusive:
-            flags = os.O_RDWR | os.O_CREAT
-        flags |= (
-            getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NONBLOCK", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = self._open_lock(
+            self.serving_lock_path,
+            os.O_RDWR if exclusive else os.O_RDONLY,
+            "serving lock",
+            create=False,
         )
-        descriptor = os.open(self.serving_lock_path, flags, 0o600)
         try:
-            os.set_inheritable(descriptor, False)
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                raise ValueError("serving lock is not a regular file")
-            if exclusive:
-                os.fchmod(descriptor, 0o600)
             operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
             try:
                 fcntl.flock(descriptor, operation | fcntl.LOCK_NB)
@@ -625,30 +957,112 @@ class FenceStore:
         finally:
             os.close(descriptor)
 
+    def _managed_parent(self, path: pathlib.Path) -> tuple[int, str]:
+        try:
+            relative = path.relative_to(self.root)
+        except ValueError as error:
+            raise ValueError("managed fence path escapes root") from error
+        if len(relative.parts) == 1:
+            return self._open_root(), relative.name
+        if len(relative.parts) == 2 and relative.parts[0] in {"reports", "attempts"}:
+            descriptor = self._open_managed_directory(relative.parts[0])
+            assert descriptor is not None
+            return descriptor, relative.parts[1]
+        raise ValueError("invalid managed fence path")
+
+    def _validate_managed_descriptor(
+        self, descriptor: int, label: str, *, require_content: bool
+    ) -> os.stat_result:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or (require_content and (info.st_size <= 0 or info.st_size > MAX_FENCE_BYTES))
+        ):
+            raise ValueError(f"{label} metadata is unsafe")
+        if (
+            self.expected_uid is not None
+            and stat.S_IMODE(info.st_mode) != FENCE_FILE_MODE
+        ):
+            raise ValueError(f"{label} permissions are unsafe")
+        self._validate_ownership(info, label)
+        return info
+
     def _atomic_write(self, path: pathlib.Path, value: dict[str, Any], *, exclusive: bool = False) -> None:
         data = canonical_bytes(value) + b"\n"
-        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+        parent_descriptor, target_name = self._managed_parent(path)
+        temporary = f".{target_name}.{uuid.uuid4().hex}"
+        fd = -1
         try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "wb", closefd=True) as output:
+            fd = os.open(
+                temporary,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | os.O_CLOEXEC
+                | os.O_NOFOLLOW,
+                FENCE_FILE_MODE,
+                dir_fd=parent_descriptor,
+            )
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError("atomic fence file is unsafe")
+            if self.expected_uid is not None and info.st_uid != self.expected_uid:
+                raise ValueError("atomic fence file owner is unsafe")
+            if self.expected_gid is not None and info.st_gid != self.expected_gid:
+                os.fchown(fd, -1, self.expected_gid)
+            os.fchmod(fd, FENCE_FILE_MODE)
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) != FENCE_FILE_MODE
+            ):
+                raise ValueError("atomic fence file metadata is unsafe")
+            self._validate_ownership(info, "atomic fence file")
+            output = os.fdopen(fd, "wb", closefd=True)
+            fd = -1
+            with output:
                 output.write(data)
                 output.flush()
                 os.fsync(output.fileno())
+            fd = -1
             if exclusive:
-                os.link(temporary, path)
-                os.unlink(temporary)
+                os.link(
+                    temporary,
+                    target_name,
+                    src_dir_fd=parent_descriptor,
+                    dst_dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+                os.unlink(temporary, dir_fd=parent_descriptor)
             else:
-                os.replace(temporary, path)
-            directory = os.open(path.parent, os.O_RDONLY)
+                os.replace(
+                    temporary,
+                    target_name,
+                    src_dir_fd=parent_descriptor,
+                    dst_dir_fd=parent_descriptor,
+                )
+            published = os.open(
+                target_name,
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=parent_descriptor,
+            )
             try:
-                os.fsync(directory)
+                self._validate_managed_descriptor(
+                    published, "published fence file", require_content=True
+                )
             finally:
-                os.close(directory)
+                os.close(published)
+            os.fsync(parent_descriptor)
         finally:
+            if fd >= 0:
+                os.close(fd)
             try:
-                os.unlink(temporary)
+                os.unlink(temporary, dir_fd=parent_descriptor)
             except FileNotFoundError:
                 pass
+            os.close(parent_descriptor)
 
     def publish(self, value: dict[str, Any]) -> None:
         self._atomic_write(self.current, validate_marker(value))
@@ -668,11 +1082,75 @@ class FenceStore:
     def read_attempt(self, attempt_id: str) -> dict[str, Any]:
         require_identifier(attempt_id, "attempt context ID")
         return validate_attempt_context(
-            read_canonical_json(self.attempts / f"{attempt_id}.json", "attempt context")
+            self._read_managed_json(
+                self.attempts / f"{attempt_id}.json", "attempt context"
+            )
         )
 
+    def read_report(self, attempt_id: str, label: str = "rebuild report") -> dict[str, Any]:
+        require_identifier(attempt_id, "report attempt ID")
+        return self._read_managed_json(
+            self.reports / f"{attempt_id}.json", label
+        )
+
+    def report_exists(self, attempt_id: str) -> bool:
+        require_identifier(attempt_id, "report attempt ID")
+        try:
+            descriptor, _ = self._open_managed_file(
+                self.reports / f"{attempt_id}.json", "rebuild report"
+            )
+            os.close(descriptor)
+            return True
+        except FileNotFoundError:
+            return False
+
+    def _open_managed_file(
+        self, path: pathlib.Path, label: str
+    ) -> tuple[int, os.stat_result]:
+        parent_descriptor, name = self._managed_parent(path)
+        try:
+            descriptor = os.open(
+                name,
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=parent_descriptor,
+            )
+        finally:
+            os.close(parent_descriptor)
+        try:
+            info = self._validate_managed_descriptor(
+                descriptor, label, require_content=True
+            )
+            return descriptor, info
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def _read_managed_json(self, path: pathlib.Path, label: str) -> dict[str, Any]:
+        descriptor, _ = self._open_managed_file(path, label)
+        try:
+            chunks: list[bytes] = []
+            remaining = MAX_FENCE_BYTES + 1
+            while remaining:
+                chunk = os.read(descriptor, min(65536, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            data = b"".join(chunks)
+            if len(data) > MAX_FENCE_BYTES:
+                raise ValueError(f"{label} is oversized")
+        finally:
+            os.close(descriptor)
+        try:
+            value = json.loads(data)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError(f"invalid {label} JSON") from error
+        if not isinstance(value, dict) or data != canonical_bytes(value) + b"\n":
+            raise ValueError(f"{label} JSON is not canonical")
+        return value
+
     def read_current(self) -> dict[str, Any]:
-        return validate_marker(read_canonical_json(self.current, "current marker"))
+        return validate_marker(self._read_managed_json(self.current, "current marker"))
 
     def current_or_absent(self) -> tuple[str, dict[str, Any] | None]:
         try:
@@ -688,7 +1166,7 @@ class FenceStore:
         if current["state"] != "verified" or current["generation"] != generation or current["contract_sha256"] != contract_hash:
             raise ValueError("rebuild fence is not verified for this deployment contract")
         relative = pathlib.PurePosixPath(current["report_path"])
-        report = read_canonical_json(self.root / pathlib.Path(*relative.parts), "rebuild report")
+        report = self.read_report(relative.stem)
         if digest(report) != current["report_sha256"]:
             raise ValueError("rebuild report digest mismatch")
         validate_report(report, verified=True)
@@ -1561,9 +2039,10 @@ def _recover_abandoned(
 ) -> dict[str, Any] | None:
     if current is None or current["state"] not in {"rebuilding", "stale"}:
         return current
-    report_path = store.reports / f"{current['attempt_id']}.json"
     try:
-        report = read_canonical_json(report_path, "abandoned attempt report")
+        report = store.read_report(
+            current["attempt_id"], "abandoned attempt report"
+        )
     except FileNotFoundError:
         if current["state"] == "stale":
             return current
@@ -1628,7 +2107,12 @@ async def execute(args: argparse.Namespace) -> int:
     if not args.fence_dir or not args.generation:
         raise ValueError("--fence-dir and --generation are required")
     if args.command == "readiness":
-        store = FenceStore(pathlib.Path(args.fence_dir), create=False)
+        store = FenceStore(
+            pathlib.Path(args.fence_dir),
+            create=False,
+            expected_uid=args.expected_uid,
+            expected_gid=args.expected_gid,
+        )
         with store.serving_lease(exclusive=False):
             store.verify_current(
                 args.generation, require_env("XLH_EXPECTED_CONTRACT_SHA256")
@@ -1638,7 +2122,12 @@ async def execute(args: argparse.Namespace) -> int:
     contract_hash = digest(contract)
     require_identifier(args.attempt_id, "attempt ID")
     started_ns = time.monotonic_ns()
-    store = FenceStore(pathlib.Path(args.fence_dir))
+    store = FenceStore(
+        pathlib.Path(args.fence_dir),
+        create=True,
+        expected_uid=args.expected_uid,
+        expected_gid=args.expected_gid,
+    )
     # Lock ordering is part of the writer-fence contract: serving lease first,
     # controller serialization second.  Never invert this order.
     with store.serving_lease(exclusive=True), store:
@@ -1662,9 +2151,8 @@ async def execute(args: argparse.Namespace) -> int:
         ):
             store.verify_current(args.generation, contract_hash)
             if not getattr(args, "_recovered_transition", False):
-                report = read_canonical_json(
-                    store.root / current["report_path"],
-                    "idempotent rebuild report",
+                report = store.read_report(
+                    current["attempt_id"], "idempotent rebuild report"
                 )
                 validate_report(report, verified=True)
                 emit_transition(
@@ -1775,7 +2263,9 @@ async def _run_operation(args: argparse.Namespace, store: FenceStore, operation:
         validate_report(report, verified=True)
         relative, report_hash = store.report(report)
         terminal_report_created = True
-        persisted_report = read_canonical_json(store.root / relative, "published rebuild report")
+        persisted_report = store.read_report(
+            args.attempt_id, "published rebuild report"
+        )
         if digest(persisted_report) != report_hash:
             raise ValueError("published rebuild report failed durable reread")
         validate_report(persisted_report, verified=True)
@@ -1796,7 +2286,7 @@ async def _run_operation(args: argparse.Namespace, store: FenceStore, operation:
                     worker_finalized = True
             except BaseException:
                 pass
-        if terminal_report_created or (store.reports / f"{args.attempt_id}.json").exists():
+        if terminal_report_created or store.report_exists(args.attempt_id):
             # Immutable terminal reports are never replaced. A failure after
             # their durable creation leaves rebuilding/stale current. The next
             # exact retry validates the report and publishes its marker.
@@ -1826,6 +2316,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("command", choices=("contract-hash", "rebuild", "bootstrap", "prepare-restore", "restore-verify", "revalidate", "invalidate", "readiness"))
     result.add_argument("--fence-dir")
     result.add_argument("--generation")
+    result.add_argument("--expected-uid", type=int)
+    result.add_argument("--expected-gid", type=int)
     result.add_argument("--attempt-id")
     result.add_argument("--reason", choices=sorted(REASON_CODES["stale"]), default="invalidated")
     result.add_argument("--approval")
@@ -1879,6 +2371,15 @@ def main() -> None:
     args._recovered_transition = False
     if args.command not in {"contract-hash", "readiness"} and not args.attempt_id:
         raise SystemExit("--attempt-id is required")
+    if args.command != "contract-hash" and (
+        args.expected_uid is None
+        or args.expected_gid is None
+        or not 0 <= args.expected_uid <= MAX_IDENTITY_ID
+        or not 1 <= args.expected_gid <= MAX_IDENTITY_ID
+    ):
+        raise SystemExit(
+            "--expected-uid must be 0..2147483647 and --expected-gid must be 1..2147483647"
+        )
     if args.batch_size < 1 or args.batch_size > 5000 or args.fixture_timeout < 1 or args.fixture_timeout > 3600:
         raise SystemExit("batch size and fixture timeout are out of range")
     try:

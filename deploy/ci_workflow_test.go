@@ -34,11 +34,14 @@ func TestLightRAGWorkflowPersistsVerifiedContractBeforeLaterStages(t *testing.T)
 	persisted := strings.Index(step, `echo "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=$reported_contract"`)
 	writerValidated := strings.Index(step, `[[ "$writer_sha256" =~ ^sha256:[0-9a-f]{64}$ ]]`)
 	writerPersisted := strings.Index(step, `echo "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$writer_sha256"`)
-	if validated < 0 || persisted < 0 || writerValidated < 0 || writerPersisted < 0 {
-		t.Fatalf("bootstrap step must validate and persist both digests: contract=(%d,%d) writer=(%d,%d)", validated, persisted, writerValidated, writerPersisted)
+	groupValidated := strings.Index(step, `[[ "$shared_gid" =~ ^[1-9][0-9]{0,9}$ ]]`)
+	groupBounded := strings.Index(step, `(( shared_gid <= 2147483647 ))`)
+	groupPersisted := strings.Index(step, `echo "XLH_LIGHTRAG_SHARED_GID=$shared_gid"`)
+	if validated < 0 || persisted < 0 || writerValidated < 0 || writerPersisted < 0 || groupValidated < 0 || groupBounded < 0 || groupPersisted < 0 {
+		t.Fatalf("bootstrap step must validate and persist digests and shared GID: contract=(%d,%d) writer=(%d,%d) group=(%d,%d,%d)", validated, persisted, writerValidated, writerPersisted, groupValidated, groupBounded, groupPersisted)
 	}
-	if validated >= persisted || writerValidated >= writerPersisted {
-		t.Fatalf("bootstrap digest propagation order is unsafe: contract=(%d,%d) writer=(%d,%d)", validated, persisted, writerValidated, writerPersisted)
+	if validated >= persisted || writerValidated >= writerPersisted || groupValidated >= groupBounded || groupBounded >= groupPersisted {
+		t.Fatalf("bootstrap propagation order is unsafe: contract=(%d,%d) writer=(%d,%d) group=(%d,%d,%d)", validated, persisted, writerValidated, writerPersisted, groupValidated, groupBounded, groupPersisted)
 	}
 
 	stageNames := []string{
@@ -77,7 +80,7 @@ func TestLightRAGWorkflowPersistsVerifiedContractBeforeLaterStages(t *testing.T)
 	}
 	liveCommand := `bash deploy/check-lightrag-live.sh http://127.0.0.1:9621 "$XLH_LIGHTRAG_API_KEY" \
             "$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" \
-            "$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256"`
+            "$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256" "$XLH_LIGHTRAG_SHARED_GID"`
 	if !strings.Contains(liveStage, liveCommand) {
 		t.Fatal("live LightRAG stage must consume the propagated runtime contract")
 	}
@@ -110,6 +113,22 @@ func TestLightRAGFailureLogsIncludeOneShotServices(t *testing.T) {
 	want := []string{"lightrag", "lightrag-bootstrap", "milvus-init", "milvus", "milvus-etcd", "milvus-minio"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("LightRAG diagnostic services mismatch: got %q, want %q", got, want)
+	}
+}
+
+func TestLightRAGLifecycleUsesPersistedSharedGIDForEveryLiveReadiness(t *testing.T) {
+	sourceBytes, err := os.ReadFile("check-lightrag-lifecycle.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(sourceBytes)
+	const livePrefix = `bash deploy/check-lightrag-live.sh "$base_url" "$XLH_LIGHTRAG_API_KEY" "$fence_dir" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$contract_sha256" `
+	const liveCommand = livePrefix + `"$XLH_LIGHTRAG_SHARED_GID"`
+	if got := strings.Count(source, liveCommand); got != 3 {
+		t.Fatalf("lifecycle live readiness shared-GID propagation count = %d, want 3", got)
+	}
+	if strings.Contains(source, livePrefix+`"$shared_gid"`) {
+		t.Fatal("lifecycle must not reference an unassigned local shared_gid")
 	}
 }
 
@@ -151,6 +170,17 @@ func TestLightRAGBootstrapEmitsSafePhaseAnnotations(t *testing.T) {
 	if !strings.Contains(source, `for service in milvus-etcd milvus-minio milvus`) ||
 		!strings.Contains(source, `service=%s state=%s health=%s exit_code=%s`) {
 		t.Fatal("dependency startup failures must expose bounded container state")
+	}
+	if !strings.Contains(source, `prepare_shared_fence.py "$operator_uid" "$shared_gid"`) ||
+		!strings.Contains(source, `--network none --read-only --user 0:0`) ||
+		!strings.Contains(source, `--cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE --cap-add FSETID`) ||
+		!strings.Contains(source, `--security-opt no-new-privileges`) ||
+		!strings.Contains(source, `prepare_shared_fence.py verify "$operator_uid" "$shared_gid" "$attempt_id"`) ||
+		!strings.Contains(source, `--user "$operator_uid:$shared_gid"`) ||
+		!strings.Contains(source, `--group-add 1000`) ||
+		!strings.Contains(source, `--volume "$fence_dir:/rebuild-fence:ro"`) ||
+		!strings.Contains(source, `--volume "$evidence_dir:/writer-evidence:ro"`) {
+		t.Fatal("shared fence ownership must use the pinned, isolated root helper")
 	}
 }
 
@@ -224,6 +254,7 @@ func TestLightRAGBootstrapSuccessDoesNotAnnotate(t *testing.T) {
 	fakeBin := t.TempDir()
 	fakeDocker := `#!/usr/bin/env bash
 set -eu
+if [[ "${1:-}" == "run" ]]; then exit 0; fi
 if [[ "${1:-}" == "compose" ]]; then
   for argument in "$@"; do
     if [[ "$argument" == "version" || "$argument" == "up" || "$argument" == "run" ]]; then exit 0; fi
@@ -256,7 +287,7 @@ esac
 	if strings.Contains(string(output), "::error") {
 		t.Fatalf("successful bootstrap emitted an error annotation: %q", output)
 	}
-	for _, name := range []string{"XLH_LIGHTRAG_DEPLOYMENT_GENERATION", "XLH_LIGHTRAG_ATTEMPT_ID", "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256", "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256"} {
+	for _, name := range []string{"XLH_LIGHTRAG_DEPLOYMENT_GENERATION", "XLH_LIGHTRAG_ATTEMPT_ID", "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256", "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256", "XLH_LIGHTRAG_SHARED_GID"} {
 		if !strings.Contains(string(output), name+"=") {
 			t.Fatalf("successful bootstrap omitted %s: %q", name, output)
 		}
@@ -267,6 +298,7 @@ func TestLightRAGBootstrapPreservesDependencyFailureAndReportsBoundedState(t *te
 	fakeBin := t.TempDir()
 	fakeDocker := `#!/usr/bin/env bash
 set -eu
+if [[ "${1:-}" == "run" ]]; then exit 0; fi
 if [[ "${1:-}" == "compose" && "${2:-}" == "version" ]]; then
   exit 0
 fi
@@ -321,6 +353,7 @@ func TestLightRAGBootstrapDependencyDiagnosticsDegradeWithoutMaskingFailure(t *t
 	fakeBin := t.TempDir()
 	fakeDocker := `#!/usr/bin/env bash
 set -eu
+if [[ "${1:-}" == "run" ]]; then exit 0; fi
 if [[ "${1:-}" == "compose" && "${2:-}" == "version" ]]; then exit 0; fi
 if [[ "${1:-}" == "compose" ]]; then
   for argument in "$@"; do
@@ -359,6 +392,21 @@ exit 2
 func validBootstrapEnvironment(t *testing.T) []string {
 	t.Helper()
 	root := t.TempDir()
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root = canonicalRoot
+	groupOutput, err := exec.Command("id", "-g").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedGroup := strings.TrimSpace(string(groupOutput))
+	if sharedGroup == "0" {
+		// Root operators must choose a dedicated non-root group. The fake Docker
+		// tests do not touch the host filesystem, so a stable numeric value is enough.
+		sharedGroup = "1"
+	}
 	return []string{
 		"GITHUB_ACTIONS=true",
 		"XLH_LIGHTRAG_DEPLOYMENT_GENERATION=test-generation",
@@ -366,6 +414,7 @@ func validBootstrapEnvironment(t *testing.T) []string {
 		"XLH_LIGHTRAG_UNCONTROLLED_WRITERS_ATTESTATION=no_uncontrolled_writers",
 		"XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR=" + filepath.Join(root, "writer"),
 		"XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR=" + filepath.Join(root, "fence"),
+		"XLH_LIGHTRAG_SHARED_GID=" + sharedGroup,
 		"XLH_LIGHTRAG_API_KEY=test-secret-api-key",
 		"XLH_LIGHTRAG_LLM_API_KEY=test-secret-llm-key",
 		"XLH_LIGHTRAG_EMBEDDING_API_KEY=test-secret-embedding-key",

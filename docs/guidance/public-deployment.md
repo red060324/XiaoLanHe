@@ -176,6 +176,10 @@ export XLH_LIGHTRAG_ATTEMPT_ID="bootstrap-$(date +%Y%m%d%H%M%S)"
 export XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR="$(pwd -P)/.state/lightrag-fence"
 export XLH_LIGHTRAG_REBUILD_FENCE_DIR="$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR"
 export XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR="$(pwd -P)/.state/lightrag-writer-evidence"
+# Non-root only; optional because bootstrap selects this nonzero primary GID by default.
+# export XLH_LIGHTRAG_SHARED_GID=$(id -g)
+# Root only; replace with a dedicated nonzero numeric GID.
+# export XLH_LIGHTRAG_SHARED_GID=replace-with-dedicated-nonzero-gid
 export XLH_LIGHTRAG_UNCONTROLLED_WRITERS_ATTESTATION=no_uncontrolled_writers
 make lightrag-static
 bootstrap_output=$(make --no-print-directory lightrag-bootstrap-empty)
@@ -192,20 +196,67 @@ export XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$(
 export XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=$(
   printf '%s\n' "$bootstrap_output" | sed -n 's/^XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=//p' | tail -n 1
 )
+export XLH_LIGHTRAG_SHARED_GID=$(
+  printf '%s\n' "$bootstrap_output" | sed -n 's/^XLH_LIGHTRAG_SHARED_GID=//p' | tail -n 1
+)
 test -n "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION"
 test -n "$XLH_LIGHTRAG_ATTEMPT_ID"
 test -n "$XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256"
 test -n "$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256"
+[[ "$XLH_LIGHTRAG_SHARED_GID" =~ ^[1-9][0-9]{0,9}$ ]]
+(( XLH_LIGHTRAG_SHARED_GID <= 2147483647 ))
 make lightrag-up
 ```
 
-Persist the printed generation, attempt/evidence digest and contract digest as
-deployment evidence; the snippet feeds the contract digest back into the current
-shell before the canonical steady-state start. Empty bootstrap refuses nonempty
+Bootstrap prints four evidence values plus the selected runtime
+`XLH_LIGHTRAG_SHARED_GID`. Persist all five in deployment configuration; the snippet
+feeds them back into the current shell before the canonical steady-state start. The
+default shared GID is the invoking non-root operator's primary GID and must be nonzero.
+An explicit non-root value must belong to that operator's groups; root must explicitly
+choose a dedicated nonzero GID. Never recompute the value under a different operator on
+restart. Empty bootstrap refuses nonempty
 authoritative sources or orphaned targets; it cannot be used to certify an
 existing NanoVectorDB workspace. See
 [`../../deploy/lightrag/README.md`](../../deploy/lightrag/README.md) for the
 guarded rebuild/fence interface.
+
+The wrapper first runs a bounded root ownership initializer from the exact pinned
+LightRAG image with its entry point overridden. It is limited to the canonical fence and
+writer-evidence bind mounts. It sets the fence tree to `1000:<shared-gid>` and the
+writer-evidence tree to `<operator-uid>:1000`, then converges the safe modes. The wrapper
+creates the evidence file as the host operator with mode `0600` before initialization;
+its final mode is `0640` before the controller reads it. Before any privileged metadata
+change, the initializer completely validates both trees through no-follow descriptors and
+rejects unexpected nodes, aliases and hard links, and enforces bounded file/count budgets.
+It takes non-blocking exclusive locks on both stable root-directory inodes so a competing
+initializer fails before child mutation. It then freezes every validated directory as
+`root:root`/`0700`, revalidates the retained descriptors, and copy-ups each mutable regular
+file into a private new inode. Only the new inode is chowned/chmodded, fsynced and
+atomically replaced, so an old inode reachable through a pre-held descriptor or late
+external hard link is never modified by the privileged helper. Missing lock files are
+created privately once; existing locks must already have the exact deployment metadata and
+are never replaced, so pre-opened and path-opened descriptors retain one `flock` domain.
+After validating and fsyncing every child directory, the helper stages both roots with
+their final owners and mode `0000`, publishes and fsyncs writer evidence first, and makes
+one final `fchmod` of the fence root the commit point while initialization leases remain
+held through commit.
+The fence is sealed before that syscall and the whole tree already satisfies the contract
+after it, so safety does not depend on post-publish rollback. If an interrupted run leaves a
+root-owned `0700` or either-owner `0000` tree, an unprivileged retry fails closed until explicit privileged
+operator inspection/recovery; host preflight never silently repairs it. Normal LightRAG
+services do not set Compose `user:`: the official entry point must start as root so it
+can initialize and chown its data volume, then drop to UID/GID `1000`. The fence root,
+`reports/`, `attempts/` and writer-evidence directory are `02750`; fence/evidence files,
+including both locks, are `0640`. Setgid directories preserve their respective reader
+groups. No path has permissions for `other`. Only the bounded initializer and
+bootstrap/controller jobs mount the fence read-write; steady LightRAG and all readiness
+readers mount it read-only.
+The invoking operator UID and Docker daemon are trusted deployment principals. Host
+preflight closes its descriptors before Docker resolves the bind-source pathnames; the
+privileged initializer independently validates the trees Docker actually mounted, but an
+untrusted same-UID process could still replace an allowlist-compatible leaf in that
+interval. Do not share the bootstrap operator identity or Docker control plane with an
+untrusted principal.
 
 Do not use bare `docker compose up`. `make lightrag-up` first verifies the canonical
 absolute fence host path and exact generation/contract, then starts only etcd, MinIO,
@@ -215,6 +266,29 @@ group. Controllers take the same lease exclusively before `rebuild.lock`, so a f
 transition cannot race a running steady writer. `milvus-init` and `lightrag-bootstrap`
 are isolated behind the `bootstrap`
 profile and are never part of steady-state restart.
+
+A host-run Go service reads the fence as the operator or another member of the shared
+group. A containerized Go service must retain its image identity, mount the fence
+read-only, and receive the persisted GID as a supplementary group. The equivalent
+`docker run` shape is shown below; the environment file supplies the other required
+application settings and secrets:
+
+```bash
+test -n "$XLH_LIGHTRAG_SHARED_GID"
+test -n "$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR"
+test -n "$XLH_GO_IMAGE"
+docker run --rm \
+  --env-file /secure/path/xiaolanhe.env \
+  --group-add "$XLH_LIGHTRAG_SHARED_GID" \
+  --mount "type=bind,src=$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR,dst=/rebuild-fence,readonly" \
+  --env XLH_LIGHTRAG_REBUILD_FENCE_DIR=/rebuild-fence \
+  --env XLH_LIGHTRAG_DEPLOYMENT_GENERATION \
+  --env XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256 \
+  "$XLH_GO_IMAGE"
+```
+
+Do not change the Go container to UID `1000`, mount the fence read-write, or grant
+world access to compensate for a missing supplementary group.
 
 ## Configuration
 
@@ -239,6 +313,7 @@ profile and are never part of steady-state restart.
 | `XLH_LIGHTRAG_WORKING_DIR` | no | expected path, default `/app/data/rag_storage` |
 | `XLH_LIGHTRAG_REBUILD_FENCE_DIR` | yes | read-only deployment fence directory visible to the Go service |
 | `XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR` | LightRAG Compose | canonical absolute host directory bind-mounted read-only for steady state |
+| `XLH_LIGHTRAG_SHARED_GID` | bootstrap and containerized Go services | persisted nonzero host group selected by bootstrap; applied to the fence tree and supplied to reader containers as a supplementary group |
 | `XLH_LIGHTRAG_DEPLOYMENT_GENERATION` | yes | versioned deployment/restore generation |
 | `XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256` | yes | exact verified storage/embedding contract digest |
 | `XLH_LIGHTRAG_LLM_*` | LightRAG service | LLM endpoint, key and model |
@@ -272,9 +347,10 @@ When `XLH_METRICS_TOKEN` is configured, scrape the application endpoint with a
 dedicated operator credential over a private network or operator-only gateway:
 
 ```bash
+: "${XLH_METRICS_URL:?set XLH_METRICS_URL to the private HTTPS metrics URL}"
 curl --fail \
   -H "Authorization: Bearer $XLH_METRICS_TOKEN" \
-  https://<private-service>/metrics
+  "$XLH_METRICS_URL"
 ```
 
 The route is not registered when the token is empty. Advanced orchestration and
@@ -526,19 +602,21 @@ make lightrag-live
 After an approved deployment:
 
 ```bash
-curl --fail https://<service>/healthz
-curl --fail https://<service>/readyz
-curl --fail https://<service>/api/games
-curl --fail https://<service>/api/community/posts
-curl --fail https://<service>/api/deals
+: "${XLH_DEPLOY_BASE_URL:?set XLH_DEPLOY_BASE_URL to the service HTTPS base URL}"
+curl --fail "$XLH_DEPLOY_BASE_URL/healthz"
+curl --fail "$XLH_DEPLOY_BASE_URL/readyz"
+curl --fail "$XLH_DEPLOY_BASE_URL/api/games"
+curl --fail "$XLH_DEPLOY_BASE_URL/api/community/posts"
+curl --fail "$XLH_DEPLOY_BASE_URL/api/deals"
 ```
 
 For an isolated target where creating demo data is acceptable, run the full
 authenticated product smoke only after explicit approval:
 
 ```bash
-XLH_SMOKE_BASE_URL=https://<service> \
-XLH_SMOKE_ADMIN_PASSWORD='<seeded-admin-password>' \
+: "${XLH_DEPLOY_BASE_URL:?set XLH_DEPLOY_BASE_URL to the approved service HTTPS base URL}"
+XLH_SMOKE_BASE_URL="$XLH_DEPLOY_BASE_URL" \
+XLH_SMOKE_ADMIN_PASSWORD='replace-with-seeded-admin-password' \
 bash scripts/smoke-product.sh
 ```
 

@@ -66,6 +66,8 @@ attempt_id=$XLH_LIGHTRAG_ATTEMPT_ID
 uncontrolled_writers_attestation=$XLH_LIGHTRAG_UNCONTROLLED_WRITERS_ATTESTATION
 evidence_dir=$XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR
 fence_dir=$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR
+operator_uid=$(id -u)
+shared_gid=${XLH_LIGHTRAG_SHARED_GID:-$(id -g)}
 compose_file=${1:-deploy/docker-compose.lightrag.yml}
 project=${2:-}
 if [[ "$project" == "-" ]]; then
@@ -89,13 +91,19 @@ if [[ -n "$project" && ! "$project" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]; then
   exit 2
 fi
 
-[[ "$evidence_dir" == /* ]] || { echo "XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR must be absolute" >&2; exit 2; }
-[[ "$fence_dir" == /* ]] || { echo "XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR must be absolute" >&2; exit 2; }
-mkdir -p -m 700 "$evidence_dir" "$fence_dir"
-evidence_dir=$(cd "$evidence_dir" && pwd -P)
-fence_dir=$(cd "$fence_dir" && pwd -P)
+[[ "$shared_gid" =~ ^[1-9][0-9]{0,9}$ ]] && (( shared_gid <= 2147483647 )) || {
+  echo "XLH_LIGHTRAG_SHARED_GID must be a non-root numeric group ID" >&2
+  exit 2
+}
+if (( EUID != 0 )) && ! id -G | tr ' ' '\n' | grep -Fxq -- "$shared_gid"; then
+  echo "XLH_LIGHTRAG_SHARED_GID must belong to the current operator" >&2
+  exit 2
+fi
+host_validator=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/lightrag/validate_shared_fence_host.py
+python3 "$host_validator" "$fence_dir" "$evidence_dir" "$operator_uid" "$shared_gid"
 export XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR=$evidence_dir
 export XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR=$fence_dir
+export XLH_LIGHTRAG_SHARED_GID=$shared_gid
 
 compose=(docker compose)
 if [[ -n "$project" ]]; then
@@ -159,6 +167,7 @@ payload = {
 canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 try:
+    os.fchmod(fd, 0o600)
     with os.fdopen(fd, "wb") as output:
         output.write(canonical + b"\n")
         output.flush()
@@ -174,6 +183,22 @@ PY
 )
 export XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$writer_evidence_sha256
 
+# The official image normally starts as root, initializes its named data volume,
+# and then drops to UID 1000. This isolated helper validates the complete fixed
+# layout before changing it: writer evidence remains host-owned and group-readable
+# by LightRAG, while the fence becomes LightRAG-owned and group-readable by the
+# operator and explicitly enrolled application containers.
+preparer=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/lightrag/prepare_shared_fence.py
+docker run --rm --network none --read-only --user 0:0 \
+  --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE --cap-add FSETID \
+  --security-opt no-new-privileges --pids-limit 64 \
+  --volume "$fence_dir:/rebuild-fence" \
+  --volume "$evidence_dir:/writer-evidence" \
+  --volume "$preparer:/opt/xlh/prepare_shared_fence.py:ro" \
+  --entrypoint python \
+  ghcr.io/hkuds/lightrag:v1.5.7@sha256:5bdbd524931b011df246fe20888d110cef691e6804c12cde636a2b746d7de27e \
+  /opt/xlh/prepare_shared_fence.py "$operator_uid" "$shared_gid"
+
 # Starts dependencies and a fresh empty bootstrap attempt, but never starts LightRAG.
 # The bootstrap refuses nonempty sources/targets and therefore cannot erase real data.
 bootstrap_phase=dependency_start
@@ -184,9 +209,19 @@ bootstrap_phase=fence_controller
 "${compose[@]}" run --rm --no-deps lightrag-bootstrap
 
 bootstrap_phase=fence_verify
-bash deploy/check-lightrag-fence.sh "$fence_dir" "$generation" "$contract_sha256"
+docker run --rm --network none --read-only --user "$operator_uid:$shared_gid" \
+  --group-add 1000 \
+  --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 \
+  --volume "$fence_dir:/rebuild-fence:ro" \
+  --volume "$evidence_dir:/writer-evidence:ro" \
+  --volume "$preparer:/opt/xlh/prepare_shared_fence.py:ro" \
+  --entrypoint python \
+  ghcr.io/hkuds/lightrag:v1.5.7@sha256:5bdbd524931b011df246fe20888d110cef691e6804c12cde636a2b746d7de27e \
+  /opt/xlh/prepare_shared_fence.py verify "$operator_uid" "$shared_gid" "$attempt_id"
+bash deploy/check-lightrag-fence.sh "$fence_dir" "$generation" "$contract_sha256" "$shared_gid"
 bootstrap_phase=complete
 printf 'XLH_LIGHTRAG_DEPLOYMENT_GENERATION=%s\n' "$generation"
 printf 'XLH_LIGHTRAG_ATTEMPT_ID=%s\n' "$attempt_id"
 printf 'XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=%s\n' "$writer_evidence_sha256"
 printf 'XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=%s\n' "$contract_sha256"
+printf 'XLH_LIGHTRAG_SHARED_GID=%s\n' "$shared_gid"

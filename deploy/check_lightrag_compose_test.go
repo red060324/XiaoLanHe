@@ -45,6 +45,57 @@ func TestRuntimeIdentityMustBeOnLightRAGService(t *testing.T) {
 	}
 }
 
+func TestBootstrapMustReceiveRequiredWriterEvidenceHostDir(t *testing.T) {
+	tests := []struct {
+		name  string
+		value *string
+	}{
+		{name: "missing"},
+		{name: "fallback", value: stringPointer("${XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR:-/tmp/writer-evidence}")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document := cloneCompose(t, checkedInCompose(t))
+			service := document.Services["lightrag-bootstrap"]
+			if test.value == nil {
+				delete(service.Environment, "XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR")
+			} else {
+				service.Environment["XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR"] = *test.value
+			}
+			document.Services["lightrag-bootstrap"] = service
+			if err := checkCompose(document); err == nil || !strings.Contains(err.Error(), "must require the writer-evidence host directory in its environment") {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}
+
+func TestLightRAGServicesMustPreserveOfficialPrivilegeDrop(t *testing.T) {
+	for _, name := range []string{"lightrag", "lightrag-bootstrap"} {
+		for _, mutation := range []struct {
+			name string
+			edit func(*composeService)
+		}{
+			{name: "user", edit: func(service *composeService) { service.User = "1000:1000" }},
+			{name: "entrypoint", edit: func(service *composeService) { service.Entrypoint = []string{"python"} }},
+		} {
+			t.Run(name+"/"+mutation.name, func(t *testing.T) {
+				document := cloneCompose(t, checkedInCompose(t))
+				service := document.Services[name]
+				mutation.edit(&service)
+				document.Services[name] = service
+				if err := checkCompose(document); err == nil || !strings.Contains(err.Error(), "must preserve the official root entry point") {
+					t.Fatalf("got %v", err)
+				}
+			})
+		}
+	}
+}
+
+func stringPointer(value string) *string {
+	return &value
+}
+
 func TestSteadyStateCannotDependOnBootstrap(t *testing.T) {
 	document := cloneCompose(t, checkedInCompose(t))
 	service := document.Services["lightrag"]
@@ -52,6 +103,27 @@ func TestSteadyStateCannotDependOnBootstrap(t *testing.T) {
 	document.Services["lightrag"] = service
 	if err := checkCompose(document); err == nil || !strings.Contains(err.Error(), "must not depend") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestLightRAGCommandsMustRemainFenceGuarded(t *testing.T) {
+	tests := []struct {
+		service string
+		want    string
+	}{
+		{service: "lightrag", want: "steady-state LightRAG"},
+		{service: "lightrag-bootstrap", want: "bootstrap LightRAG"},
+	}
+	for _, test := range tests {
+		t.Run(test.service, func(t *testing.T) {
+			document := cloneCompose(t, checkedInCompose(t))
+			service := document.Services[test.service]
+			service.Command = []string{"python", "-m", "lightrag.api.lightrag_server"}
+			document.Services[test.service] = service
+			if err := checkCompose(document); err == nil || !strings.Contains(err.Error(), test.want+" must use the fence-guarded entry point") {
+				t.Fatalf("got %v", err)
+			}
+		})
 	}
 }
 

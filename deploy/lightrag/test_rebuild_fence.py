@@ -7,6 +7,7 @@ import io
 import json
 import os
 import pathlib
+import stat
 import sys
 import tarfile
 import tempfile
@@ -61,6 +62,21 @@ def write_canonical(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(MODULE.canonical_bytes(value) + b"\n")
     return path
+
+
+def prepare_fence_layout(root):
+    root = pathlib.Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    root.chmod(0o2750)
+    for name in ("reports", "attempts"):
+        directory = root / name
+        directory.mkdir(exist_ok=True)
+        directory.chmod(0o2750)
+    for name in ("serving.lock", "rebuild.lock"):
+        path = root / name
+        path.touch(exist_ok=True)
+        path.chmod(0o640)
+    return root
 
 
 def raw_digest(data):
@@ -417,6 +433,493 @@ class FenceTestCase(unittest.TestCase):
         self.contract_hash = MODULE.digest(self.contract)
 
 
+class FenceStorePermissionTests(FenceTestCase):
+    def ownership(self, path):
+        info = pathlib.Path(path).stat()
+        return info.st_uid, info.st_gid
+
+    def make_layout_group_nonzero(self, root):
+        root = pathlib.Path(root)
+        groups = [group for group in (os.getgid(), *os.getgroups()) if group > 0]
+        group = groups[0] if groups else 1
+        for path in (
+            root,
+            root / "reports",
+            root / "attempts",
+            root / "serving.lock",
+            root / "rebuild.lock",
+        ):
+            os.chown(path, -1, group)
+        return root.stat().st_uid, group
+
+    def assert_directory_mode(self, path, expected):
+        mode = path.lstat().st_mode
+        self.assertTrue(stat.S_ISDIR(mode))
+        observed = stat.S_IMODE(mode)
+        if sys.platform == "darwin":
+            # APFS clears setgid on directories even when fchmod requests it.
+            self.assertEqual(observed, expected & ~stat.S_ISGID)
+        else:
+            self.assertEqual(observed, expected)
+            self.assertTrue(mode & stat.S_ISGID)
+        self.assertTrue(mode & stat.S_IRGRP)
+        self.assertTrue(mode & stat.S_IXGRP)
+        self.assertEqual(mode & stat.S_IWGRP, 0)
+        self.assertEqual(mode & 0o007, 0)
+
+    def assert_regular_file_mode(self, path):
+        mode = path.lstat().st_mode
+        self.assertTrue(stat.S_ISREG(mode))
+        self.assertEqual(stat.S_IMODE(mode), 0o640)
+        self.assertTrue(mode & stat.S_IRGRP)
+        self.assertEqual(mode & 0o007, 0)
+
+    def test_store_creates_shared_group_layout_under_restrictive_umask(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "fence"
+            with mock.patch.object(
+                MODULE.os, "fchmod", wraps=os.fchmod
+            ) as fchmod:
+                previous_umask = os.umask(0o077)
+                try:
+                    store = MODULE.FenceStore(root)
+                    with store:
+                        pass
+                    store.attempt(
+                        MODULE.attempt_context(
+                            "attempt-1",
+                            "generation-1",
+                            "bootstrap_empty",
+                            self.contract,
+                            self.contract_hash,
+                            STARTED_AT,
+                        )
+                    )
+                    with mock.patch.object(
+                        MODULE, "utc_now", return_value=STARTED_AT
+                    ):
+                        store.publish(
+                            MODULE.marker(
+                                "stale",
+                                "generation-1",
+                                "attempt-1",
+                                "revalidate",
+                                self.contract_hash,
+                                "invalidated",
+                            )
+                        )
+                    store.report(
+                        valid_failed_report(self.contract, self.contract_hash)
+                    )
+                finally:
+                    os.umask(previous_umask)
+
+            requested_modes = [call.args[1] for call in fchmod.call_args_list]
+            self.assertEqual(requested_modes.count(0o2750), 3)
+            self.assertEqual(requested_modes.count(0o640), 5)
+
+            self.assert_directory_mode(root, 0o2750)
+            self.assert_directory_mode(root / "reports", 0o2750)
+            self.assert_directory_mode(root / "attempts", 0o2750)
+            for path in (
+                root / "serving.lock",
+                root / "rebuild.lock",
+                root / "current.json",
+                root / "reports" / "attempt-1.json",
+                root / "attempts" / "attempt-1.json",
+            ):
+                with self.subTest(path=path.name):
+                    self.assert_regular_file_mode(path)
+
+    def test_store_accepts_exact_existing_layout_without_chmod(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "fence"
+            MODULE.FenceStore(root)
+
+            with mock.patch.object(MODULE.os, "fchmod") as fchmod:
+                MODULE.FenceStore(root)
+
+            fchmod.assert_not_called()
+
+    def test_store_rejects_existing_unsafe_directory_and_lock_modes(self):
+        paths = (".", "reports", "attempts", "serving.lock", "rebuild.lock")
+        for relative in paths:
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory) / "fence"
+                MODULE.FenceStore(root)
+                target = root if relative == "." else root / relative
+                target.chmod(0o777 if target.is_dir() else 0o666)
+
+                with self.assertRaises(ValueError):
+                    MODULE.FenceStore(root)
+
+    def test_store_rejects_managed_directory_and_lock_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = pathlib.Path(directory) / "root-target"
+            target.mkdir()
+            target.chmod(0o700)
+            root = pathlib.Path(directory) / "fence"
+            root.symlink_to(target, target_is_directory=True)
+
+            with self.assertRaises(OSError):
+                MODULE.FenceStore(root)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
+
+        for child in ("reports", "attempts"):
+            with self.subTest(child=child), tempfile.TemporaryDirectory() as directory:
+                root = prepare_fence_layout(pathlib.Path(directory) / "fence")
+                (root / child).rmdir()
+                target = pathlib.Path(directory) / f"{child}-target"
+                target.mkdir()
+                target.chmod(0o700)
+                (root / child).symlink_to(target, target_is_directory=True)
+
+                with self.assertRaises(OSError):
+                    MODULE.FenceStore(root)
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "fence"
+            store = MODULE.FenceStore(root)
+            target = pathlib.Path(directory) / "rebuild-target"
+            target.write_text("canary", encoding="utf-8")
+            target.chmod(0o600)
+            (root / "rebuild.lock").unlink()
+            (root / "rebuild.lock").symlink_to(target)
+
+            with self.assertRaises(OSError):
+                with store:
+                    pass
+            self.assertEqual(target.read_text(encoding="utf-8"), "canary")
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+
+    def test_read_only_store_rejects_root_and_child_directory_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = prepare_fence_layout(pathlib.Path(directory) / "target")
+            link = pathlib.Path(directory) / "fence"
+            link.symlink_to(target, target_is_directory=True)
+            with self.assertRaises(OSError):
+                MODULE.FenceStore(link, create=False)
+
+        for child in ("reports", "attempts"):
+            with self.subTest(child=child), tempfile.TemporaryDirectory() as directory:
+                root = prepare_fence_layout(pathlib.Path(directory) / "fence")
+                (root / child).rmdir()
+                target = pathlib.Path(directory) / f"{child}-target"
+                target.mkdir()
+                (root / child).symlink_to(target, target_is_directory=True)
+                with self.assertRaises(OSError):
+                    MODULE.FenceStore(root, create=False)
+
+    def test_store_rejects_symlink_ancestor_without_mutating_target(self):
+        for create in (False, True):
+            with self.subTest(create=create), tempfile.TemporaryDirectory() as directory:
+                base = pathlib.Path(directory).resolve()
+                target = base / "target"
+                target.mkdir()
+                target.chmod(0o700)
+                alias = base / "alias"
+                alias.symlink_to(target, target_is_directory=True)
+
+                with self.assertRaises(OSError):
+                    MODULE.FenceStore(alias / "fence", create=create)
+
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
+                self.assertFalse((target / "fence").exists())
+
+    def test_store_only_creates_final_root_and_never_chmods_ancestors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory).resolve()
+            existing = base / "existing"
+            existing.mkdir(mode=0o700)
+            before = existing.stat()
+            chmod_inodes = []
+            real_fchmod = os.fchmod
+
+            def fchmod(descriptor, mode):
+                chmod_inodes.append(os.fstat(descriptor).st_ino)
+                return real_fchmod(descriptor, mode)
+
+            with mock.patch.object(MODULE.os, "fchmod", side_effect=fchmod):
+                MODULE.FenceStore(existing / "fence")
+            after = existing.stat()
+            self.assertEqual(stat.S_IMODE(after.st_mode), stat.S_IMODE(before.st_mode))
+            self.assertNotIn(before.st_ino, chmod_inodes)
+
+            missing_parent = base / "missing" / "fence"
+            with self.assertRaises(FileNotFoundError):
+                MODULE.FenceStore(missing_parent)
+            self.assertFalse((base / "missing").exists())
+            with self.assertRaisesRegex(ValueError, "parent traversal"):
+                MODULE.FenceStore(existing / ".." / "fence-2")
+
+    def test_store_validates_explicit_ownership_for_layout_and_managed_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve() / "fence"
+            store = MODULE.FenceStore(root)
+            uid, gid = self.make_layout_group_nonzero(root)
+            strict = MODULE.FenceStore(
+                root, expected_uid=uid, expected_gid=gid
+            )
+            strict.attempt(
+                MODULE.attempt_context(
+                    "attempt-1",
+                    "generation-1",
+                    "bootstrap_empty",
+                    self.contract,
+                    self.contract_hash,
+                    STARTED_AT,
+                )
+            )
+            self.assertEqual(self.ownership(root / "attempts" / "attempt-1.json"), (uid, gid))
+            with self.assertRaisesRegex(ValueError, "ownership is unsafe"):
+                MODULE.FenceStore(
+                    root, expected_uid=uid + 1, expected_gid=gid
+                )
+            with self.assertRaisesRegex(ValueError, "provided together"):
+                MODULE.FenceStore(root, expected_uid=uid)
+
+    def test_store_rejects_out_of_range_expected_identity(self):
+        invalid_pairs = (
+            (-1, 1, "UID"),
+            (MODULE.MAX_IDENTITY_ID + 1, 1, "UID"),
+            (0, 0, "GID"),
+            (0, -1, "GID"),
+            (0, MODULE.MAX_IDENTITY_ID + 1, "GID"),
+            (False, 1, "UID"),
+            (0, True, "GID"),
+        )
+        for uid, gid, label in invalid_pairs:
+            with self.subTest(uid=uid, gid=gid), self.assertRaisesRegex(
+                ValueError, f"invalid expected fence {label}"
+            ):
+                MODULE.FenceStore(
+                    pathlib.Path("/not-opened"),
+                    expected_uid=uid,
+                    expected_gid=gid,
+                )
+
+        with mock.patch.object(
+            MODULE.FenceStore, "_validated_root_descriptor", side_effect=RuntimeError("accepted")
+        ):
+            for uid, gid in ((0, 1), (MODULE.MAX_IDENTITY_ID, MODULE.MAX_IDENTITY_ID)):
+                with self.subTest(valid=(uid, gid)), self.assertRaisesRegex(
+                    RuntimeError, "accepted"
+                ):
+                    MODULE.FenceStore(
+                        pathlib.Path("/not-opened"),
+                        expected_uid=uid,
+                        expected_gid=gid,
+                    )
+
+    def test_atomic_write_repairs_group_before_mode_and_validates_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve() / "fence"
+            MODULE.FenceStore(root)
+            uid, gid = self.make_layout_group_nonzero(root)
+            store = MODULE.FenceStore(
+                root, expected_uid=uid, expected_gid=gid
+            )
+            real_fstat = os.fstat
+            real_fchown = os.fchown
+            real_fchmod = os.fchmod
+            calls = []
+            temporary_fd = None
+            wrong_gid_once = True
+
+            def fstat(descriptor):
+                nonlocal temporary_fd, wrong_gid_once
+                info = real_fstat(descriptor)
+                if temporary_fd == descriptor and wrong_gid_once:
+                    wrong_gid_once = False
+                    values = list(info)
+                    values[5] = gid + 1
+                    return os.stat_result(values)
+                return info
+
+            def fchown(descriptor, owner, group):
+                calls.append(("chown", owner, group))
+                return real_fchown(descriptor, owner, group)
+
+            real_open = os.open
+
+            def open_file(*args, **kwargs):
+                nonlocal temporary_fd
+                descriptor = real_open(*args, **kwargs)
+                if isinstance(args[0], str) and args[0].startswith(".current.json."):
+                    temporary_fd = descriptor
+                return descriptor
+
+            def fchmod(descriptor, mode):
+                if descriptor == temporary_fd:
+                    calls.append(("chmod", mode))
+                return real_fchmod(descriptor, mode)
+
+            with mock.patch.object(MODULE.os, "open", side_effect=open_file), mock.patch.object(
+                MODULE.os, "fstat", side_effect=fstat
+            ), mock.patch.object(MODULE.os, "fchown", side_effect=fchown), mock.patch.object(
+                MODULE.os, "fchmod", side_effect=fchmod
+            ), mock.patch.object(MODULE, "utc_now", return_value=STARTED_AT):
+                store.publish(
+                    MODULE.marker(
+                        "stale", "generation-1", "attempt-1", "revalidate",
+                        self.contract_hash, "invalidated"
+                    )
+                )
+
+            self.assertEqual(calls, [("chown", -1, gid), ("chmod", 0o640)])
+            self.assertEqual(self.ownership(root / "current.json"), (uid, gid))
+
+    def test_serving_and_controller_locks_reject_hard_links(self):
+        cases = (
+            ("serving.lock", lambda store: store.serving_lease(exclusive=False).__enter__()),
+            ("serving.lock", lambda store: store.serving_lease(exclusive=True).__enter__()),
+            ("rebuild.lock", lambda store: store.__enter__()),
+        )
+        for lock_name, access in cases:
+            with self.subTest(lock=lock_name, access=access), tempfile.TemporaryDirectory() as directory:
+                base = pathlib.Path(directory).resolve()
+                root = prepare_fence_layout(base / "fence")
+                external = base / f"{lock_name}.external"
+                os.link(root / lock_name, external)
+                store = MODULE.FenceStore(root, create=False)
+                with self.assertRaisesRegex(ValueError, "unsafe link count"):
+                    access(store)
+                self.assertEqual((root / lock_name).stat().st_nlink, 2)
+
+    def test_store_checks_owner_and_group_for_every_layout_node(self):
+        paths = (".", "reports", "attempts", "serving.lock", "rebuild.lock")
+        for relative in paths:
+            for field in ("uid", "gid"):
+                with self.subTest(relative=relative, field=field), tempfile.TemporaryDirectory() as directory:
+                    root = prepare_fence_layout(pathlib.Path(directory).resolve() / "fence")
+                    uid, gid = self.make_layout_group_nonzero(root)
+                    target = root if relative == "." else root / relative
+                    target_inode = target.stat().st_ino
+                    real_fstat = os.fstat
+
+                    def fstat(descriptor):
+                        info = real_fstat(descriptor)
+                        if info.st_ino == target_inode:
+                            values = list(info)
+                            values[4 if field == "uid" else 5] += 1
+                            return os.stat_result(values)
+                        return info
+
+                    with mock.patch.object(MODULE.os, "fstat", side_effect=fstat), self.assertRaisesRegex(
+                        ValueError, "ownership is unsafe"
+                    ):
+                        MODULE.FenceStore(
+                            root, expected_uid=uid, expected_gid=gid
+                        )
+
+    def test_readiness_checks_current_and_report_ownership(self):
+        for relative in ("current.json", "reports/attempt-1.json"):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory).resolve() / "fence"
+                store = MODULE.FenceStore(root)
+                uid, gid = self.make_layout_group_nonzero(root)
+                strict = MODULE.FenceStore(
+                    root, expected_uid=uid, expected_gid=gid
+                )
+                report = valid_verified_report(self.contract, self.contract_hash)
+                report_path, report_hash = strict.report(report)
+                with mock.patch.object(MODULE, "utc_now", return_value="2030-01-01T00:00:00Z"):
+                    strict.publish(
+                        MODULE.marker(
+                            "verified", "generation-1", "attempt-1",
+                            "bootstrap_empty", self.contract_hash, "verified",
+                            report_path, report_hash
+                        )
+                    )
+                target_inode = (root / relative).stat().st_ino
+                real_fstat = os.fstat
+
+                def fstat(descriptor):
+                    info = real_fstat(descriptor)
+                    if info.st_ino == target_inode:
+                        values = list(info)
+                        values[4] += 1
+                        return os.stat_result(values)
+                    return info
+
+                with mock.patch.object(MODULE.os, "fstat", side_effect=fstat), self.assertRaisesRegex(
+                    ValueError, "ownership is unsafe"
+                ):
+                    strict.verify_current("generation-1", self.contract_hash)
+
+    def test_read_only_store_keeps_pinned_root_and_reports_descriptors(self):
+        for replaced in ("root", "reports"):
+            with self.subTest(replaced=replaced), tempfile.TemporaryDirectory() as directory:
+                base = pathlib.Path(directory).resolve()
+                root = base / "fence"
+                creator = MODULE.FenceStore(root)
+                uid, gid = self.make_layout_group_nonzero(root)
+                report = valid_verified_report(self.contract, self.contract_hash)
+                report_path, report_hash = creator.report(report)
+                with mock.patch.object(
+                    MODULE, "utc_now", return_value="2030-01-01T00:00:00Z"
+                ):
+                    creator.publish(
+                        MODULE.marker(
+                            "verified",
+                            "generation-1",
+                            "attempt-1",
+                            "bootstrap_empty",
+                            self.contract_hash,
+                            "verified",
+                            report_path,
+                            report_hash,
+                        )
+                    )
+                store = MODULE.FenceStore(
+                    root,
+                    create=False,
+                    expected_uid=uid,
+                    expected_gid=gid,
+                )
+
+                if replaced == "root":
+                    pinned = base / "pinned-fence"
+                    root.rename(pinned)
+                    attacker = prepare_fence_layout(base / "attacker-fence")
+                    write_canonical(attacker / "current.json", {"attacker": True})
+                    root.symlink_to(attacker, target_is_directory=True)
+                else:
+                    pinned = root / "pinned-reports"
+                    (root / "reports").rename(pinned)
+                    attacker = root / "attacker-reports"
+                    attacker.mkdir(mode=0o750)
+                    write_canonical(attacker / "attempt-1.json", {"attacker": True})
+                    (root / "reports").symlink_to(
+                        attacker, target_is_directory=True
+                    )
+
+                store.verify_current("generation-1", self.contract_hash)
+
+    def test_read_only_store_revalidates_pinned_parent_modes(self):
+        for relative in (".", "reports", "attempts"):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory).resolve() / "fence"
+                MODULE.FenceStore(root)
+                uid, gid = self.make_layout_group_nonzero(root)
+                store = MODULE.FenceStore(
+                    root,
+                    create=False,
+                    expected_uid=uid,
+                    expected_gid=gid,
+                )
+                target = root if relative == "." else root / relative
+                target.chmod(0o777)
+                operation = store.read_current
+                if relative == "reports":
+                    operation = lambda: store.read_report("attempt-1")
+                elif relative == "attempts":
+                    operation = lambda: store.read_attempt("attempt-1")
+                with self.assertRaisesRegex(ValueError, "permissions are unsafe"):
+                    operation()
+
+
 class TransitionObservabilityTests(FenceTestCase):
     def test_transition_event_has_exact_schema_and_rebuild_counts(self):
         report = valid_verified_report(
@@ -548,6 +1051,7 @@ class TransitionObservabilityTests(FenceTestCase):
             root = pathlib.Path(directory)
             report = valid_verified_report(self.contract, self.contract_hash)
             publish_pair(root, report)
+            prepare_fence_layout(root)
             args = MODULE.parser().parse_args(
                 [
                     "invalidate",
@@ -579,6 +1083,8 @@ class TransitionObservabilityTests(FenceTestCase):
                 args = SimpleNamespace(
                     command="readiness",
                     attempt_id=None,
+                    expected_uid=os.getuid(),
+                    expected_gid=os.getgid(),
                     batch_size=500,
                     fixture_timeout=600,
                     _failed_marker_published=failed_marker_published,
@@ -945,11 +1451,59 @@ class ReadinessTests(FenceTestCase):
 
 
 class ServingLeaseTests(FenceTestCase):
+    def test_controller_lock_closes_handle_once_for_every_flock_failure(self):
+        for failure, expected in (
+            (BlockingIOError(), MODULE.ClassifiedFailure),
+            (OSError("lock failed"), OSError),
+        ):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as directory:
+                store = MODULE.FenceStore(
+                    prepare_fence_layout(pathlib.Path(directory) / "fence")
+                )
+                descriptor = store._open_lock(
+                    store.lock_path,
+                    os.O_RDWR | os.O_APPEND,
+                    "controller lock",
+                    create=False,
+                )
+                handle = mock.Mock()
+                handle.fileno.return_value = descriptor
+
+                with mock.patch.object(
+                    store, "_open_lock", return_value=descriptor
+                ), mock.patch.object(
+                    MODULE.os, "fdopen", return_value=handle
+                ), mock.patch.object(
+                    MODULE.fcntl, "flock", side_effect=failure
+                ), self.assertRaises(expected):
+                    store.__enter__()
+
+                handle.close.assert_called_once_with()
+                self.assertIsNone(store._lock)
+                os.close(descriptor)
+
+    def test_controller_lock_closes_handle_when_unlock_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = MODULE.FenceStore(
+                prepare_fence_layout(pathlib.Path(directory) / "fence")
+            )
+            handle = mock.Mock()
+            store._lock = handle
+
+            with mock.patch.object(
+                MODULE.fcntl, "flock", side_effect=OSError("unlock failed")
+            ), self.assertRaises(OSError):
+                store.__exit__(None, None, None)
+
+            handle.close.assert_called_once_with()
+            self.assertIsNone(store._lock)
+
     def test_shared_serving_lease_blocks_controller_then_releases_for_transition(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             report = valid_verified_report(self.contract, self.contract_hash)
             publish_pair(root, report)
+            prepare_fence_layout(root)
             store = MODULE.FenceStore(root)
             args = MODULE.parser().parse_args(
                 [
@@ -1691,13 +2245,64 @@ class TransitionAndParserTests(FenceTestCase):
             args.fixture_command, ["python3", "fixture.py", "--mode", "all"]
         )
 
+    def test_readiness_and_controller_pass_explicit_ownership_to_store(self):
+        for command in ("readiness", "invalidate"):
+            argv = [
+                command,
+                "--fence-dir",
+                "/fence",
+                "--generation",
+                "generation-1",
+                "--expected-uid",
+                "1000",
+                "--expected-gid",
+                "4321",
+            ]
+            if command != "readiness":
+                argv.extend(("--attempt-id", "attempt-1"))
+            args = MODULE.parser().parse_args(argv)
+            with self.subTest(command=command), mock.patch.object(
+                MODULE, "FenceStore", side_effect=RuntimeError("stop after construction")
+            ) as store, self.assertRaisesRegex(RuntimeError, "stop after construction"):
+                asyncio.run(MODULE.execute(args))
+            store.assert_called_once_with(
+                pathlib.Path("/fence"),
+                create=False if command == "readiness" else True,
+                expected_uid=1000,
+                expected_gid=4321,
+            )
+
     def test_main_requires_attempt_and_enforces_numeric_bounds(self):
+        identity_error = (
+            "--expected-uid must be 0..2147483647 and "
+            "--expected-gid must be 1..2147483647"
+        )
         cases = (
             (["rebuild"], "--attempt-id is required"),
-            (["bootstrap", "--attempt-id", "a", "--batch-size", "0"], None),
-            (["bootstrap", "--attempt-id", "a", "--batch-size", "5001"], None),
-            (["bootstrap", "--attempt-id", "a", "--fixture-timeout", "0"], None),
-            (["bootstrap", "--attempt-id", "a", "--fixture-timeout", "3601"], None),
+            (
+                ["readiness", "--fence-dir", "/fence", "--generation", "g"],
+                identity_error,
+            ),
+            (
+                ["readiness", "--expected-uid", "-1", "--expected-gid", "20"],
+                identity_error,
+            ),
+            (
+                ["readiness", "--expected-uid", "2147483648", "--expected-gid", "20"],
+                identity_error,
+            ),
+            (
+                ["readiness", "--expected-uid", "1000", "--expected-gid", "0"],
+                identity_error,
+            ),
+            (
+                ["readiness", "--expected-uid", "1000", "--expected-gid", "2147483648"],
+                identity_error,
+            ),
+            (["bootstrap", "--attempt-id", "a", "--expected-uid", "501", "--expected-gid", "20", "--batch-size", "0"], None),
+            (["bootstrap", "--attempt-id", "a", "--expected-uid", "501", "--expected-gid", "20", "--batch-size", "5001"], None),
+            (["bootstrap", "--attempt-id", "a", "--expected-uid", "501", "--expected-gid", "20", "--fixture-timeout", "0"], None),
+            (["bootstrap", "--attempt-id", "a", "--expected-uid", "501", "--expected-gid", "20", "--fixture-timeout", "3601"], None),
         )
         for argv, expected in cases:
             with self.subTest(argv=argv), mock.patch.object(
@@ -1706,6 +2311,34 @@ class TransitionAndParserTests(FenceTestCase):
                 MODULE.main()
             if expected is not None:
                 self.assertEqual(str(raised.exception), expected)
+
+    def test_main_accepts_expected_identity_boundaries(self):
+        async def succeed(_args):
+            return 0
+
+        for uid, gid in (
+            (0, 1),
+            (MODULE.MAX_IDENTITY_ID, MODULE.MAX_IDENTITY_ID),
+        ):
+            argv = [
+                str(MODULE_PATH),
+                "readiness",
+                "--fence-dir",
+                "/fence",
+                "--generation",
+                "generation-1",
+                "--expected-uid",
+                str(uid),
+                "--expected-gid",
+                str(gid),
+            ]
+            with self.subTest(uid=uid, gid=gid), mock.patch.object(
+                sys, "argv", argv
+            ), mock.patch.object(
+                MODULE, "_execute_with_signals", side_effect=succeed
+            ), self.assertRaises(SystemExit) as raised:
+                MODULE.main()
+            self.assertEqual(raised.exception.code, 0)
 
 
 class SignalAndFixtureTests(FenceTestCase):
@@ -2072,7 +2705,7 @@ class SignalAndFixtureTests(FenceTestCase):
 class AbandonedRecoveryTests(FenceTestCase):
     def test_recovery_is_noop_without_rebuilding_marker(self):
         with tempfile.TemporaryDirectory() as directory:
-            store = MODULE.FenceStore(pathlib.Path(directory))
+            store = MODULE.FenceStore(prepare_fence_layout(pathlib.Path(directory)))
             self.assertIsNone(MODULE._recover_abandoned(store, None, self.contract))
             with mock.patch.object(MODULE, "utc_now", return_value=FINISHED_AT):
                 stale = MODULE.marker(
@@ -2088,6 +2721,7 @@ class AbandonedRecoveryTests(FenceTestCase):
     def test_rebuilding_marker_becomes_failed_with_immutable_abandoned_report(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
+            prepare_fence_layout(root)
             store = MODULE.FenceStore(root)
             store.attempt(
                 MODULE.attempt_context(
@@ -2124,6 +2758,7 @@ class AbandonedRecoveryTests(FenceTestCase):
         old_hash = MODULE.digest(old_contract)
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
+            prepare_fence_layout(root)
             store = MODULE.FenceStore(root)
             store.attempt(
                 MODULE.attempt_context(
@@ -2154,6 +2789,7 @@ class AbandonedRecoveryTests(FenceTestCase):
     def test_abandoned_recovery_reuses_existing_failed_report_after_crash(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
+            prepare_fence_layout(root)
             store = MODULE.FenceStore(root)
             report = valid_failed_report(
                 self.contract, self.contract_hash, attempt="attempt-old"
@@ -2187,6 +2823,7 @@ class AbandonedRecoveryTests(FenceTestCase):
     def test_abandoned_recovery_reuses_matching_operation_failed_report(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
+            prepare_fence_layout(root)
             store = MODULE.FenceStore(root)
             report = valid_failed_report(
                 self.contract, self.contract_hash, attempt="attempt-old"
@@ -2212,6 +2849,7 @@ class AbandonedRecoveryTests(FenceTestCase):
         for name, context_generation in (("missing", None), ("mismatched", "generation-2")):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
+                prepare_fence_layout(root)
                 store = MODULE.FenceStore(root)
                 if context_generation is not None:
                     store.attempt(
@@ -2246,6 +2884,7 @@ class AbandonedRecoveryTests(FenceTestCase):
         ):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
+                prepare_fence_layout(root)
                 store = MODULE.FenceStore(root)
                 report = valid_verified_report(
                     self.contract,
@@ -2282,6 +2921,7 @@ class AbandonedRecoveryTests(FenceTestCase):
         for name, report in (("mismatched-generation", unrelated),):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
+                prepare_fence_layout(root)
                 store = MODULE.FenceStore(root)
                 store.report(copy.deepcopy(report))
                 with mock.patch.object(MODULE, "utc_now", return_value=STARTED_AT):
@@ -2302,6 +2942,7 @@ class AbandonedRecoveryTests(FenceTestCase):
         canary = "attempt-secret-canary"
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
+            prepare_fence_layout(root)
             store = MODULE.FenceStore(root)
             store.attempt(
                 MODULE.attempt_context(

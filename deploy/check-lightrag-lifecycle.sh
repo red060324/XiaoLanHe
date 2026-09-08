@@ -614,7 +614,7 @@ import urllib.request
 SOURCE_KEY = {source_key!r}
 QUERY_TEXT = {query_text!r}
 BASE_URL = "http://127.0.0.1:9621"
-REPORT = pathlib.Path("/rebuild-fence/restore-fixtures.json")
+REPORT = pathlib.Path("/tmp/xlh-restore-fixtures.json")
 
 def canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
@@ -786,7 +786,11 @@ bash deploy/check-lightrag-compose.sh "$compose_file"
 bootstrap_attempt_id=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
 export XLH_LIGHTRAG_ATTEMPT_ID=$bootstrap_attempt_id
 lifecycle_target=empty-fence
-bash deploy/lightrag-bootstrap-empty.sh "$compose_file" "$project"
+bootstrap_output=$(bash deploy/lightrag-bootstrap-empty.sh "$compose_file" "$project" | tee /dev/stderr)
+export XLH_LIGHTRAG_SHARED_GID=$(
+  printf '%s\n' "$bootstrap_output" | sed -n 's/^XLH_LIGHTRAG_SHARED_GID=//p' | tail -n 1
+)
+[[ "$XLH_LIGHTRAG_SHARED_GID" =~ ^[1-9][0-9]{0,9}$ ]] && (( XLH_LIGHTRAG_SHARED_GID <= 2147483647 )) || { echo "bootstrap did not return a valid shared GID" >&2; exit 1; }
 bootstrap_writer_path="$writer_evidence_dir/$bootstrap_attempt_id.json"
 export XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$(canonical_sha256 "$bootstrap_writer_path")
 lifecycle_target=milvus-contract
@@ -794,7 +798,7 @@ bash deploy/check-lightrag-milvus.sh "$compose_file" "$project"
 lifecycle_target=lightrag-service
 "${compose[@]}" up --detach --wait --no-deps lightrag
 lifecycle_target=lightrag-readiness
-bash deploy/check-lightrag-live.sh "$base_url" "$XLH_LIGHTRAG_API_KEY" "$fence_dir" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$contract_sha256"
+bash deploy/check-lightrag-live.sh "$base_url" "$XLH_LIGHTRAG_API_KEY" "$fence_dir" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$contract_sha256" "$XLH_LIGHTRAG_SHARED_GID"
 
 lifecycle_phase=ingest
 lifecycle_target=document-create
@@ -821,7 +825,7 @@ lifecycle_target=lightrag-service
 "${compose[@]}" restart --timeout 30 lightrag
 "${compose[@]}" up --detach --wait lightrag
 lifecycle_target=lightrag-readiness
-bash deploy/check-lightrag-live.sh "$base_url" "$XLH_LIGHTRAG_API_KEY" "$fence_dir" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$contract_sha256"
+bash deploy/check-lightrag-live.sh "$base_url" "$XLH_LIGHTRAG_API_KEY" "$fence_dir" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$contract_sha256" "$XLH_LIGHTRAG_SHARED_GID"
 lifecycle_target=document-persistence
 assert_document_present "$(list_documents)" "$document_id"
 assert_queries
@@ -880,8 +884,9 @@ export XLH_LIGHTRAG_DEPLOYMENT_GENERATION=$restore_generation
 export XLH_LIGHTRAG_ATTEMPT_ID=$restore_attempt_id
 export XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$restore_writer_sha256
 lifecycle_target=restore-preflight
-"${compose[@]}" run --rm --no-deps --entrypoint python lightrag-bootstrap \
-  /opt/xlh/rebuild_fence.py prepare-restore --fence-dir /rebuild-fence \
+"${compose[@]}" run --rm --no-deps lightrag-bootstrap \
+  python /opt/xlh/rebuild_fence.py prepare-restore --fence-dir /rebuild-fence \
+  --expected-uid 1000 --expected-gid "$XLH_LIGHTRAG_SHARED_GID" \
   --generation "$restore_generation" --attempt-id "$restore_attempt_id" \
   --writer-evidence "/writer-evidence/$restore_attempt_id.json" \
   --writer-evidence-sha256 "$restore_writer_sha256" \
@@ -899,12 +904,12 @@ for index in "${!consistency_components[@]}"; do
 done
 lifecycle_target=milvus-consistency-unit
 "${compose[@]}" up --detach --wait milvus-etcd milvus-minio milvus
-fixture_report="$fence_dir/restore-fixtures.json"
 fixture_command="$backup_dir/restore-fixtures.py"
 write_restore_fixture_command "$fixture_command"
 lifecycle_target=restore-verification
-"${compose[@]}" run --rm --no-deps --entrypoint python lightrag-bootstrap \
-  /opt/xlh/rebuild_fence.py restore-verify --fence-dir /rebuild-fence \
+"${compose[@]}" run --rm --no-deps lightrag-bootstrap \
+  python /opt/xlh/rebuild_fence.py restore-verify --fence-dir /rebuild-fence \
+  --expected-uid 1000 --expected-gid "$XLH_LIGHTRAG_SHARED_GID" \
   --generation "$restore_generation" --attempt-id "$restore_attempt_id" \
   --writer-evidence "/writer-evidence/$restore_attempt_id.json" \
   --writer-evidence-sha256 "$restore_writer_sha256" \
@@ -913,16 +918,16 @@ lifecycle_target=restore-verification
   --backup-writer-evidence "/writer-evidence/$backup_attempt_id.json" \
   --backup-writer-evidence-sha256 "$backup_writer_sha256" \
   --expected-source-generation "$source_generation" \
-  --fixture-report /rebuild-fence/restore-fixtures.json \
+  --fixture-report /tmp/xlh-restore-fixtures.json \
   --fixture-command /backup-evidence/restore-fixtures.py
 lifecycle_target=verified-fence
-bash deploy/check-lightrag-fence.sh "$fence_dir" "$restore_generation" "$contract_sha256"
+bash deploy/check-lightrag-fence.sh "$fence_dir" "$restore_generation" "$contract_sha256" "$XLH_LIGHTRAG_SHARED_GID"
 lifecycle_target=milvus-contract
 bash deploy/check-lightrag-milvus.sh "$compose_file" "$project"
 lifecycle_target=lightrag-service
 "${compose[@]}" up --detach --wait --no-deps lightrag
 lifecycle_target=lightrag-readiness
-bash deploy/check-lightrag-live.sh "$base_url" "$XLH_LIGHTRAG_API_KEY" "$fence_dir" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$contract_sha256"
+bash deploy/check-lightrag-live.sh "$base_url" "$XLH_LIGHTRAG_API_KEY" "$fence_dir" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$contract_sha256" "$XLH_LIGHTRAG_SHARED_GID"
 lifecycle_target=document-persistence
 assert_document_present "$(list_documents)" "$document_id"
 assert_queries

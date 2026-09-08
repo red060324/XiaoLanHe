@@ -86,13 +86,14 @@ milvus-live:
 
 fence-static:
 	@bash -n deploy/check-lightrag-fence.sh deploy/lightrag-bootstrap-empty.sh deploy/lightrag-up.sh deploy/lightrag-contract-hash.sh
-	@python3 -m unittest deploy/lightrag/test_rebuild_fence.py deploy/lightrag/test_guarded_start.py
+	@python3 -m unittest deploy/lightrag/test_prepare_shared_fence.py deploy/lightrag/test_validate_shared_fence_host.py deploy/lightrag/test_rebuild_fence.py deploy/lightrag/test_guarded_start.py
 
 fence-live:
 	@test -n "$$XLH_LIGHTRAG_REBUILD_FENCE_DIR" || { echo "XLH_LIGHTRAG_REBUILD_FENCE_DIR is required" >&2; exit 2; }
 	@test -n "$$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" || { echo "XLH_LIGHTRAG_DEPLOYMENT_GENERATION is required" >&2; exit 2; }
 	@test -n "$$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256" || { echo "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256 is required" >&2; exit 2; }
-	@bash deploy/check-lightrag-fence.sh "$$XLH_LIGHTRAG_REBUILD_FENCE_DIR" "$$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256"
+	@test -n "$$XLH_LIGHTRAG_SHARED_GID" || { echo "XLH_LIGHTRAG_SHARED_GID is required" >&2; exit 2; }
+	@bash deploy/check-lightrag-fence.sh "$$XLH_LIGHTRAG_REBUILD_FENCE_DIR" "$$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256" "$$XLH_LIGHTRAG_SHARED_GID"
 
 lightrag-static: milvus-static fence-static
 	@bash -n deploy/check-lightrag-live.sh deploy/check-lightrag-lifecycle.sh
@@ -112,7 +113,7 @@ lightrag-down:
 	docker compose -f $(LIGHTRAG_COMPOSE_FILE) down
 
 lightrag-live: milvus-live fence-live
-	@bash deploy/check-lightrag-live.sh http://127.0.0.1:9621 "$$XLH_LIGHTRAG_API_KEY" "$$XLH_LIGHTRAG_REBUILD_FENCE_DIR" "$$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256"
+	@bash deploy/check-lightrag-live.sh http://127.0.0.1:9621 "$$XLH_LIGHTRAG_API_KEY" "$$XLH_LIGHTRAG_REBUILD_FENCE_DIR" "$$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" "$$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256" "$$XLH_LIGHTRAG_SHARED_GID"
 
 lightrag-lifecycle:
 	@bash deploy/check-lightrag-lifecycle.sh

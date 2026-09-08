@@ -92,6 +92,10 @@ export XLH_LIGHTRAG_ATTEMPT_ID="bootstrap-$(date +%Y%m%d%H%M%S)"
 export XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR="$(pwd -P)/.state/lightrag-fence"
 export XLH_LIGHTRAG_REBUILD_FENCE_DIR="$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR"
 export XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR="$(pwd -P)/.state/lightrag-writer-evidence"
+# 仅非 root；可省略，bootstrap 默认使用这个非 0 primary GID。
+# export XLH_LIGHTRAG_SHARED_GID=$(id -g)
+# 仅 root；替换为专用的非 0 数字 GID。
+# export XLH_LIGHTRAG_SHARED_GID=replace-with-dedicated-nonzero-gid
 export XLH_LIGHTRAG_UNCONTROLLED_WRITERS_ATTESTATION=no_uncontrolled_writers
 make lightrag-static
 bootstrap_output=$(make --no-print-directory lightrag-bootstrap-empty)
@@ -108,15 +112,20 @@ export XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$(
 export XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=$(
   printf '%s\n' "$bootstrap_output" | sed -n 's/^XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=//p' | tail -n 1
 )
+export XLH_LIGHTRAG_SHARED_GID=$(
+  printf '%s\n' "$bootstrap_output" | sed -n 's/^XLH_LIGHTRAG_SHARED_GID=//p' | tail -n 1
+)
 test -n "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION"
 test -n "$XLH_LIGHTRAG_ATTEMPT_ID"
 test -n "$XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256"
 test -n "$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256"
+[[ "$XLH_LIGHTRAG_SHARED_GID" =~ ^[1-9][0-9]{0,9}$ ]]
+(( XLH_LIGHTRAG_SHARED_GID <= 2147483647 ))
 make lightrag-up
 ```
 
-5. 将 bootstrap 输出的 generation/hash 更新到当前 shell（以及后续部署的 secret
-   配置），然后启动应用：
+5. 将 bootstrap 输出的四个证据值和 `XLH_LIGHTRAG_SHARED_GID` 更新到当前 shell
+   并持久化到后续部署配置，然后启动应用：
 
 ```bash
 go run ./cmd/xiaolanhe
@@ -130,6 +139,26 @@ go run ./cmd/xiaolanhe
 `bootstrap` profile，正常重启不会再次执行。Milvus server 使用 root 密码完成认证
 配置，只有初始化 job 获得 root token；LightRAG 只获得独立 runtime token，且该
 身份不能建库或管理用户。
+
+bootstrap 会用固定 LightRAG 镜像运行一次有界 root ownership 初始化，只处理 fence
+与 writer-evidence bind mount：fence 使用 `1000:<shared-gid>`，writer evidence 使用
+`<operator-uid>:1000`。初始化器会先通过 no-follow descriptor 完整只读验证两棵树并
+拒绝意外节点、alias、hardlink 和超限内容，并通过两个稳定的根目录 inode 排除并发
+initializer，之后才将已验证目录临时冻结为 `root:root`/`0700`。可变普通文件会复制到
+私有新 inode，仅新 inode 接受 chown/chmod，随后 fsync 并原子替换；因此预持 FD 或
+后建外部 hardlink 指向的旧 inode 不会被特权修改。两把 lock 只在缺失时安全创建一次；
+已有 lock 必须已经满足精确 owner/group/mode，且其 inode 永不替换，从而保持所有预开
+FD 与路径访问处于同一 `flock` 域。子目录验证并 fsync 后，两棵根先以最终 owner 和
+`0000` 模式完成持久化，再先发布并 fsync writer root，最后在初始化锁仍被持有时用一次
+fence root `fchmod` 作为提交点；提交前 fence 不可遍历，提交后整棵树已满足契约，不依赖事后回滚。
+最终目录为 `02750`，文件为 `0640`；中断遗留的 frozen/sealed 状态由普通重试
+fail closed，必须显式执行 privileged 运维检查/恢复。正常
+LightRAG 仍由官方 entrypoint 以 root 初始化数据卷后降权至 UID/GID `1000`；这些路径
+都没有 world 权限。仅有界初始化器与 bootstrap/controller job 以读写方式挂载 fence；
+steady LightRAG 和 readiness reader 均只读挂载。
+若 Go 应用也在容器中运行，保持应用镜像自身 UID/GID，将 fence 只读挂载并添加
+`--group-add "$XLH_LIGHTRAG_SHARED_GID"`；不要用 `--user 1000` 或 world-readable
+权限绕过共享组。
 
 默认监听 `:8088`。React 开发服务器可在 `frontend/xiaolanhe-web` 中执行
 `npm run dev`；生产镜像会构建并由 Go 服务托管前端。

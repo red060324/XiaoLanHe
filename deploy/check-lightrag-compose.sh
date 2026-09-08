@@ -29,6 +29,17 @@ require_literal() {
   fi
 }
 
+require_literal_count() {
+  local literal=$1
+  local expected_count=$2
+  local actual_count
+  actual_count=$(awk -v literal="$literal" '$0 == literal { count++ } END { print count + 0 }' "$file")
+  if (( actual_count != expected_count )); then
+    echo "LightRAG compose must contain exactly $expected_count copies of: $literal (found $actual_count)" >&2
+    exit 1
+  fi
+}
+
 require_literal "image: $expected_image"
 require_literal 'command: ["python", "/opt/xlh/guarded_start.py", "steady"]'
 require_literal 'WORKSPACE: xiaolanhe_v1'
@@ -72,6 +83,8 @@ require_literal './lightrag/guarded_start.py:/opt/xlh/guarded_start.py:ro'
 require_literal '${XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:?XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR is required}:/rebuild-fence'
 require_literal '${XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:?XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR is required}:/rebuild-fence:ro'
 require_literal '${XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR:?XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR is required}:/writer-evidence:ro'
+require_literal_count '      XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR: ${XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR:?XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR must be an absolute path}' 1
+require_literal_count '      XLH_LIGHTRAG_SHARED_GID: ${XLH_LIGHTRAG_SHARED_GID:?XLH_LIGHTRAG_SHARED_GID must be a nonzero numeric group ID}' 2
 require_literal 'MINIO_ROOT_USER: ${XLH_MILVUS_MINIO_USER:?XLH_MILVUS_MINIO_USER is required}'
 require_literal 'MINIO_ROOT_PASSWORD: ${XLH_MILVUS_MINIO_PASSWORD:?XLH_MILVUS_MINIO_PASSWORD is required}'
 require_literal 'XLH_LIGHTRAG_DEPLOYMENT_GENERATION: ${XLH_LIGHTRAG_DEPLOYMENT_GENERATION:?XLH_LIGHTRAG_DEPLOYMENT_GENERATION is required}'

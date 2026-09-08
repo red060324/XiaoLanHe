@@ -110,13 +110,17 @@ jobs:
           reported_attempt=$(awk -F= '$1 == "XLH_LIGHTRAG_ATTEMPT_ID" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
           writer_sha256=$(awk -F= '$1 == "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
           reported_contract=$(awk -F= '$1 == "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
+          shared_gid=$(awk -F= '$1 == "XLH_LIGHTRAG_SHARED_GID" { print substr($0, index($0, "=") + 1) }' <<<"$bootstrap_output" | tail -n 1)
           [[ "$reported_generation" == "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" ]]
           [[ "$reported_attempt" == "$XLH_LIGHTRAG_ATTEMPT_ID" ]]
           [[ "$reported_contract" == "$contract_sha256" ]]
           [[ "$writer_sha256" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$shared_gid" =~ ^[1-9][0-9]{0,9}$ ]]
+          (( shared_gid <= 2147483647 ))
           {
             echo "XLH_LIGHTRAG_WRITER_EVIDENCE_SHA256=$writer_sha256"
             echo "XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256=$reported_contract"
+            echo "XLH_LIGHTRAG_SHARED_GID=$shared_gid"
           } >> "$GITHUB_ENV"
       - name: Validate bootstrapped Milvus runtime contract
         run: bash deploy/check-lightrag-milvus.sh deploy/docker-compose.lightrag.yml "$XLH_CI_COMPOSE_PROJECT"
@@ -128,7 +132,7 @@ jobs:
         run: |
           bash deploy/check-lightrag-live.sh http://127.0.0.1:9621 "$XLH_LIGHTRAG_API_KEY" \
             "$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR" "$XLH_LIGHTRAG_DEPLOYMENT_GENERATION" \
-            "$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256"
+            "$XLH_LIGHTRAG_REBUILD_CONTRACT_SHA256" "$XLH_LIGHTRAG_SHARED_GID"
       - name: Repository gates
         run: |
           if [ -n "${{ github.base_ref }}" ] && git rev-parse --verify "origin/${{ github.base_ref }}" >/dev/null 2>&1; then
@@ -161,6 +165,7 @@ jobs:
           docker build -t xiaolanhe:ci .
           container_id=$(docker run --detach --network host \
             --add-host host.docker.internal:host-gateway \
+            --group-add "$XLH_LIGHTRAG_SHARED_GID" \
             --volume "$XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:/rebuild-fence:ro" \
             -e PORT=18088 \
             -e XLH_DATABASE_URL="$XLH_DATABASE_URL" \

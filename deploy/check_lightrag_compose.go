@@ -10,7 +10,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const lightRAGImage = "ghcr.io/hkuds/lightrag:v1.5.7@sha256:5bdbd524931b011df246fe20888d110cef691e6804c12cde636a2b746d7de27e"
+const (
+	lightRAGImage                 = "ghcr.io/hkuds/lightrag:v1.5.7@sha256:5bdbd524931b011df246fe20888d110cef691e6804c12cde636a2b746d7de27e"
+	writerEvidenceHostDirRequired = "${XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR:?XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR must be an absolute path}"
+	sharedGIDRequired             = "${XLH_LIGHTRAG_SHARED_GID:?XLH_LIGHTRAG_SHARED_GID must be a nonzero numeric group ID}"
+)
 
 var (
 	requiredServices = []string{"lightrag", "lightrag-bootstrap", "milvus", "milvus-etcd", "milvus-init", "milvus-minio"}
@@ -26,6 +30,7 @@ var (
 		"MILVUS_DB_NAME":              "lightrag",
 		"MILVUS_INDEX_TYPE":           "AUTOINDEX",
 		"MILVUS_METRIC_TYPE":          "COSINE",
+		"XLH_LIGHTRAG_SHARED_GID":     sharedGIDRequired,
 	}
 	fenceMountRW = regexp.MustCompile(`^\$\{XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:?[^}]+\}:/rebuild-fence$`)
 	fenceMountRO = regexp.MustCompile(`^\$\{XLH_LIGHTRAG_REBUILD_FENCE_HOST_DIR:?[^}]+\}:/rebuild-fence:ro$`)
@@ -38,6 +43,8 @@ type composeFile struct {
 
 type composeService struct {
 	Image       string                       `yaml:"image"`
+	User        string                       `yaml:"user"`
+	Entrypoint  any                          `yaml:"entrypoint"`
 	Command     []string                     `yaml:"command"`
 	Profiles    []string                     `yaml:"profiles"`
 	Environment map[string]any               `yaml:"environment"`
@@ -84,6 +91,12 @@ func checkCompose(document composeFile) error {
 	}
 	for _, name := range []string{"lightrag", "lightrag-bootstrap"} {
 		service := document.Services[name]
+		if service.User != "" {
+			return fmt.Errorf("%s must preserve the official root entry point and privilege drop", name)
+		}
+		if service.Entrypoint != nil {
+			return fmt.Errorf("%s must preserve the official root entry point and privilege drop", name)
+		}
 		for key, expected := range requiredEnv {
 			if env(service, key) != expected {
 				return fmt.Errorf("%s.%s must equal %q", name, key, expected)
@@ -111,6 +124,9 @@ func checkCompose(document composeFile) error {
 	if _, exists := runtime.Environment["MILVUS_BOOTSTRAP_TOKEN"]; exists {
 		return fmt.Errorf("steady-state LightRAG must not receive the bootstrap identity")
 	}
+	if env(bootstrap, "XLH_LIGHTRAG_WRITER_EVIDENCE_HOST_DIR") != writerEvidenceHostDirRequired {
+		return fmt.Errorf("lightrag-bootstrap must require the writer-evidence host directory in its environment")
+	}
 	if fmt.Sprint(init.Profiles) != "[bootstrap]" || fmt.Sprint(bootstrap.Profiles) != "[bootstrap]" {
 		return fmt.Errorf("one-shot init services must use only the bootstrap profile")
 	}
@@ -122,6 +138,9 @@ func checkCompose(document composeFile) error {
 	}
 	if fmt.Sprint(runtime.Command) != "[python /opt/xlh/guarded_start.py steady]" {
 		return fmt.Errorf("steady-state LightRAG must use the fence-guarded entry point")
+	}
+	if fmt.Sprint(bootstrap.Command) != "[python /opt/xlh/guarded_start.py bootstrap]" {
+		return fmt.Errorf("bootstrap LightRAG must use the fence-guarded entry point")
 	}
 	for name, service := range map[string]composeService{"lightrag": runtime, "lightrag-bootstrap": bootstrap} {
 		found := []string{}

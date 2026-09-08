@@ -118,20 +118,95 @@ LightRAG, Milvus, etcd and MinIO data volumes:
     <attempt-id>.json
 ```
 
-Only the migration controller mounts it read-write. Readiness consumers mount it
-read-only. `serving.lock` is a pre-created mode-`0600` regular file: the steady-state
-supervisor opens it without following symlinks, takes a non-blocking shared lease before
-fence verification, and retains that lease until the complete LightRAG process group has
-exited. Every mutating controller invocation first takes a non-blocking exclusive
-`serving.lock` lease and then the exclusive `rebuild.lock`; contention fails closed with
-the fixed `serving_lock_busy` code. The fixed lock order is therefore
-`serving.lock(EX) -> rebuild.lock(EX)`, and a running steady writer cannot race a
-verified-to-stale/rebuilding transition. A read-only mount is sufficient for the steady
-process to lock the existing inode; only the controller creates or changes fence files.
-The controller retains both leases for its entire preflight, rebuild, verification,
-report-publication and cleanup sequence. `rebuild.lock` serializes controllers, while
-`serving.lock` closes the local verify-to-start and running-writer race; independently
-signed writer evidence remains required for the wider deployment writer fence.
+The host operator selects one nonzero numeric shared GID in
+`XLH_LIGHTRAG_SHARED_GID`. When it is omitted, the bootstrap wrapper uses the invoking
+operator's primary GID. A non-root operator may explicitly select only a GID in its
+supplementary-group set; root must explicitly select a dedicated nonzero GID. The wrapper
+prints `XLH_LIGHTRAG_SHARED_GID=<gid>` alongside its four evidence values, and deployment
+automation persists and reuses that exact value for later ownership preparation and
+reader-container enrollment in the generation. It must not silently recompute a
+different group under another operator account.
+
+Before starting the controller, the wrapper runs one bounded ownership initializer as
+root from the exact pinned LightRAG image with its entry point overridden. That
+initializer is scoped to the canonical fence and writer-evidence bind mounts. It assigns
+the fence tree to LightRAG UID `1000` and the selected shared GID, while assigning the
+writer-evidence tree to the invoking operator UID and LightRAG GID `1000`; it then
+applies the modes below and exits. The wrapper creates the attempt evidence as the host
+operator with mode `0600` before running the initializer, which converts the final
+evidence artifact to mode `0640` before the controller reads it. To make this privileged
+transition race-resistant, the initializer first performs a complete read-only,
+no-follow descriptor validation of both mount trees and rejects unexpected nodes, aliases
+and hard links before any metadata mutation. It also validates the bounded file count and
+content-size budget and snapshots each regular file before mutation. Non-blocking
+exclusive `flock` leases on the two stable root-directory inodes exclude another
+initializer before any child mutation. It then freezes every validated directory as
+`root:root`/`0700`, revalidates the retained descriptors, and copy-ups every mutable
+managed regular file into a private, descriptor-relative `O_EXCL` inode. Only that new
+inode is chowned/chmodded, fsynced and atomically replaced into the managed name; a
+pre-held descriptor or late external hard link therefore still refers to an unchanged old
+inode. Missing `serving.lock` and `rebuild.lock` files are privately created once while the
+roots are frozen and are locked before either root is reopened. Once present, each lock
+must already have the exact owner, group, mode and single-link shape; its inode is never
+replaced or metadata-mutated by the initializer. A descriptor opened before a later
+initializer and one opened by path afterwards therefore remain in the same `flock` domain.
+The initializer validates and fsyncs every child directory, stages both roots with
+their final ownership while mode `0000` keeps them non-traversable, publishes and
+fsyncs the writer root first, and uses one final
+`fchmod` of the fence root as the commit point. Before that syscall the lifecycle
+fence is sealed; after it succeeds the complete tree already has its final contract,
+so no fallible post-publish verification or best-effort rollback is required for
+safety. Initialization leases remain held through that commit and are released by
+descriptor close. A root-owned `0700` state or either-owner `0000` transition state is
+fail-closed for an unprivileged retry and requires explicit privileged operator
+inspection/recovery; it is never silently repaired by host preflight. The normal
+bootstrap/controller and steady services do not
+set Compose `user:`: their official image entry point must remain able to initialize and
+chown `/app/data/rag_storage` as root and then drop to LightRAG UID/GID `1000`. The
+controller does not call `chown` or `chgrp`; setgid fence directories preserve the
+initialized shared group for new files.
+
+The host operator identity and Docker daemon are part of the trusted deployment
+boundary. The descriptor-based host preflight closes its descriptors before Docker
+resolves bind-source pathnames, so another process with the same operator UID could
+replace an otherwise valid leaf in that interval. The privileged initializer therefore
+revalidates the actual mounted trees independently and rejects unsafe structure, but it
+does not claim that the mount inode is cryptographically bound to the earlier host
+preflight. Do not run bootstrap on a host where the operator UID or Docker control plane
+is shared with an untrusted principal.
+
+| Path | Owner/group | Exact mode | Purpose |
+|---|---|---:|---|
+| fence root | `1000:<shared-gid>` | `02750` | controller owner writes; shared group only reads/traverses; setgid preserves group |
+| `reports/`, `attempts/` | `1000:<shared-gid>` | `02750` | controller writes; group readers traverse/read; setgid preserves group |
+| writer-evidence directory | `<operator-uid>:1000` | `02750` | host operator writes; setgid preserves the LightRAG reader group |
+| writer evidence | `<operator-uid>:1000` | `0640` | host operator writes; LightRAG GID `1000` reads |
+| `current.json`, `reports/*.json`, `attempts/*.json` | `1000:<shared-gid>` | `0640` | controller writes; shared group reads |
+| `serving.lock`, `rebuild.lock` | `1000:<shared-gid>` | `0640` | owner/controller locks; shared group can open the existing inode |
+
+No fence or writer-evidence path is world-readable, world-writable or
+world-traversable. Expanding these modes to `0777`, `0666`, or any other `other` access
+is not an interoperability workaround.
+
+Only the bounded ownership initializer and migration controller mount the fence
+read-write. Steady LightRAG and readiness consumers mount it read-only; readiness
+consumers receive the selected shared GID without changing their primary identity.
+In particular, a containerized Go application keeps its image UID/GID, bind-mounts the
+fence read-only, and uses `--group-add "$XLH_LIGHTRAG_SHARED_GID"` (or the equivalent
+orchestrator supplementary-group setting). `serving.lock` is a pre-created mode-`0640`
+regular file: the steady-state supervisor opens it without following symlinks, takes a
+non-blocking shared lease before fence verification, and retains that lease until the
+complete LightRAG process group has exited. Every mutating controller invocation first
+takes a non-blocking exclusive `serving.lock` lease and then the exclusive
+`rebuild.lock`; contention fails closed with the fixed `serving_lock_busy` code. The
+fixed lock order is therefore `serving.lock(EX) -> rebuild.lock(EX)`, and a running
+steady writer cannot race a verified-to-stale/rebuilding transition. A read-only mount
+is sufficient for the steady process to lock the existing inode; only the controller
+creates or changes fence files. The controller retains both leases for its entire
+preflight, rebuild, verification, report-publication and cleanup sequence.
+`rebuild.lock` serializes controllers, while `serving.lock` closes the local
+verify-to-start and running-writer race; independently signed writer evidence remains
+required for the wider deployment writer fence.
 
 The guarded steady entry point logs `exec/attempt/starting`, starts Gunicorn in a new
 process group, forwards `SIGTERM` and `SIGINT`, escalates to `SIGKILL` after a bounded
@@ -140,7 +215,7 @@ never logs successful execution before a process has actually run.
 
 Every current-marker replacement uses this sequence:
 
-1. Create a unique temporary file in the same directory with mode `0600` and exclusive
+1. Create a unique temporary file in the same directory with mode `0640` and exclusive
    creation.
 2. Write complete canonical JSON and reject partial/unknown data.
 3. Flush userspace buffers and `fsync` the file.
@@ -153,15 +228,15 @@ Before publishing `rebuilding`, the controller creates an immutable attempt jour
 the `software` and `contract` objects have the same exact schemas as the terminal report.
 The controller reconstructs the canonical contract from those objects and requires its
 digest and all four identity fields to match the marker. The journal contains no secrets.
-It is mode `0600`, canonical JSON with exactly one trailing newline, and uses the same
+It is mode `0640`, canonical JSON with exactly one trailing newline, and uses the same
 temporary-file, file `fsync`, exclusive no-overwrite link, and parent-directory `fsync`
 protocol as an immutable report. The journal must be durable before `current.json` can
 become `rebuilding`; a missing, malformed, mismatched, or pre-existing journal fails
 closed before that transition.
 
-Immutable reports use the same file and directory durability rules and exclusive
-no-overwrite semantics. A report is fully durable before a current marker may reference
-its digest. A rerun always receives a new cryptographically random attempt ID.
+Immutable reports use mode `0640`, the same file and directory durability rules, and
+exclusive no-overwrite semantics. A report is fully durable before a current marker may
+reference its digest. A rerun always receives a new cryptographically random attempt ID.
 
 Before the first call that can drop a vector target, the controller atomically replaces
 any previous current marker with `rebuilding`. On every handled failure it writes an

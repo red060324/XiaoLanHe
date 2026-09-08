@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-base_url=${1:-http://127.0.0.1:9621}
-api_key=${2:-}
-fence_dir=${3:-}
-fence_generation=${4:-}
-fence_contract_sha256=${5:-}
-if (( ${#api_key} < 32 || ${#api_key} > 512 )) || [[ "$api_key" == *$'\n'* || "$api_key" == *$'\r'* ]]; then
-  echo "usage: $0 [base-url] <32-512 character api-key without line breaks>" >&2
+if (( $# != 6 )); then
+  echo "usage: $0 <base-url> <32-512 character api-key without line breaks> <fence-dir> <generation> <contract-sha256> <shared-gid>" >&2
   exit 2
 fi
+base_url=$1
+api_key=$2
+fence_dir=$3
+fence_generation=$4
+fence_contract_sha256=$5
+shared_gid=$6
+if (( ${#api_key} < 32 || ${#api_key} > 512 )) || [[ "$api_key" == *$'\n'* || "$api_key" == *$'\r'* ]]; then
+  echo "invalid API key" >&2
+  exit 2
+fi
+[[ -n "$base_url" && -n "$fence_dir" && -n "$fence_generation" && -n "$fence_contract_sha256" ]] || {
+  echo "live deployment contract arguments must not be empty" >&2
+  exit 2
+}
+
+# Prove the local deployment fence before making any network request, so this
+# command cannot degrade into an API-only success signal.
+bash deploy/check-lightrag-fence.sh "$fence_dir" "$fence_generation" "$fence_contract_sha256" "$shared_gid"
 
 common_headers=(-H "X-API-Key: $api_key" -H "LIGHTRAG-WORKSPACE: xiaolanhe_v1")
 
@@ -54,11 +67,3 @@ jq -e '
 
 pipeline=$(curl --fail --silent --show-error "${common_headers[@]}" "$base_url/documents/pipeline_status")
 jq -e '.recovery_required == false and (.busy | type == "boolean")' <<<"$pipeline" >/dev/null
-
-if [[ -n "$fence_dir$fence_generation$fence_contract_sha256" ]]; then
-  [[ -n "$fence_dir" && -n "$fence_generation" && -n "$fence_contract_sha256" ]] || {
-    echo "fence-dir, generation and contract-sha256 must be supplied together" >&2
-    exit 2
-  }
-  bash deploy/check-lightrag-fence.sh "$fence_dir" "$fence_generation" "$fence_contract_sha256"
-fi
