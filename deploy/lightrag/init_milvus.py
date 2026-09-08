@@ -85,9 +85,14 @@ def main() -> None:
         user = client.describe_user(user_name=runtime_user)
         if RUNTIME_ROLE not in set(user.get("roles", ())):
             client.grant_role(user_name=runtime_user, role_name=RUNTIME_ROLE)
+        # PyMilvus defaults describe_role() to db_name="", which omits grants
+        # scoped to a named database. The Milvus wildcard requests every scope,
+        # allowing the exact least-privilege contract to be verified atomically.
         existing_grants = {
             key
-            for item in client.describe_role(role_name=RUNTIME_ROLE).get("privileges", ())
+            for item in client.describe_role(
+                role_name=RUNTIME_ROLE, db_name="*"
+            ).get("privileges", ())
             if (key := grant_key(item)) is not None
         }
         for privilege, collection, db_name in RUNTIME_GRANTS:
@@ -105,7 +110,9 @@ def main() -> None:
                     raise
         actual_grants = {
             key
-            for item in client.describe_role(role_name=RUNTIME_ROLE).get("privileges", ())
+            for item in client.describe_role(
+                role_name=RUNTIME_ROLE, db_name="*"
+            ).get("privileges", ())
             if (key := grant_key(item)) is not None
         }
         if actual_grants != set(RUNTIME_GRANTS):

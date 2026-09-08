@@ -84,10 +84,15 @@ class FakeClient:
         self.calls.append(("grant_role", kwargs))
 
     def describe_role(self, **kwargs):
+        self.calls.append(("describe_role", kwargs))
+        requested_database = kwargs.get("db_name", "")
         return {
             "privileges": [
                 {"privilege": privilege, "collection_name": collection, "db_name": database}
                 for privilege, collection, database in sorted(self.grants)
+                if requested_database == "*"
+                or database == "*"
+                or database == requested_database
             ]
         }
 
@@ -150,6 +155,14 @@ class InitMilvusTest(unittest.TestCase):
             FakeClient.calls,
         )
         self.assertTrue(any(call[0] == "runtime_create_user" for call in FakeClient.calls))
+        role_descriptions = [item[1] for item in FakeClient.calls if item[0] == "describe_role"]
+        self.assertEqual(
+            role_descriptions,
+            [
+                {"role_name": "xlh_lightrag_runtime", "db_name": "*"},
+                {"role_name": "xlh_lightrag_runtime", "db_name": "*"},
+            ],
+        )
 
     def test_rerun_is_idempotent(self):
         with mock.patch.dict(os.environ, self.environment, clear=True):
