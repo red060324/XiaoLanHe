@@ -51,13 +51,26 @@ const (
 	selectDraftMetadataSQL    = `
 		SELECT edition_id,region_code,currency,version
 		FROM flash_sale_activity WHERE id=? AND status='draft'`
-	lockDraftMetadataSQL = selectDraftMetadataSQL + ` FOR UPDATE`
+	lockDraftMetadataSQL    = selectDraftMetadataSQL + ` FOR UPDATE`
+	listPublicActivitiesSQL = activitySelect + `
+		WHERE a.status IN ('active','cancelled','ended') AND (?=0 OR a.id<?)
+		ORDER BY a.id DESC LIMIT ?`
+	listAdminActivitiesSQL = activitySelect + `
+		WHERE (?=0 OR a.id<?)
+		ORDER BY a.id DESC LIMIT ?`
+	hasActivityReservationSQL = `
+		SELECT EXISTS(
+			SELECT 1 FROM flash_sale_reservation
+			WHERE activity_id=? AND user_id=?
+		)`
 )
 
 func (s *Store) ListActivities(ctx context.Context, filter flashsale.ListFilter) ([]entity.Activity, error) {
-	rows, err := s.db.QueryContext(ctx, activitySelect+`
-		WHERE a.status IN ('active','cancelled','ended') AND (?=0 OR a.id<?)
-		ORDER BY a.id DESC LIMIT ?`, filter.BeforeID, filter.BeforeID, filter.Limit)
+	query := listPublicActivitiesSQL
+	if filter.IncludeDraft {
+		query = listAdminActivitiesSQL
+	}
+	rows, err := s.db.QueryContext(ctx, query, filter.BeforeID, filter.BeforeID, filter.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -260,6 +273,12 @@ func (s *Store) GetActivity(ctx context.Context, id int64) (entity.Activity, err
 	return activity, err
 }
 
+func (s *Store) HasActivityReservation(ctx context.Context, activityID, userID int64) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, hasActivityReservationSQL, activityID, userID).Scan(&exists)
+	return exists, err
+}
+
 func (s *Store) Allocate(ctx context.Context, event flashsale.Event) (flashsale.Allocation, error) {
 	result, err := mysqltx.Run(ctx, s.db, func(tx *sql.Tx) (flashsale.Allocation, error) {
 		if err := lockUser(ctx, tx, event.UserID); err != nil {
@@ -275,8 +294,10 @@ func (s *Store) Allocate(ctx context.Context, event flashsale.Event) (flashsale.
 		if err != nil {
 			return flashsale.Allocation{}, err
 		}
-		if activity.Version != event.ActivityVersion || !activity.AcceptsReservationTime(event.ReservedAt) {
-			return flashsale.Allocation{}, flashsale.ErrEnded
+		// Activity version is part of the trusted MQ event identity. Reject a
+		// mismatched event before it can replay or fail a durable reservation.
+		if activity.Version != event.ActivityVersion {
+			return flashsale.Allocation{}, flashsale.ErrUnsupportedEvent
 		}
 
 		existing, err := queryAllocation(ctx, tx, event.RequestID)
@@ -289,6 +310,9 @@ func (s *Store) Allocate(ctx context.Context, event flashsale.Event) (flashsale.
 		}
 		if !errors.Is(err, flashsale.ErrNotFound) {
 			return flashsale.Allocation{}, err
+		}
+		if !activity.AcceptsReservationTime(event.ReservedAt) {
+			return flashsale.Allocation{}, flashsale.ErrEnded
 		}
 
 		var otherRequest string

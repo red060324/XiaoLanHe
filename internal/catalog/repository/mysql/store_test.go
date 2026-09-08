@@ -63,6 +63,45 @@ func TestFindPurchaseOfferMapsMissingRow(t *testing.T) {
 	}
 }
 
+func TestOwnsEdition(t *testing.T) {
+	t.Run("active entitlement exists", func(t *testing.T) {
+		store, mock := newMockStore(t)
+		mock.ExpectQuery(ownsEditionSQL).
+			WithArgs(int64(7), int64(12)).
+			WillReturnRows(sqlmock.NewRows([]string{"owned"}).AddRow(true))
+
+		owned, err := store.OwnsEdition(context.Background(), 7, 12)
+		if err != nil || !owned {
+			t.Fatalf("OwnsEdition() = (%v, %v), want (true, nil)", owned, err)
+		}
+	})
+
+	t.Run("active entitlement does not exist", func(t *testing.T) {
+		store, mock := newMockStore(t)
+		mock.ExpectQuery(ownsEditionSQL).
+			WithArgs(int64(7), int64(12)).
+			WillReturnRows(sqlmock.NewRows([]string{"owned"}).AddRow(false))
+
+		owned, err := store.OwnsEdition(context.Background(), 7, 12)
+		if err != nil || owned {
+			t.Fatalf("OwnsEdition() = (%v, %v), want (false, nil)", owned, err)
+		}
+	})
+
+	t.Run("query error", func(t *testing.T) {
+		store, mock := newMockStore(t)
+		wantErr := errors.New("query failed")
+		mock.ExpectQuery(ownsEditionSQL).
+			WithArgs(int64(7), int64(12)).
+			WillReturnError(wantErr)
+
+		owned, err := store.OwnsEdition(context.Background(), 7, 12)
+		if !errors.Is(err, wantErr) || owned {
+			t.Fatalf("OwnsEdition() = (%v, %v), want (false, %v)", owned, err, wantErr)
+		}
+	})
+}
+
 func TestListBindsRepeatedFiltersAndScansNullableReleaseDate(t *testing.T) {
 	store, mock := newMockStore(t)
 	local := time.Date(2026, 9, 7, 8, 30, 0, 123000000, time.FixedZone("test", 8*60*60))

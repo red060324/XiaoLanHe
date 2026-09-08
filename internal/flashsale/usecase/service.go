@@ -85,6 +85,7 @@ type AdmissionInspector interface {
 
 type Catalog interface {
 	PurchaseOffer(context.Context, int64, string, string) (catalogentity.PurchaseOffer, error)
+	OwnsEdition(context.Context, int64, int64) (bool, error)
 }
 
 type Store interface {
@@ -98,6 +99,7 @@ type Store interface {
 	Fail(context.Context, Event, string, string) error
 	MarkOrderReady(context.Context, string, string) error
 	GetRequest(context.Context, string, int64, bool) (Request, error)
+	HasActivityReservation(context.Context, int64, int64) (bool, error)
 	ExpireDue(context.Context, int) (int, error)
 	ClaimReleaseJobs(context.Context, int, time.Duration) ([]ReleaseJob, error)
 	CompleteReleaseJob(context.Context, int64, int) error
@@ -109,6 +111,7 @@ type ActivityCache interface {
 	Enable(context.Context, entity.Activity) error
 	Close(context.Context, entity.Activity) (time.Time, error)
 	GetRequest(context.Context, string, int64, bool) (Request, error)
+	HasActivityReservation(context.Context, int64, int64) (bool, error)
 }
 
 type OrderCommand struct {
@@ -225,11 +228,23 @@ func (s *Service) WithActivityCache(cache ActivityCache) *Service {
 }
 
 type ListFilter struct {
-	BeforeID int64
-	Limit    int
+	BeforeID     int64
+	Limit        int
+	IncludeDraft bool
 }
 
 func (s *Service) ListActivities(ctx context.Context, cursor string, limit int) ([]entity.Activity, string, error) {
+	return s.listActivities(ctx, cursor, limit, false)
+}
+
+func (s *Service) ListAdminActivities(ctx context.Context, principal auth.Principal, cursor string, limit int) ([]entity.Activity, string, error) {
+	if !principal.IsAdmin() {
+		return nil, "", ErrForbidden
+	}
+	return s.listActivities(ctx, cursor, limit, true)
+}
+
+func (s *Service) listActivities(ctx context.Context, cursor string, limit int, includeDraft bool) ([]entity.Activity, string, error) {
 	beforeID, err := decodeCursor(cursor)
 	if err != nil {
 		return nil, "", ErrInvalidInput
@@ -240,7 +255,7 @@ func (s *Service) ListActivities(ctx context.Context, cursor string, limit int) 
 	if limit < 1 || limit > 50 {
 		return nil, "", ErrInvalidInput
 	}
-	items, err := s.store.ListActivities(ctx, ListFilter{BeforeID: beforeID, Limit: limit + 1})
+	items, err := s.store.ListActivities(ctx, ListFilter{BeforeID: beforeID, Limit: limit + 1, IncludeDraft: includeDraft})
 	if err != nil {
 		return nil, "", err
 	}
@@ -264,6 +279,16 @@ func (s *Service) GetActivity(ctx context.Context, id int64) (entity.Activity, e
 		return entity.Activity{}, ErrNotFound
 	}
 	return activity, nil
+}
+
+func (s *Service) GetAdminActivity(ctx context.Context, principal auth.Principal, id int64) (entity.Activity, error) {
+	if !principal.IsAdmin() {
+		return entity.Activity{}, ErrForbidden
+	}
+	if id <= 0 {
+		return entity.Activity{}, ErrNotFound
+	}
+	return s.store.GetActivity(ctx, id)
 }
 
 func (s *Service) CreateActivity(ctx context.Context, principal auth.Principal, draft entity.Activity) (entity.Activity, error) {
@@ -363,15 +388,61 @@ func (s *Service) Reserve(ctx context.Context, principal auth.Principal, activit
 	if activityID <= 0 || !idempotencyPattern.MatchString(idempotencyKey) {
 		return Request{}, ErrInvalidInput
 	}
+	digest := idempotencyDigest(activityID, principal.UserID, idempotencyKey)
+	requestID := "fsr_" + strconv.FormatInt(activityID, 36) + "_" + digest[:32]
+	existing, err := s.store.GetRequest(ctx, requestID, principal.UserID, false)
+	if err == nil {
+		existing.Replayed = true
+		return existing, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Request{}, err
+	}
+	// Resolve the activity before consulting Redis so a stale marker cannot turn
+	// an unknown activity into a conflict or dependency error.
 	activity, err := s.store.GetActivity(ctx, activityID)
 	if err != nil {
 		return Request{}, err
 	}
+	if s.cache != nil {
+		existing, err = s.cache.GetRequest(ctx, requestID, principal.UserID, false)
+		if err == nil && (existing.Status != RequestFailed || existing.FailureCode != "technical_rollback") {
+			existing.Replayed = true
+			return existing, nil
+		}
+		if err == nil {
+			err = ErrNotFound
+		}
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return Request{}, err
+		}
+	}
+	reserved, err := s.store.HasActivityReservation(ctx, activityID, principal.UserID)
+	if err != nil {
+		return Request{}, err
+	}
+	if reserved {
+		return Request{}, ErrAlreadyReserved
+	}
+	if s.cache != nil {
+		reserved, err = s.cache.HasActivityReservation(ctx, activityID, principal.UserID)
+		if err != nil {
+			return Request{}, err
+		}
+		if reserved {
+			return Request{}, ErrAlreadyReserved
+		}
+	}
 	if activity.Status != entity.StatusActive && activity.Status != entity.StatusCancelled {
 		return Request{}, ErrEnded
 	}
-	digest := idempotencyDigest(activityID, principal.UserID, idempotencyKey)
-	requestID := "fsr_" + strconv.FormatInt(activityID, 36) + "_" + digest[:32]
+	owned, err := s.catalog.OwnsEdition(ctx, principal.UserID, activity.EditionID)
+	if err != nil {
+		return Request{}, err
+	}
+	if owned {
+		return Request{}, ErrAlreadyOwned
+	}
 	result, err := s.admission.Reserve(ctx, AdmissionCommand{
 		RequestID: requestID, ActivityID: activity.ID, ActivityVersion: activity.Version,
 		UserID: principal.UserID, IdempotencyDigest: digest,

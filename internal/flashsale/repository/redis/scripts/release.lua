@@ -9,6 +9,17 @@ end
 if not buyer and not request then
   return 2
 end
+if buyer == expected_buyer and request then
+  -- The same request ID and digest may be admitted again after a technical
+  -- rollback. A release from an older timestamp is complete but must not
+  -- release the newer incarnation.
+  local queued_pattern = '^' .. ARGV[2] .. '|' .. ARGV[3] .. '|queued|([0-9]+)$'
+  local queued_at_ms = tonumber(string.match(request, queued_pattern))
+  local released_at_ms = tonumber(ARGV[4])
+  if queued_at_ms and released_at_ms and queued_at_ms > released_at_ms then
+    return 2
+  end
+end
 if buyer ~= expected_buyer or request ~= expected_request then
   return -1
 end

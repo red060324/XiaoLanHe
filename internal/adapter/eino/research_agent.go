@@ -22,6 +22,7 @@ import (
 	assistantuc "github.com/red060324/XiaoLanHe/internal/assistant/usecase"
 	catalog "github.com/red060324/XiaoLanHe/internal/catalog/usecase"
 	community "github.com/red060324/XiaoLanHe/internal/community/usecase"
+	knowledgeentity "github.com/red060324/XiaoLanHe/internal/knowledge/entity"
 	"github.com/red060324/XiaoLanHe/internal/usecase"
 )
 
@@ -69,29 +70,52 @@ func NewResearchAgent(ctx context.Context, chatModel model.ToolCallingChatModel,
 	if capabilities.Knowledge == nil || capabilities.Catalog == nil || capabilities.Forum == nil || capabilities.WebEnabled && capabilities.Web == nil {
 		return nil, errors.New("enabled research tools require a capability")
 	}
-	knowledgeTool, err := toolutils.InferTool("search_lightrag", "Search the managed game-guide knowledge base through the configured read-only provider.", func(ctx context.Context, input knowledgeQuery) (toolObservation, error) {
-		query := strings.TrimSpace(input.Query)
+	knowledgeTool, err := toolutils.InferTool("search_lightrag", "Search the managed game-guide knowledge base through the configured read-only provider. For a planned research task, select a query unit by queryUnitId; the server binds its query and provider-supported parameters.", func(ctx context.Context, input knowledgeQuery) (toolObservation, error) {
 		return runTool(ctx, "lightrag", func(toolCtx context.Context) ([]usecase.Evidence, error) {
+			query := strings.TrimSpace(input.Query)
+			gameCode := strings.TrimSpace(input.GameCode)
+			regionCode := strings.TrimSpace(input.RegionCode)
+			mode := firstText(strings.TrimSpace(input.Mode), "mix")
+			unit, bound, err := bindQueryUnit(toolCtx, "lightrag", input.selection())
+			if err != nil {
+				return nil, err
+			}
+			if bound {
+				query = strings.TrimSpace(unit.Text)
+				gameCode = strings.TrimSpace(unit.Filters.GameCode)
+				regionCode = strings.TrimSpace(unit.Filters.Region)
+				mode = string(unit.LightRAGMode)
+			}
 			if query == "" {
 				return nil, errInvalidQuery
 			}
-			mode := firstText(strings.TrimSpace(input.Mode), "mix")
-			if state := researchState(ctx); state != nil && !state.allowsMode(mode) {
+			if state := researchState(toolCtx); state != nil && !bound && !state.allowsMode(mode) {
 				return nil, errInvalidQuery
 			}
-			return capabilities.Knowledge.SearchEvidence(toolCtx, query, strings.TrimSpace(input.GameCode), strings.TrimSpace(input.RegionCode), mode, 5)
+			return capabilities.Knowledge.SearchEvidence(toolCtx, query, gameCode, regionCode, mode, 5)
 		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create knowledge tool: %w", err)
 	}
-	catalogTool, err := toolutils.InferTool("search_catalog", "Search the game catalog by name or slug. This tool is read-only.", func(ctx context.Context, input catalogQuery) (toolObservation, error) {
-		query := strings.TrimSpace(input.Query)
+	catalogTool, err := toolutils.InferTool("search_catalog", "Search the game catalog by name or slug. This tool is read-only. For a planned research task, select a query unit by queryUnitId.", func(ctx context.Context, input catalogQuery) (toolObservation, error) {
 		return runTool(ctx, "catalog", func(toolCtx context.Context) ([]usecase.Evidence, error) {
+			query := strings.TrimSpace(input.Query)
+			region := strings.TrimSpace(input.Region)
+			currency := strings.TrimSpace(input.Currency)
+			unit, bound, err := bindQueryUnit(toolCtx, "catalog", input.selection())
+			if err != nil || bound && (currency != "" || input.Region != "" && input.RegionCode != "" && strings.TrimSpace(input.Region) != strings.TrimSpace(input.RegionCode)) {
+				return nil, errInvalidQuery
+			}
+			if bound {
+				query = strings.TrimSpace(unit.Text)
+				region = strings.TrimSpace(unit.Filters.Region)
+				currency = ""
+			}
 			if query == "" {
 				return nil, errInvalidQuery
 			}
-			result, err := capabilities.Catalog.List(toolCtx, catalog.ListInput{Query: query, Region: input.Region, Currency: input.Currency, Limit: 5})
+			result, err := capabilities.Catalog.List(toolCtx, catalog.ListInput{Query: query, Region: region, Currency: currency, Limit: 5})
 			if err != nil {
 				return nil, err
 			}
@@ -105,13 +129,22 @@ func NewResearchAgent(ctx context.Context, chatModel model.ToolCallingChatModel,
 	if err != nil {
 		return nil, fmt.Errorf("create catalog tool: %w", err)
 	}
-	forumTool, err := toolutils.InferTool("search_forum", "Search published game-community posts. This tool is read-only.", func(ctx context.Context, input forumQuery) (toolObservation, error) {
-		query := strings.TrimSpace(input.Query)
+	forumTool, err := toolutils.InferTool("search_forum", "Search published game-community posts. This tool is read-only. For a planned research task, select a query unit by queryUnitId.", func(ctx context.Context, input forumQuery) (toolObservation, error) {
 		return runTool(ctx, "forum", func(toolCtx context.Context) ([]usecase.Evidence, error) {
+			query := strings.TrimSpace(input.Query)
+			gameID := input.GameID
+			unit, bound, err := bindQueryUnit(toolCtx, "forum", input.selection())
+			if err != nil || bound && gameID != 0 {
+				return nil, errInvalidQuery
+			}
+			if bound {
+				query = strings.TrimSpace(unit.Text)
+				gameID = 0
+			}
 			if query == "" {
 				return nil, errInvalidQuery
 			}
-			result, err := capabilities.Forum.ListPosts(toolCtx, community.ListPostsInput{GameID: input.GameID, Query: query, Limit: 5})
+			result, err := capabilities.Forum.ListPosts(toolCtx, community.ListPostsInput{GameID: gameID, Query: query, Limit: 5})
 			if err != nil {
 				return nil, err
 			}
@@ -127,9 +160,16 @@ func NewResearchAgent(ctx context.Context, chatModel model.ToolCallingChatModel,
 	}
 	tools := []tool.BaseTool{knowledgeTool, catalogTool, forumTool}
 	if capabilities.WebEnabled {
-		webTool, err := toolutils.InferTool("search_web", "Search the public Web for time-sensitive game information. This tool is read-only.", func(ctx context.Context, input webQuery) (toolObservation, error) {
-			query := strings.TrimSpace(input.Query)
+		webTool, err := toolutils.InferTool("search_web", "Search the public Web for time-sensitive game information. This tool is read-only. For a planned research task, select a query unit by queryUnitId.", func(ctx context.Context, input webQuery) (toolObservation, error) {
 			return runTool(ctx, "web", func(toolCtx context.Context) ([]usecase.Evidence, error) {
+				query := strings.TrimSpace(input.Query)
+				unit, bound, err := bindQueryUnit(toolCtx, "web", input.selection())
+				if err != nil {
+					return nil, err
+				}
+				if bound {
+					query = strings.TrimSpace(unit.Text)
+				}
 				if query == "" {
 					return nil, errInvalidQuery
 				}
@@ -285,7 +325,7 @@ func (a *ResearchAgent) run(ctx context.Context, decision usecase.RouteDecision,
 	}()
 	runCtx, cancel := context.WithTimeout(ctx, a.limits.TotalTimeout)
 	defer cancel()
-	state := &researchRun{maxTools: a.limits.MaxToolCalls, toolTimeout: a.limits.ToolTimeout, budget: budget, allowedTools: allowedTools, allowedModes: allowedModes, runID: runID, skillID: skillID}
+	state := &researchRun{maxTools: a.limits.MaxToolCalls, toolTimeout: a.limits.ToolTimeout, budget: budget, allowedTools: allowedTools, allowedModes: allowedModes, queryUnits: indexQueryUnits(queryUnits), plannedProviders: researchProviders(decision, allowedTools), runID: runID, skillID: skillID}
 	runCtx = context.WithValue(runCtx, researchRunKey{}, state)
 	payload, _ := json.Marshal(struct {
 		Queries            []string                    `json:"queries"`
@@ -310,18 +350,12 @@ func (a *ResearchAgent) run(ctx context.Context, decision usecase.RouteDecision,
 		}
 	}
 
-	stopReason := "complete"
+	stopReason := researchAgentErrorStopReason(agentErr)
 	switch {
-	case errors.Is(agentErr, errToolCallLimit):
-		stopReason = "max_tool_calls"
-	case errors.Is(agentErr, adk.ErrExceedMaxIterations):
-		stopReason = "max_iterations"
 	case ctx.Err() != nil:
 		stopReason = "cancelled"
 	case errors.Is(runCtx.Err(), context.DeadlineExceeded):
 		stopReason = "deadline"
-	case agentErr != nil:
-		stopReason = "model_error"
 	}
 	result = state.result(stopReason)
 
@@ -331,21 +365,17 @@ func (a *ResearchAgent) run(ctx context.Context, decision usecase.RouteDecision,
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		return result, context.DeadlineExceeded
 	}
-	if errors.Is(agentErr, errToolCallLimit) || errors.Is(agentErr, adk.ErrExceedMaxIterations) {
-		result.Status = usecase.ResearchBounded
-		result.Degraded = true
-		result.Notes = append(result.Notes, "检索已达到安全预算，以下结果可能不完整。")
-		if len(result.Evidence) > 0 {
-			return result, nil
-		}
-		return result, fmt.Errorf("%w: %s", usecase.ErrResearchBudgetExceeded, stopReason)
-	}
-	if agentErr != nil {
-		if len(result.Evidence) > 0 {
+	if researchAgentErrorFailsClosed(agentErr) {
+		if isResearchBudgetError(agentErr) {
+			result.Status = usecase.ResearchBounded
+			result.Degraded = true
+			result.Notes = append(result.Notes, "检索已达到安全预算，以下结果可能不完整。")
+			if errors.Is(agentErr, errToolCallLimit) || errors.Is(agentErr, adk.ErrExceedMaxIterations) {
+				return result, fmt.Errorf("%w: %w", usecase.ErrResearchBudgetExceeded, agentErr)
+			}
+		} else if len(result.Evidence) > 0 {
 			result.Status = usecase.ResearchPartial
 			result.Degraded = true
-			result.Notes = append(result.Notes, "研究模型提前停止，以下结果可能不完整。")
-			return result, nil
 		}
 		return result, agentErr
 	}
@@ -355,26 +385,112 @@ func (a *ResearchAgent) run(ctx context.Context, decision usecase.RouteDecision,
 	return result, nil
 }
 
+func researchAgentErrorStopReason(err error) string {
+	switch {
+	case err == nil:
+		return "complete"
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded), errorReportsTimeout(err):
+		return "deadline"
+	case errors.Is(err, assistantuc.ErrModelBudget):
+		return "max_model_calls"
+	case errors.Is(err, assistantuc.ErrToolBudget), errors.Is(err, errToolCallLimit):
+		return "max_tool_calls"
+	case errors.Is(err, assistantuc.ErrDelegationBudget):
+		return "max_delegations"
+	case errors.Is(err, adk.ErrExceedMaxIterations), errors.Is(err, usecase.ErrResearchBudgetExceeded):
+		return "max_iterations"
+	case errors.Is(err, knowledgeentity.ErrContract), errors.Is(err, assistantentity.ErrInvalidAgentContract):
+		return "invalid_output"
+	default:
+		return "model_error"
+	}
+}
+
+func researchAgentErrorFailsClosed(err error) bool {
+	// Provider outages are converted into typed tool observations before this
+	// point. Any error that terminates the model/agent loop is therefore a real
+	// terminal failure and must never be hidden behind partial evidence.
+	return err != nil
+}
+
+func isResearchBudgetError(err error) bool {
+	return errors.Is(err, assistantuc.ErrModelBudget) || errors.Is(err, assistantuc.ErrToolBudget) || errors.Is(err, assistantuc.ErrDelegationBudget) ||
+		errors.Is(err, usecase.ErrResearchBudgetExceeded) || errors.Is(err, errToolCallLimit) || errors.Is(err, adk.ErrExceedMaxIterations)
+}
+
+func errorReportsTimeout(err error) bool {
+	var timeout interface{ Timeout() bool }
+	return errors.As(err, &timeout) && timeout.Timeout()
+}
+
 type knowledgeQuery struct {
-	Query      string `json:"query"`
-	GameCode   string `json:"gameCode,omitempty"`
-	RegionCode string `json:"regionCode,omitempty"`
-	Mode       string `json:"mode,omitempty"`
+	QueryUnitID string   `json:"queryUnitId,omitempty"`
+	Query       string   `json:"query,omitempty"`
+	GameCode    string   `json:"gameCode,omitempty"`
+	RegionCode  string   `json:"regionCode,omitempty"`
+	Platform    string   `json:"platform,omitempty"`
+	Platforms   []string `json:"platforms,omitempty"`
+	Mode        string   `json:"mode,omitempty"`
 }
 
 type webQuery struct {
-	Query string `json:"query"`
+	QueryUnitID string   `json:"queryUnitId,omitempty"`
+	Query       string   `json:"query,omitempty"`
+	GameCode    string   `json:"gameCode,omitempty"`
+	RegionCode  string   `json:"regionCode,omitempty"`
+	Platform    string   `json:"platform,omitempty"`
+	Platforms   []string `json:"platforms,omitempty"`
+	Mode        string   `json:"mode,omitempty"`
 }
 
 type catalogQuery struct {
-	Query    string `json:"query"`
-	Region   string `json:"region,omitempty"`
-	Currency string `json:"currency,omitempty"`
+	QueryUnitID string   `json:"queryUnitId,omitempty"`
+	Query       string   `json:"query,omitempty"`
+	GameCode    string   `json:"gameCode,omitempty"`
+	Region      string   `json:"region,omitempty"`
+	RegionCode  string   `json:"regionCode,omitempty"`
+	Platform    string   `json:"platform,omitempty"`
+	Platforms   []string `json:"platforms,omitempty"`
+	Mode        string   `json:"mode,omitempty"`
+	Currency    string   `json:"currency,omitempty"`
 }
 
 type forumQuery struct {
-	Query  string `json:"query"`
-	GameID int64  `json:"gameId,omitempty"`
+	QueryUnitID string   `json:"queryUnitId,omitempty"`
+	Query       string   `json:"query,omitempty"`
+	GameCode    string   `json:"gameCode,omitempty"`
+	RegionCode  string   `json:"regionCode,omitempty"`
+	Platform    string   `json:"platform,omitempty"`
+	Platforms   []string `json:"platforms,omitempty"`
+	Mode        string   `json:"mode,omitempty"`
+	GameID      int64    `json:"gameId,omitempty"`
+}
+
+type queryUnitSelection struct {
+	ID, Query, GameCode, RegionCode, Platform, Mode string
+	Platforms                                       []string
+}
+
+func (q knowledgeQuery) selection() queryUnitSelection {
+	return queryUnitSelection{ID: q.QueryUnitID, Query: q.Query, GameCode: q.GameCode, RegionCode: q.RegionCode, Platform: q.Platform, Platforms: q.Platforms, Mode: q.Mode}
+}
+
+func (q catalogQuery) selection() queryUnitSelection {
+	region := q.RegionCode
+	if strings.TrimSpace(region) == "" {
+		region = q.Region
+	}
+	return queryUnitSelection{ID: q.QueryUnitID, Query: q.Query, GameCode: q.GameCode, RegionCode: region, Platform: q.Platform, Platforms: q.Platforms, Mode: q.Mode}
+}
+
+func (q forumQuery) selection() queryUnitSelection {
+	return queryUnitSelection{ID: q.QueryUnitID, Query: q.Query, GameCode: q.GameCode, RegionCode: q.RegionCode, Platform: q.Platform, Platforms: q.Platforms, Mode: q.Mode}
+}
+
+func (q webQuery) selection() queryUnitSelection {
+	return queryUnitSelection{ID: q.QueryUnitID, Query: q.Query, GameCode: q.GameCode, RegionCode: q.RegionCode, Platform: q.Platform, Platforms: q.Platforms, Mode: q.Mode}
 }
 
 type toolEvidence struct {
@@ -402,6 +518,11 @@ type researchRun struct {
 	budget                      *assistantuc.Budget
 	allowedTools                map[string]bool
 	allowedModes                map[string]bool
+	queryUnits                  map[string]assistantentity.QueryUnit
+	plannedProviders            map[string]bool
+	attemptedProviders          map[string]bool
+	succeededProviders          map[string]bool
+	failedProviders             map[string]bool
 	runID, skillID              string
 }
 
@@ -442,18 +563,37 @@ func (r *researchRun) runTool(ctx context.Context, provider string, fn func(cont
 	toolCtx, cancel := context.WithTimeout(ctx, r.toolTimeout)
 	defer cancel()
 	evidence, err := fn(toolCtx)
-	if err != nil {
-		if ctx.Err() != nil {
-			r.logTool(ctx, provider, call, "cancelled", started)
-			return toolObservation{}, ctx.Err()
+	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errorReportsTimeout(err)) {
+		outcome := "deadline"
+		if errors.Is(err, context.Canceled) {
+			outcome = "cancelled"
 		}
-		if errors.Is(err, errInvalidQuery) || errors.Is(err, usecase.ErrInvalidSearchQuery) || errors.Is(err, catalog.ErrInvalidInput) || errors.Is(err, community.ErrInvalidInput) {
+		r.recordProviderAttempt(provider, false)
+		r.logTool(ctx, provider, call, outcome, started)
+		return toolObservation{}, err
+	}
+	if ctx.Err() != nil {
+		r.logTool(ctx, provider, call, "cancelled", started)
+		return toolObservation{}, ctx.Err()
+	}
+	if errors.Is(toolCtx.Err(), context.DeadlineExceeded) {
+		r.recordProviderAttempt(provider, false)
+		r.logTool(ctx, provider, call, "deadline", started)
+		return toolObservation{}, context.DeadlineExceeded
+	}
+	if err != nil {
+		if errors.Is(err, knowledgeentity.ErrContract) {
+			r.logTool(ctx, provider, call, "contract", started)
+			return toolObservation{}, err
+		}
+		if errors.Is(err, errInvalidQuery) || errors.Is(err, usecase.ErrInvalidSearchQuery) || errors.Is(err, knowledgeentity.ErrInvalidInput) || errors.Is(err, catalog.ErrInvalidInput) || errors.Is(err, community.ErrInvalidInput) {
 			r.logTool(ctx, provider, call, "invalid", started)
 			return toolObservation{Status: "invalid", Provider: provider, Note: "tool input is invalid"}, nil
 		}
 		r.mu.Lock()
 		r.failures++
 		r.mu.Unlock()
+		r.recordProviderAttempt(provider, false)
 		r.logTool(ctx, provider, call, "failed", started)
 		return toolObservation{Status: "failed", Provider: provider, Note: "provider temporarily unavailable"}, nil
 	}
@@ -467,6 +607,7 @@ func (r *researchRun) runTool(ctx context.Context, provider string, fn func(cont
 	r.successes++
 	r.evidence = append(r.evidence, evidence...)
 	r.mu.Unlock()
+	r.recordProviderAttempt(provider, true)
 	observation := toolObservation{Status: "ok", Provider: provider, Evidence: make([]toolEvidence, 0, len(evidence))}
 	if len(evidence) == 0 {
 		observation.Status = "no_result"
@@ -481,6 +622,89 @@ func (r *researchRun) runTool(ctx context.Context, provider string, fn func(cont
 
 func (r *researchRun) allowsMode(mode string) bool {
 	return r.allowedModes == nil || r.allowedModes[mode]
+}
+
+func bindQueryUnit(ctx context.Context, provider string, selection queryUnitSelection) (assistantentity.QueryUnit, bool, error) {
+	state := researchState(ctx)
+	if state == nil || state.queryUnits == nil {
+		return assistantentity.QueryUnit{}, false, nil
+	}
+	unit, ok := state.queryUnits[strings.TrimSpace(selection.ID)]
+	if !ok || !queryUnitAllows(unit, provider) || !queryUnitArgumentsMatch(unit, selection) {
+		return assistantentity.QueryUnit{}, false, errInvalidQuery
+	}
+	return unit, true, nil
+}
+
+func queryUnitAllows(unit assistantentity.QueryUnit, provider string) bool {
+	for _, source := range unit.Sources {
+		if string(source) == provider {
+			return true
+		}
+	}
+	return false
+}
+
+func queryUnitArgumentsMatch(unit assistantentity.QueryUnit, selection queryUnitSelection) bool {
+	if selection.Query != "" && strings.TrimSpace(selection.Query) != strings.TrimSpace(unit.Text) ||
+		selection.GameCode != "" && strings.TrimSpace(selection.GameCode) != strings.TrimSpace(unit.Filters.GameCode) ||
+		selection.RegionCode != "" && strings.TrimSpace(selection.RegionCode) != strings.TrimSpace(unit.Filters.Region) ||
+		selection.Mode != "" && strings.TrimSpace(selection.Mode) != string(unit.LightRAGMode) {
+		return false
+	}
+	if selection.Platform != "" {
+		if len(unit.Filters.Platforms) != 1 || strings.TrimSpace(selection.Platform) != strings.TrimSpace(unit.Filters.Platforms[0]) {
+			return false
+		}
+	}
+	if selection.Platforms != nil && !equalTrimmedStrings(selection.Platforms, unit.Filters.Platforms) {
+		return false
+	}
+	return true
+}
+
+func equalTrimmedStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if strings.TrimSpace(left[i]) != strings.TrimSpace(right[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func indexQueryUnits(units []assistantentity.QueryUnit) map[string]assistantentity.QueryUnit {
+	if len(units) == 0 {
+		return nil
+	}
+	result := make(map[string]assistantentity.QueryUnit, len(units))
+	for _, unit := range units {
+		result[unit.ID] = unit
+	}
+	return result
+}
+
+func researchProviders(decision usecase.RouteDecision, allowedTools map[string]bool) map[string]bool {
+	result := make(map[string]bool)
+	if allowedTools != nil {
+		for name, allowed := range allowedTools {
+			if allowed && strings.HasPrefix(name, "search_") {
+				result[strings.TrimPrefix(name, "search_")] = true
+			}
+		}
+		return result
+	}
+	if decision.NeedLocalKnowledge {
+		result["lightrag"] = true
+		result["catalog"] = true
+		result["forum"] = true
+	}
+	if decision.NeedWeb {
+		result["web"] = true
+	}
+	return result
 }
 
 func unitsForTask(task assistantentity.ResearchTask, values map[string]assistantentity.QueryUnit) []assistantentity.QueryUnit {
@@ -512,7 +736,35 @@ func (r *researchRun) addIteration() int {
 func (r *researchRun) allFailed() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.failures > 0 && r.successes == 0
+	if len(r.plannedProviders) == 0 {
+		return false
+	}
+	for provider := range r.plannedProviders {
+		if !r.attemptedProviders[provider] || !r.failedProviders[provider] || r.succeededProviders[provider] {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *researchRun) recordProviderAttempt(provider string, succeeded bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.attemptedProviders == nil {
+		r.attemptedProviders = make(map[string]bool)
+	}
+	if r.succeededProviders == nil {
+		r.succeededProviders = make(map[string]bool)
+	}
+	if r.failedProviders == nil {
+		r.failedProviders = make(map[string]bool)
+	}
+	r.attemptedProviders[provider] = true
+	if succeeded {
+		r.succeededProviders[provider] = true
+		return
+	}
+	r.failedProviders[provider] = true
 }
 
 func (r *researchRun) logTool(ctx context.Context, provider string, call int, result string, started time.Time) {

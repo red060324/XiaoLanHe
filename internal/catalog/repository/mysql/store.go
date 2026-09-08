@@ -28,7 +28,8 @@ type catalogSaveAttempt struct {
 }
 
 const (
-	existsSQL = `select exists(select 1 from game where id=? and status='active')`
+	existsSQL      = `select exists(select 1 from game where id=? and status='active')`
+	ownsEditionSQL = `select exists(select 1 from game_entitlement where user_id=? and edition_id=? and status='active')`
 
 	findPurchaseOfferSQL = `
 		select g.id,g.slug,g.name,e.id,e.code,e.name,p.amount_minor,p.currency,p.region_code
@@ -136,6 +137,12 @@ func (s *Store) Exists(ctx context.Context, id int64) (bool, error) {
 	var exists bool
 	err := s.db.QueryRowContext(ctx, existsSQL, id).Scan(&exists)
 	return exists, err
+}
+
+func (s *Store) OwnsEdition(ctx context.Context, userID, editionID int64) (bool, error) {
+	var owned bool
+	err := s.db.QueryRowContext(ctx, ownsEditionSQL, userID, editionID).Scan(&owned)
+	return owned, err
 }
 
 func (s *Store) FindPurchaseOffer(ctx context.Context, editionID int64, pricing catalog.Pricing) (entity.PurchaseOffer, error) {

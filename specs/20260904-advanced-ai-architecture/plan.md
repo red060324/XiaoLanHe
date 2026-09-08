@@ -1,6 +1,6 @@
 # Technical Plan
 
-- Status: `IMPLEMENTED — PRE_MERGE ENVIRONMENT VERIFICATION BLOCKED`
+- Status: `IMPLEMENTED PATCH — CURRENT CI NOT RUN; EXTERNAL PRE_MERGE GATES BLOCKED`
 - Authoritative spec: `./spec.md`
 
 ## Selected Runtime Design
@@ -66,8 +66,12 @@ in `contracts/agent-contracts.md`.
 
 - Game Copilot receives the bounded question, Context Builder result, QueryPlan,
   selected Skill and aggregate budget.
-- Research receives only objective, query units/modes/filters, required facets and
-  allowed tools; it receives no full profile/history.
+- Research receives only objective, task-local QueryUnit IDs, required facets and
+  allowed tools; it receives no full profile/history. Each typed Research tool call
+  selects one QueryUnit with `queryUnitId`. The server resolves that ID against this
+  task's immutable QueryPlan, rejects unknown/foreign IDs or mismatched duplicate
+  arguments, and executes `unit.Text`; model-supplied replacement query text is never
+  executed.
 - Planning receives constraints, a Skill-selected explicit profile projection,
   required owned IDs and bounded run-local evidence.
 - Worker results contain evidence IDs, conclusions, assumptions, unresolved facets,
@@ -95,9 +99,12 @@ startup when advanced mode is enabled.
 ## Query Planning, Retrieval And Evidence
 
 Evidence/planning routes call Query Planner once. A QueryPlan contains 1-8 unique
-units with 1-100 Unicode-rune text, permitted filters, `stable|recent` freshness,
-required facets and allowed sources. LightRAG modes are `local`, `global`, `hybrid`
-or `mix`; `naive` and `bypass` are not model-selectable.
+QueryUnits with 1-100 Unicode-rune `Text`, allowed sources, required facets and
+`stable|recent` freshness. A typed adapter passes a structured filter or mode only
+when the selected provider actually supports it. Platform/source selection remains
+orchestration metadata and is never fabricated or serialized as a provider filter.
+LightRAG modes are `local`, `global`, `hybrid` or `mix`; `naive` and `bypass` are not
+model-selectable.
 
 The LightRAG adapter sends `POST /query/data` with deployment caps for `top_k`,
 `chunk_top_k` and token budgets, references enabled, and no conversation history or
@@ -108,11 +115,18 @@ Each returned object is bounded and normalized into provider-neutral run-local
 evidence. References must have a safe `file_path` belonging to the managed source
 namespace (`xlh-*.txt` or the explicit one-time legacy-import namespace). Unknown
 sources, unsafe URLs, malformed relationships, missing references and oversized text
-are dropped. If all evidence is dropped, the result is `no_result`.
+are dropped. A successful provider call with no usable evidence is `no_result`, not a
+provider failure. Usable but incomplete evidence is `partial`, including evidence
+retained when another attempted provider fails. An unattempted planned provider never
+counts as failed and cannot support a claim that all sources failed.
 
-Research may refine queries within budget. A LightRAG outage is explicitly recorded
-as `lightrag_unavailable`; the old local knowledge retriever is not a hidden fallback
-in advanced mode. Other permitted sources can still produce a partial artifact.
+Research may choose among the task's QueryUnits and re-invoke permitted providers
+within budget, but it cannot replace `unit.Text`. A LightRAG outage is explicitly
+recorded as `lightrag_unavailable`; the old local knowledge retriever is not a hidden
+fallback in advanced mode. An explicit `no_evidence`/limited-answer fallback is
+permitted only when every planned provider was actually attempted, every attempt
+failed, and no evidence was produced. Successful-empty remains ordinary `no_result`;
+evidence from any provider remains `partial` rather than no-evidence degradation.
 
 ## Planning Agent
 
@@ -121,6 +135,11 @@ facts, trusted ownership IDs, deterministic filters/scoring and authorized evide
 The UseCase re-reads mutable catalog/ownership facts, validates every evidence ID and
 drops unsupported claims. No cart, coupon, reservation, order or payment capability
 is reachable.
+
+Final `recommend_games` revalidation removes owned games. Mixed results retain the
+unowned recommendations; an all-owned result becomes `no_result` with
+`no_evidence`. `build_team` may intentionally use an owned subject, so ownership is
+not a rejection condition for that Skill.
 
 ## Official LightRAG Boundary
 
@@ -296,7 +315,16 @@ HTTP API plus whole-volume lifecycle tests. `data-model.md` records both boundar
 - LightRAG's own pending-document ceiling supplies write backpressure. The Go facade
   maps 429 and pipeline-busy states without buffering a second application queue.
 - 401/403 is configuration failure; 409 is source/pipeline conflict; 422 is permanent
-  input/config error; 429/5xx/timeouts are explicit dependency failures.
+  input/config error; 429/5xx/timeouts and model-loop termination errors are explicit
+  dependency failures. Ordinary provider outages may become typed failed observations
+  so other planned providers can still contribute evidence; a model/agent call error
+  itself is never hidden by evidence collected earlier in the run.
+- Overall or provider timeout, cancellation, provider-contract rejection, model/tool/
+  delegation/Research budget exhaustion and delegation-cycle detection remain
+  terminal fail-closed outcomes. They cannot silently broaden tools, invent evidence,
+  try an unplanned provider or be converted into the limited-answer fallback. A
+  timeout may record an attempted provider, but it does not satisfy the recoverable
+  all-planned-providers-failed classification.
 
 ## Security And Privacy
 

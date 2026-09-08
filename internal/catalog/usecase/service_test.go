@@ -51,6 +51,55 @@ func TestServiceGameExists(t *testing.T) {
 	}
 }
 
+func TestServiceOwnsEdition(t *testing.T) {
+	t.Run("rejects invalid IDs without querying the store", func(t *testing.T) {
+		store := &catalogStore{ownsEdition: true}
+		service := NewService(store)
+
+		for _, ids := range []struct {
+			userID, editionID int64
+		}{
+			{userID: 0, editionID: 12},
+			{userID: 7, editionID: 0},
+			{userID: -1, editionID: 12},
+			{userID: 7, editionID: -1},
+		} {
+			owned, err := service.OwnsEdition(context.Background(), ids.userID, ids.editionID)
+			if err != nil || owned {
+				t.Fatalf("OwnsEdition(%d, %d) = (%v, %v), want (false, nil)", ids.userID, ids.editionID, owned, err)
+			}
+		}
+		if store.ownsEditionCalls != 0 {
+			t.Fatalf("store calls = %d, want 0", store.ownsEditionCalls)
+		}
+	})
+
+	t.Run("returns true from the store", func(t *testing.T) {
+		store := &catalogStore{ownsEdition: true}
+		owned, err := NewService(store).OwnsEdition(context.Background(), 7, 12)
+		if err != nil || !owned || store.ownsEditionCalls != 1 || store.ownsEditionUserID != 7 || store.ownsEditionID != 12 {
+			t.Fatalf("owned=%v userID=%d editionID=%d calls=%d err=%v", owned, store.ownsEditionUserID, store.ownsEditionID, store.ownsEditionCalls, err)
+		}
+	})
+
+	t.Run("returns false from the store", func(t *testing.T) {
+		store := &catalogStore{}
+		owned, err := NewService(store).OwnsEdition(context.Background(), 7, 12)
+		if err != nil || owned || store.ownsEditionCalls != 1 {
+			t.Fatalf("owned=%v calls=%d err=%v", owned, store.ownsEditionCalls, err)
+		}
+	})
+
+	t.Run("propagates store errors", func(t *testing.T) {
+		wantErr := errors.New("entitlement lookup failed")
+		store := &catalogStore{ownsEditionErr: wantErr}
+		owned, err := NewService(store).OwnsEdition(context.Background(), 7, 12)
+		if !errors.Is(err, wantErr) || owned || store.ownsEditionCalls != 1 {
+			t.Fatalf("owned=%v calls=%d err=%v", owned, store.ownsEditionCalls, err)
+		}
+	})
+}
+
 func TestServicePurchaseOffer(t *testing.T) {
 	store := &catalogStore{offer: entity.PurchaseOffer{EditionID: 12, AmountMinor: 1999, Currency: "USD", Region: "GLOBAL"}}
 	service := NewService(store)
@@ -95,19 +144,24 @@ func TestServiceUpdate(t *testing.T) {
 }
 
 type catalogStore struct {
-	items        []entity.Game
-	game         entity.Game
-	filter       ListFilter
-	slug         string
-	pricing      Pricing
-	viewerID, id int64
-	draft        entity.Draft
-	saved        bool
-	exists       bool
-	existsErr    error
-	existsCalls  int
-	existsID     int64
-	offer        entity.PurchaseOffer
+	items             []entity.Game
+	game              entity.Game
+	filter            ListFilter
+	slug              string
+	pricing           Pricing
+	viewerID, id      int64
+	draft             entity.Draft
+	saved             bool
+	exists            bool
+	existsErr         error
+	existsCalls       int
+	existsID          int64
+	ownsEdition       bool
+	ownsEditionErr    error
+	ownsEditionCalls  int
+	ownsEditionUserID int64
+	ownsEditionID     int64
+	offer             entity.PurchaseOffer
 }
 
 func (s *catalogStore) List(_ context.Context, filter ListFilter) ([]entity.Game, error) {
@@ -126,6 +180,12 @@ func (s *catalogStore) Exists(_ context.Context, id int64) (bool, error) {
 	s.existsCalls++
 	s.existsID = id
 	return s.exists, s.existsErr
+}
+func (s *catalogStore) OwnsEdition(_ context.Context, userID, editionID int64) (bool, error) {
+	s.ownsEditionCalls++
+	s.ownsEditionUserID = userID
+	s.ownsEditionID = editionID
+	return s.ownsEdition, s.ownsEditionErr
 }
 func (s *catalogStore) Save(_ context.Context, id int64, draft entity.Draft) (entity.Game, error) {
 	s.id, s.draft, s.saved = id, draft, true

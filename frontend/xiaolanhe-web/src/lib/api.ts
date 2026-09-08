@@ -160,6 +160,16 @@ export type FlashSale = {
   availability: 'upcoming' | 'available' | 'exhausted' | 'ended' | 'cancelled' | 'unavailable';
 };
 
+export type AdminFlashSale = FlashSale & {
+  totalStock: number;
+  paymentTimeoutSeconds: number;
+};
+
+export type FlashSaleDraft = Pick<
+  AdminFlashSale,
+  'code' | 'editionId' | 'region' | 'currency' | 'salePriceMinor' | 'totalStock' | 'startsAt' | 'endsAt' | 'paymentTimeoutSeconds'
+>;
+
 export type FlashSaleRequest = {
   requestId: string;
   activityId: string;
@@ -357,6 +367,46 @@ export async function listFlashSales(cursor = ''): Promise<Page<FlashSale>> {
   const params = new URLSearchParams();
   if (cursor) params.set('cursor', cursor);
   return requestJSON<Page<FlashSale>>(`/api/flash-sales?${params}`);
+}
+
+export async function listAdminFlashSales(cursor = ''): Promise<Page<AdminFlashSale>> {
+  const params = new URLSearchParams();
+  if (cursor) params.set('cursor', cursor);
+  const query = params.toString();
+  return requestJSON<Page<AdminFlashSale>>(`/api/admin/flash-sales${query ? `?${query}` : ''}`);
+}
+
+export async function getAdminFlashSale(activityId: string): Promise<AdminFlashSale> {
+  const result = await requestJSON<{ flashSale: AdminFlashSale }>(`/api/admin/flash-sales/${encodeURIComponent(activityId)}`);
+  return result.flashSale;
+}
+
+export async function createAdminFlashSale(draft: FlashSaleDraft): Promise<AdminFlashSale> {
+  const result = await requestJSON<{ flashSale: AdminFlashSale }>('/api/admin/flash-sales', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(draft)
+  });
+  return result.flashSale;
+}
+
+export async function updateAdminFlashSale(activityId: string, draft: FlashSaleDraft): Promise<AdminFlashSale> {
+  const result = await requestJSON<{ flashSale: AdminFlashSale }>(`/api/admin/flash-sales/${encodeURIComponent(activityId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(draft)
+  });
+  return result.flashSale;
+}
+
+export async function activateAdminFlashSale(activityId: string): Promise<AdminFlashSale> {
+  const result = await requestJSON<{ flashSale: AdminFlashSale }>(`/api/admin/flash-sales/${encodeURIComponent(activityId)}/activate`, { method: 'POST' });
+  return result.flashSale;
+}
+
+export async function cancelAdminFlashSale(activityId: string): Promise<AdminFlashSale> {
+  const result = await requestJSON<{ flashSale: AdminFlashSale }>(`/api/admin/flash-sales/${encodeURIComponent(activityId)}/cancel`, { method: 'POST' });
+  return result.flashSale;
 }
 
 export async function reserveFlashSale(activityId: string, idempotencyKey: string): Promise<{ request: FlashSaleRequest; replayed: boolean }> {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"github.com/red060324/XiaoLanHe/internal/assistant/skill"
 	legacy "github.com/red060324/XiaoLanHe/internal/usecase"
 )
+
+const researchUnavailableNoteFragment = "检索来源暂时不可用"
 
 func TestAdvancedAssistantDirectSkipsPlannerCopilotAndProfile(t *testing.T) {
 	router := &advancedRouterFake{decision: entity.RouterDecision{Route: entity.RouteDirect, Intent: "greeting", SkillID: "generic_qa", SkillVersion: "1.0.0", ResponseMode: "chat"}}
@@ -78,6 +81,76 @@ func TestAdvancedAssistantFailsClosedBeforeAnswer(t *testing.T) {
 		})
 	}
 }
+
+func TestAdvancedAssistantResearchUnavailableStillAnswers(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		stream bool
+		err    error
+	}{
+		{name: "generate", err: legacy.ErrAllResearchToolsFailed},
+		{name: "stream with wrapped classification", stream: true, err: fmt.Errorf("copilot: %w", legacy.ErrAllResearchToolsFailed)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			router := &advancedRouterFake{decision: entity.RouterDecision{Route: entity.RouteResearch, Intent: "game_research", SkillID: "research_guide", SkillVersion: "1.0.0", ResponseMode: "answer"}}
+			answerer := &advancedAnswerFake{answer: legacy.Answer{Text: "受限回答"}, stream: &concurrentAdvancedStream{}}
+			assistant := newAdvancedTestAssistant(t, router, &advancedPlannerFake{plan: advancedPlan()}, &advancedCopilotFake{err: test.err}, answerer, &advancedProfileFake{})
+
+			if test.stream {
+				stream, err := assistant.Stream(context.Background(), legacy.AssistantInput{Message: "question"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				stream.Close()
+			} else {
+				answer, err := assistant.Generate(context.Background(), legacy.AssistantInput{Message: "question"})
+				if err != nil || answer.Text != "受限回答" {
+					t.Fatalf("answer=%+v err=%v", answer, err)
+				}
+			}
+
+			if answerer.calls != 1 || answerer.request.Route != legacy.RouteEvidence || len(answerer.request.Evidence) != 0 || answerer.request.Plan != "" {
+				t.Fatalf("calls=%d request=%+v", answerer.calls, answerer.request)
+			}
+			if !strings.Contains(strings.Join(answerer.request.Notes, " | "), researchUnavailableNoteFragment) {
+				t.Fatalf("missing unavailable note: %+v", answerer.request.Notes)
+			}
+		})
+	}
+}
+
+func TestAdvancedAssistantResearchFailuresRemainErrors(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want error
+	}{
+		{name: "contract", err: errors.Join(legacy.ErrAllResearchToolsFailed, entity.ErrInvalidAgentContract), want: entity.ErrInvalidAgentContract},
+		{name: "model budget", err: errors.Join(legacy.ErrAllResearchToolsFailed, ErrModelBudget), want: ErrModelBudget},
+		{name: "tool budget", err: errors.Join(legacy.ErrAllResearchToolsFailed, ErrToolBudget), want: ErrToolBudget},
+		{name: "delegation budget", err: errors.Join(legacy.ErrAllResearchToolsFailed, ErrDelegationBudget), want: ErrDelegationBudget},
+		{name: "delegation cycle", err: errors.Join(legacy.ErrAllResearchToolsFailed, ErrDelegationCycle), want: ErrDelegationCycle},
+		{name: "research budget", err: errors.Join(legacy.ErrAllResearchToolsFailed, legacy.ErrResearchBudgetExceeded), want: legacy.ErrResearchBudgetExceeded},
+		{name: "cancelled", err: errors.Join(legacy.ErrAllResearchToolsFailed, context.Canceled), want: context.Canceled},
+		{name: "deadline", err: errors.Join(legacy.ErrAllResearchToolsFailed, context.DeadlineExceeded), want: context.DeadlineExceeded},
+		{name: "provider timeout", err: errors.Join(legacy.ErrAllResearchToolsFailed, researchTimeoutError{}), want: researchTimeoutError{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			router := &advancedRouterFake{decision: entity.RouterDecision{Route: entity.RouteResearch, Intent: "game_research", SkillID: "research_guide", SkillVersion: "1.0.0", ResponseMode: "answer"}}
+			answerer := &advancedAnswerFake{}
+			assistant := newAdvancedTestAssistant(t, router, &advancedPlannerFake{plan: advancedPlan()}, &advancedCopilotFake{err: test.err}, answerer, &advancedProfileFake{})
+
+			if _, err := assistant.Generate(context.Background(), legacy.AssistantInput{Message: "question"}); !errors.Is(err, test.want) || answerer.calls != 0 {
+				t.Fatalf("answer calls=%d err=%v want=%v", answerer.calls, err, test.want)
+			}
+		})
+	}
+}
+
+type researchTimeoutError struct{}
+
+func (researchTimeoutError) Error() string { return "research timed out" }
+func (researchTimeoutError) Timeout() bool { return true }
 
 func TestAdvancedAssistantTelemetryExcludesContentAndProfile(t *testing.T) {
 	const messageCanary = "CANARY_USER_MESSAGE"

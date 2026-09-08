@@ -239,6 +239,17 @@ func (s *Store) GetRequest(ctx context.Context, requestID string, userID int64, 
 	}
 }
 
+func (s *Store) HasActivityReservation(ctx context.Context, activityID, userID int64) (bool, error) {
+	if activityID <= 0 || userID <= 0 {
+		return false, flashsale.ErrInvalidInput
+	}
+	exists, err := s.client.HExists(ctx, s.keys(activityID).buyers, strconv.FormatInt(userID, 10)).Result()
+	if err != nil {
+		return false, fmt.Errorf("read flash sale Redis buyer marker: %w", err)
+	}
+	return exists, nil
+}
+
 func (s *Store) Release(ctx context.Context, command flashsale.ReleaseCommand) (released bool, resultErr error) {
 	started := time.Now()
 	defer func() {

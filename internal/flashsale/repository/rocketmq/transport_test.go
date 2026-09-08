@@ -155,9 +155,19 @@ func TestTransactionCheckerMapsPresentAbsentAndUncertain(t *testing.T) {
 	if state := listener.CheckLocalTransaction(message); state != primitive.CommitMessageState {
 		t.Fatalf("present state=%v", state)
 	}
+	// A technical rollback may admit the same request again with a later
+	// millisecond token. The broker must not commit the previous incarnation.
 	inspector.record.ReservedAt = event.ReservedAt.Add(time.Millisecond)
 	if state := listener.CheckLocalTransaction(message); state != primitive.RollbackMessageState {
-		t.Fatalf("mismatched time state=%v", state)
+		t.Fatalf("previous incarnation state=%v", state)
+	}
+	newerPayload, err := encodeEvent(eventWithReservedAt(event, inspector.record.ReservedAt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newerMessage := &primitive.MessageExt{Message: *primitive.NewMessage("topic", newerPayload)}
+	if state := listener.CheckLocalTransaction(newerMessage); state != primitive.CommitMessageState {
+		t.Fatalf("current incarnation state=%v", state)
 	}
 	inspector.record.ReservedAt = event.ReservedAt
 	inspector.found = false
@@ -168,6 +178,11 @@ func TestTransactionCheckerMapsPresentAbsentAndUncertain(t *testing.T) {
 	if state := listener.CheckLocalTransaction(message); state != primitive.UnknowState {
 		t.Fatalf("uncertain state=%v", state)
 	}
+}
+
+func eventWithReservedAt(event flashsale.Event, reservedAt time.Time) flashsale.Event {
+	event.ReservedAt = reservedAt
+	return event
 }
 
 func TestCodecRejectsUnknownAndOversizedPayload(t *testing.T) {

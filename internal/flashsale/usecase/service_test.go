@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -76,6 +77,188 @@ func TestReserveAllowsExactReplayAfterCancellation(t *testing.T) {
 	}
 }
 
+func TestReserveReturnsDurableReplayAfterActivityEnded(t *testing.T) {
+	now := time.Now().UTC()
+	activity := activeActivity(now)
+	activity.Status = entity.StatusEnded
+	requestID := "fsr_" + strconv.FormatInt(activity.ID, 36) + "_" + idempotencyDigest(activity.ID, 7, "reserve-key.01")[:32]
+	store := &fakeStore{activity: activity, request: Request{RequestID: requestID, ActivityID: activity.ID, Status: RequestOrderReady}}
+	catalog := &countingCatalog{owned: true}
+	admission := &fakeAdmission{}
+	service := NewService(store, catalog, admission, &fakeOrders{})
+
+	got, err := service.Reserve(context.Background(), auth.Principal{UserID: 7}, activity.ID, "reserve-key.01")
+	if err != nil || got.RequestID != requestID || !got.Replayed {
+		t.Fatalf("request=%+v err=%v", got, err)
+	}
+	if catalog.ownershipCalls != 0 || admission.calls != 0 {
+		t.Fatalf("ownership calls=%d admission calls=%d, want 0, 0", catalog.ownershipCalls, admission.calls)
+	}
+	if store.activityCalls != 0 || store.hasReservationCalls != 0 {
+		t.Fatalf("activity calls=%d reservation calls=%d, want 0, 0", store.activityCalls, store.hasReservationCalls)
+	}
+}
+
+func TestReserveChecksActivityBeforeRedisReplayFallback(t *testing.T) {
+	activityErr := errors.New("activity unavailable")
+	cache := &fakeActivityCache{request: Request{RequestID: "fsr_15_0123456789abcdef0123456789abcdef", Status: RequestQueued}}
+	service := NewService(&fakeStore{activityErr: activityErr}, fakeCatalog{}, &fakeAdmission{}, &fakeOrders{}).WithActivityCache(cache)
+
+	_, err := service.Reserve(context.Background(), auth.Principal{UserID: 7}, 41, "reserve-key.01")
+	if !errors.Is(err, activityErr) || cache.requestCalls != 0 || cache.hasReservationCalls != 0 {
+		t.Fatalf("error=%v cache request calls=%d reservation calls=%d", err, cache.requestCalls, cache.hasReservationCalls)
+	}
+}
+
+func TestReserveRetriesSameKeyAfterTechnicalRollback(t *testing.T) {
+	now := time.Now().UTC()
+	activity := activeActivity(now)
+	cache := &fakeActivityCache{request: Request{RequestID: "fsr_15_0123456789abcdef0123456789abcdef", ActivityID: activity.ID, Status: RequestFailed, FailureCode: "technical_rollback"}}
+	cache.request.RequestID = "fsr_" + strconv.FormatInt(activity.ID, 36) + "_" + idempotencyDigest(activity.ID, 7, "reserve-key.01")[:32]
+	admission := &fakeAdmission{result: AdmissionResult{Outcome: AdmissionAccepted, RequestID: cache.request.RequestID, ReservedAt: now}}
+	service := NewService(&fakeStore{activity: activity}, fakeCatalog{}, admission, &fakeOrders{}).WithActivityCache(cache)
+
+	request, err := service.Reserve(context.Background(), auth.Principal{UserID: 7}, activity.ID, "reserve-key.01")
+	if err != nil || request.Status != RequestQueued || request.Replayed || admission.calls != 1 {
+		t.Fatalf("request=%+v admission calls=%d err=%v", request, admission.calls, err)
+	}
+}
+
+func TestReserveReturnsDurableReplayBeforeOwnership(t *testing.T) {
+	now := time.Now().UTC()
+	activity := activeActivity(now)
+	requestID := "fsr_" + strconv.FormatInt(activity.ID, 36) + "_" + idempotencyDigest(activity.ID, 7, "reserve-key.01")[:32]
+	want := Request{RequestID: requestID, ActivityID: activity.ID, Status: RequestOrderReady, OrderNo: "ord_0123456789abcdef0123456789abcdef"}
+	store := &fakeStore{activity: activity, request: want}
+	catalog := &countingCatalog{owned: true}
+	admission := &fakeAdmission{}
+	service := NewService(store, catalog, admission, &fakeOrders{})
+
+	got, err := service.Reserve(context.Background(), auth.Principal{UserID: 7, Role: auth.RoleAdmin}, activity.ID, "reserve-key.01")
+	if err != nil || got.RequestID != want.RequestID || got.Status != want.Status || got.OrderNo != want.OrderNo || !got.Replayed {
+		t.Fatalf("request=%+v err=%v", got, err)
+	}
+	if store.requestCalls != 1 || store.requestUserID != 7 || store.requestAdmin {
+		t.Fatalf("lookup calls=%d user=%d admin=%v", store.requestCalls, store.requestUserID, store.requestAdmin)
+	}
+	if catalog.ownershipCalls != 0 || admission.calls != 0 {
+		t.Fatalf("ownership calls=%d admission calls=%d, want 0, 0", catalog.ownershipCalls, admission.calls)
+	}
+}
+
+func TestReserveReturnsCachedReplayBeforeOwnership(t *testing.T) {
+	now := time.Now().UTC()
+	activity := activeActivity(now)
+	requestID := "fsr_" + strconv.FormatInt(activity.ID, 36) + "_" + idempotencyDigest(activity.ID, 7, "reserve-key.01")[:32]
+	catalog := &countingCatalog{owned: true}
+	cache := &fakeActivityCache{request: Request{RequestID: requestID, ActivityID: activity.ID, Status: RequestQueued}}
+	admission := &fakeAdmission{}
+	service := NewService(&fakeStore{activity: activity}, catalog, admission, &fakeOrders{}).WithActivityCache(cache)
+
+	got, err := service.Reserve(context.Background(), auth.Principal{UserID: 7}, activity.ID, "reserve-key.01")
+	if err != nil || got.RequestID != requestID || got.Status != RequestQueued || !got.Replayed {
+		t.Fatalf("request=%+v err=%v", got, err)
+	}
+	if cache.requestCalls != 1 || cache.requestUserID != 7 || cache.requestAdmin || catalog.ownershipCalls != 0 || admission.calls != 0 {
+		t.Fatalf("cache calls=%d user=%d admin=%v ownership=%d admission=%d",
+			cache.requestCalls, cache.requestUserID, cache.requestAdmin, catalog.ownershipCalls, admission.calls)
+	}
+}
+
+func TestReserveReturnsAlreadyReservedBeforeOwnershipForDifferentKey(t *testing.T) {
+	now := time.Now().UTC()
+	activity := activeActivity(now)
+	store := &fakeStore{activity: activity, hasReservation: true}
+	catalog := &countingCatalog{owned: true}
+	admission := &fakeAdmission{result: AdmissionResult{Outcome: AdmissionAccepted}}
+	service := NewService(store, catalog, admission, &fakeOrders{})
+
+	_, err := service.Reserve(context.Background(), auth.Principal{UserID: 7}, activity.ID, "different-key.02")
+	if !errors.Is(err, ErrAlreadyReserved) {
+		t.Fatalf("error=%v, want already reserved", err)
+	}
+	if store.hasReservationCalls != 1 || store.reservationActivityID != activity.ID || store.reservationUserID != 7 {
+		t.Fatalf("reservation calls=%d activity=%d user=%d", store.hasReservationCalls, store.reservationActivityID, store.reservationUserID)
+	}
+	if catalog.ownershipCalls != 0 || admission.calls != 0 {
+		t.Fatalf("ownership calls=%d admission calls=%d, want 0, 0", catalog.ownershipCalls, admission.calls)
+	}
+}
+
+func TestReserveReturnsRedisOnlyAlreadyReservedBeforeOwnershipForDifferentKey(t *testing.T) {
+	now := time.Now().UTC()
+	activity := activeActivity(now)
+	cache := &fakeActivityCache{hasReservation: true}
+	catalog := &countingCatalog{owned: true}
+	admission := &fakeAdmission{result: AdmissionResult{Outcome: AdmissionAccepted}}
+	service := NewService(&fakeStore{activity: activity}, catalog, admission, &fakeOrders{}).WithActivityCache(cache)
+
+	_, err := service.Reserve(context.Background(), auth.Principal{UserID: 7}, activity.ID, "different-key.02")
+	if !errors.Is(err, ErrAlreadyReserved) {
+		t.Fatalf("error=%v, want already reserved", err)
+	}
+	if cache.hasReservationCalls != 1 || cache.reservationActivityID != activity.ID || cache.reservationUserID != 7 {
+		t.Fatalf("cache reservation lookup calls=%d activity=%d user=%d", cache.hasReservationCalls, cache.reservationActivityID, cache.reservationUserID)
+	}
+	if catalog.ownershipCalls != 0 || admission.calls != 0 {
+		t.Fatalf("ownership calls=%d admission calls=%d, want 0, 0", catalog.ownershipCalls, admission.calls)
+	}
+}
+
+func TestReserveReturnsAlreadyOwnedBeforeAdmission(t *testing.T) {
+	now := time.Now().UTC()
+	activity := activeActivity(now)
+	catalog := &countingCatalog{owned: true}
+	admission := &fakeAdmission{result: AdmissionResult{Outcome: AdmissionAccepted}}
+	service := NewService(&fakeStore{activity: activity}, catalog, admission, &fakeOrders{})
+
+	_, err := service.Reserve(context.Background(), auth.Principal{UserID: 7}, activity.ID, "reserve-key.01")
+	if !errors.Is(err, ErrAlreadyOwned) {
+		t.Fatalf("error=%v, want already owned", err)
+	}
+	if catalog.ownershipCalls != 1 || catalog.ownershipUserID != 7 || catalog.ownershipEditionID != activity.EditionID || admission.calls != 0 {
+		t.Fatalf("ownership calls=%d user=%d edition=%d admission=%d",
+			catalog.ownershipCalls, catalog.ownershipUserID, catalog.ownershipEditionID, admission.calls)
+	}
+}
+
+func TestReserveFailsClosedBeforeAdmissionOnLookupError(t *testing.T) {
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name            string
+		storeErr        error
+		reservationErr  error
+		ownershipErr    error
+		wantReservation int
+		wantOwnership   int
+	}{
+		{name: "durable lookup", storeErr: errors.New("request lookup unavailable")},
+		{name: "reservation lookup", reservationErr: errors.New("reservation lookup unavailable"), wantReservation: 1},
+		{name: "ownership lookup", ownershipErr: errors.New("ownership unavailable"), wantReservation: 1, wantOwnership: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := &countingCatalog{ownershipErr: tc.ownershipErr}
+			admission := &fakeAdmission{result: AdmissionResult{Outcome: AdmissionAccepted}}
+			store := &fakeStore{activity: activeActivity(now), requestErr: tc.storeErr, hasReservationErr: tc.reservationErr}
+			service := NewService(store, catalog, admission, &fakeOrders{})
+			want := tc.storeErr
+			if want == nil {
+				want = tc.reservationErr
+			}
+			if want == nil {
+				want = tc.ownershipErr
+			}
+
+			if _, err := service.Reserve(context.Background(), auth.Principal{UserID: 7}, 41, "reserve-key.01"); !errors.Is(err, want) {
+				t.Fatalf("error=%v, want %v", err, want)
+			}
+			if admission.calls != 0 || store.hasReservationCalls != tc.wantReservation || catalog.ownershipCalls != tc.wantOwnership {
+				t.Fatalf("admission calls=%d reservation calls=%d ownership calls=%d", admission.calls, store.hasReservationCalls, catalog.ownershipCalls)
+			}
+		})
+	}
+}
+
 func TestActivityMutationsRequireAdminAndActivationWarmsCache(t *testing.T) {
 	now := time.Now().UTC()
 	activity := activeActivity(now)
@@ -132,6 +315,48 @@ func TestPublicActivityDetailHidesDraft(t *testing.T) {
 
 	if _, err := service.GetActivity(context.Background(), activity.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("draft detail error=%v", err)
+	}
+}
+
+func TestAdminActivityReadsIncludeDraft(t *testing.T) {
+	now := time.Now().UTC()
+	activity := activeActivity(now)
+	activity.Status = entity.StatusDraft
+	store := &fakeStore{activity: activity}
+	service := NewService(store, fakeCatalog{}, &fakeAdmission{}, &fakeOrders{})
+
+	if _, _, err := service.ListActivities(context.Background(), "", 20); err != nil {
+		t.Fatal(err)
+	}
+	if store.listFilter.IncludeDraft {
+		t.Fatal("public list requested draft activities")
+	}
+
+	principal := auth.Principal{UserID: 1, Role: auth.RoleAdmin}
+	items, _, err := service.ListAdminActivities(context.Background(), principal, "", 20)
+	if err != nil || len(items) != 1 || items[0].Status != entity.StatusDraft {
+		t.Fatalf("admin items=%+v err=%v", items, err)
+	}
+	if !store.listFilter.IncludeDraft {
+		t.Fatal("admin list did not request draft activities")
+	}
+	got, err := service.GetAdminActivity(context.Background(), principal, activity.ID)
+	if err != nil || got.Status != entity.StatusDraft {
+		t.Fatalf("admin activity=%+v err=%v", got, err)
+	}
+
+	listCalls := store.listCalls
+	if _, _, err := service.ListAdminActivities(context.Background(), auth.Principal{UserID: 7, Role: auth.RoleUser}, "", 20); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-admin list error=%v", err)
+	}
+	if store.listCalls != listCalls {
+		t.Fatal("unauthorized admin list reached store")
+	}
+	if _, _, err := service.ListAdminActivities(context.Background(), auth.Principal{}, "", 20); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("anonymous admin list error=%v", err)
+	}
+	if _, err := service.GetAdminActivity(context.Background(), auth.Principal{UserID: 7, Role: auth.RoleUser}, activity.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-admin detail error=%v", err)
 	}
 }
 
@@ -253,10 +478,16 @@ type fakeCatalog struct{}
 func (fakeCatalog) PurchaseOffer(context.Context, int64, string, string) (catalogentity.PurchaseOffer, error) {
 	return catalogentity.PurchaseOffer{GameID: 3, GameSlug: "demo", GameName: "Demo", EditionID: 12, EditionCode: "standard", EditionName: "Standard", AmountMinor: 1999, Currency: "USD", Region: "GLOBAL"}, nil
 }
+func (fakeCatalog) OwnsEdition(context.Context, int64, int64) (bool, error) { return false, nil }
 
 type countingCatalog struct {
-	calls int
-	offer catalogentity.PurchaseOffer
+	calls              int
+	offer              catalogentity.PurchaseOffer
+	ownershipCalls     int
+	ownershipUserID    int64
+	ownershipEditionID int64
+	owned              bool
+	ownershipErr       error
 }
 
 func (c *countingCatalog) PurchaseOffer(context.Context, int64, string, string) (catalogentity.PurchaseOffer, error) {
@@ -266,10 +497,26 @@ func (c *countingCatalog) PurchaseOffer(context.Context, int64, string, string) 
 	}
 	return c.offer, nil
 }
+func (c *countingCatalog) OwnsEdition(_ context.Context, userID, editionID int64) (bool, error) {
+	c.ownershipCalls++
+	c.ownershipUserID = userID
+	c.ownershipEditionID = editionID
+	return c.owned, c.ownershipErr
+}
 
 type fakeActivityCache struct {
 	stageCalls, enableCalls, closeCalls int
 	cutoff                              time.Time
+	request                             Request
+	requestErr                          error
+	requestCalls                        int
+	requestUserID                       int64
+	requestAdmin                        bool
+	hasReservation                      bool
+	hasReservationErr                   error
+	hasReservationCalls                 int
+	reservationActivityID               int64
+	reservationUserID                   int64
 }
 
 func (c *fakeActivityCache) Stage(context.Context, entity.Activity) error { c.stageCalls++; return nil }
@@ -281,31 +528,60 @@ func (c *fakeActivityCache) Close(context.Context, entity.Activity) (time.Time, 
 	c.closeCalls++
 	return c.cutoff, nil
 }
-func (*fakeActivityCache) GetRequest(context.Context, string, int64, bool) (Request, error) {
-	return Request{}, ErrNotFound
+func (c *fakeActivityCache) GetRequest(_ context.Context, _ string, userID int64, admin bool) (Request, error) {
+	c.requestCalls++
+	c.requestUserID = userID
+	c.requestAdmin = admin
+	if c.requestErr != nil {
+		return Request{}, c.requestErr
+	}
+	if c.request.RequestID == "" {
+		return Request{}, ErrNotFound
+	}
+	return c.request, nil
+}
+func (c *fakeActivityCache) HasActivityReservation(_ context.Context, activityID, userID int64) (bool, error) {
+	c.hasReservationCalls++
+	c.reservationActivityID = activityID
+	c.reservationUserID = userID
+	return c.hasReservation, c.hasReservationErr
 }
 
 type fakeStore struct {
-	activity             entity.Activity
-	allocation           Allocation
-	markedOrderNo        string
-	markCalls            int
-	failedCode           string
-	releaseJobs          []ReleaseJob
-	completedReleaseJobs []int64
-	completedGenerations []int
-	retriedReleaseJobID  int64
-	retriedGeneration    int
-	retriedAt            time.Time
-	retryCode            string
-	expiredCount         int
-	expiryBatch          int
-	request              Request
-	requestErr           error
-	activateCalls        int
+	activity              entity.Activity
+	activityErr           error
+	activityCalls         int
+	listFilter            ListFilter
+	listCalls             int
+	allocation            Allocation
+	markedOrderNo         string
+	markCalls             int
+	failedCode            string
+	releaseJobs           []ReleaseJob
+	completedReleaseJobs  []int64
+	completedGenerations  []int
+	retriedReleaseJobID   int64
+	retriedGeneration     int
+	retriedAt             time.Time
+	retryCode             string
+	expiredCount          int
+	expiryBatch           int
+	request               Request
+	requestErr            error
+	requestCalls          int
+	requestUserID         int64
+	requestAdmin          bool
+	hasReservation        bool
+	hasReservationErr     error
+	hasReservationCalls   int
+	reservationActivityID int64
+	reservationUserID     int64
+	activateCalls         int
 }
 
-func (s *fakeStore) ListActivities(context.Context, ListFilter) ([]entity.Activity, error) {
+func (s *fakeStore) ListActivities(_ context.Context, filter ListFilter) ([]entity.Activity, error) {
+	s.listCalls++
+	s.listFilter = filter
 	return []entity.Activity{s.activity}, nil
 }
 func (s *fakeStore) CreateActivity(_ context.Context, activity entity.Activity) (entity.Activity, error) {
@@ -330,7 +606,8 @@ func (s *fakeStore) CancelActivity(_ context.Context, _ int64, now time.Time) (e
 }
 
 func (s *fakeStore) GetActivity(context.Context, int64) (entity.Activity, error) {
-	return s.activity, nil
+	s.activityCalls++
+	return s.activity, s.activityErr
 }
 func (s *fakeStore) Allocate(context.Context, Event) (Allocation, error) { return s.allocation, nil }
 func (s *fakeStore) Fail(_ context.Context, _ Event, code, _ string) error {
@@ -342,7 +619,10 @@ func (s *fakeStore) MarkOrderReady(_ context.Context, _ string, orderNo string) 
 	s.markCalls++
 	return nil
 }
-func (s *fakeStore) GetRequest(context.Context, string, int64, bool) (Request, error) {
+func (s *fakeStore) GetRequest(_ context.Context, _ string, userID int64, admin bool) (Request, error) {
+	s.requestCalls++
+	s.requestUserID = userID
+	s.requestAdmin = admin
 	if s.requestErr != nil {
 		return Request{}, s.requestErr
 	}
@@ -350,6 +630,12 @@ func (s *fakeStore) GetRequest(context.Context, string, int64, bool) (Request, e
 		return Request{}, ErrNotFound
 	}
 	return s.request, nil
+}
+func (s *fakeStore) HasActivityReservation(_ context.Context, activityID, userID int64) (bool, error) {
+	s.hasReservationCalls++
+	s.reservationActivityID = activityID
+	s.reservationUserID = userID
+	return s.hasReservation, s.hasReservationErr
 }
 func (s *fakeStore) ExpireDue(_ context.Context, batch int) (int, error) {
 	s.expiryBatch = batch

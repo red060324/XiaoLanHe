@@ -12,11 +12,11 @@ local now_ms = (tonumber(redis_time[1]) * 1000) + math.floor(tonumber(redis_time
 
 local buyer = redis.call('HGET', KEYS[3], ARGV[3])
 local expected_buyer = ARGV[1] .. '|' .. ARGV[4]
+local request = redis.call('HGET', KEYS[4], ARGV[1])
 if buyer then
   if buyer ~= expected_buyer then
     return {-4, '', now_ms}
   end
-  local request = redis.call('HGET', KEYS[4], ARGV[1])
   if not request then
     return {-5, '', now_ms}
   end
@@ -29,6 +29,18 @@ if buyer then
   return {2, ARGV[1], reserved_at_ms}
 end
 
+local reserved_at_ms = tonumber(ARGV[5])
+if request then
+  -- A technical rollback is the only released marker that may start another
+  -- incarnation of the same idempotent request. Its Redis timestamp is the
+  -- generation fence: never overwrite an equal/older incarnation.
+  local released_pattern = '^' .. ARGV[3] .. '|' .. ARGV[4] .. '|released|([0-9]+)|technical_rollback$'
+  local previous_reserved_at_ms = tonumber(string.match(request, released_pattern))
+  if previous_reserved_at_ms == nil or reserved_at_ms == nil or reserved_at_ms <= previous_reserved_at_ms then
+    return {-5, '', now_ms}
+  end
+end
+
 if metadata[5] ~= false then
   return {-2, '', now_ms}
 end
@@ -38,7 +50,6 @@ end
 if metadata[2] ~= '1' or now_ms >= ends_at_ms then
   return {-2, '', now_ms}
 end
-local reserved_at_ms = tonumber(ARGV[5])
 local max_age_ms = tonumber(ARGV[6])
 if reserved_at_ms == nil or max_age_ms == nil or reserved_at_ms > now_ms or now_ms - reserved_at_ms > max_age_ms then
   return {-5, '', now_ms}

@@ -18,6 +18,65 @@ import (
 	flashsale "github.com/red060324/XiaoLanHe/internal/flashsale/usecase"
 )
 
+func TestListActivitiesUsesFixedVisibilityQueries(t *testing.T) {
+	startsAt := time.Date(2026, 9, 8, 1, 0, 0, 0, time.UTC)
+	endsAt := startsAt.Add(time.Hour)
+	createdAt := startsAt.Add(-time.Hour)
+
+	t.Run("public excludes drafts in SQL", func(t *testing.T) {
+		store, mock := newMockStore(t)
+		mock.ExpectQuery(listPublicActivitiesSQL).WithArgs(int64(50), int64(50), 21).WillReturnRows(
+			activityRows().AddRow(41, "SALE-ONE", "game", "Game", 7, "Deluxe", "CN", "CNY",
+				9900, 5, 0, "active", startsAt, endsAt, 900, 1, 11, startsAt, nil, createdAt, createdAt),
+		)
+
+		items, err := store.ListActivities(context.Background(), flashsale.ListFilter{BeforeID: 50, Limit: 21})
+		if err != nil || len(items) != 1 || items[0].Status != entity.StatusActive {
+			t.Fatalf("items=%+v err=%v", items, err)
+		}
+	})
+
+	t.Run("admin includes drafts in SQL", func(t *testing.T) {
+		store, mock := newMockStore(t)
+		mock.ExpectQuery(listAdminActivitiesSQL).WithArgs(int64(0), int64(0), 21).WillReturnRows(
+			activityRows().AddRow(42, "SALE-DRAFT", "game", "Game", 7, "Deluxe", "CN", "CNY",
+				8900, 7, 0, "draft", startsAt, endsAt, 600, 0, 11, nil, nil, createdAt, createdAt),
+		)
+
+		items, err := store.ListActivities(context.Background(), flashsale.ListFilter{Limit: 21, IncludeDraft: true})
+		if err != nil || len(items) != 1 || items[0].Status != entity.StatusDraft {
+			t.Fatalf("items=%+v err=%v", items, err)
+		}
+	})
+}
+
+func TestHasActivityReservation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		exists bool
+		err    error
+	}{
+		{name: "exists", exists: true},
+		{name: "missing"},
+		{name: "query error", err: errors.New("reservation lookup failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, mock := newMockStore(t)
+			expected := mock.ExpectQuery(hasActivityReservationSQL).WithArgs(int64(41), int64(7))
+			if test.err != nil {
+				expected.WillReturnError(test.err)
+			} else {
+				expected.WillReturnRows(newRows("exists").AddRow(test.exists))
+			}
+
+			exists, err := store.HasActivityReservation(context.Background(), 41, 7)
+			if !errors.Is(err, test.err) || exists != test.exists {
+				t.Fatalf("exists=%v err=%v, want exists=%v err=%v", exists, err, test.exists, test.err)
+			}
+		})
+	}
+}
+
 func TestCreateActivityUpsertsAndLocksScopeBeforeInsert(t *testing.T) {
 	store, mock := newMockStore(t)
 	startsAt := time.Date(2026, 9, 8, 1, 0, 0, 0, time.UTC)
@@ -175,6 +234,83 @@ func TestAllocateLocksUserBeforeActivity(t *testing.T) {
 	_, err := store.Allocate(context.Background(), event)
 	if !errors.Is(err, want) {
 		t.Fatalf("error = %v, want %v", err, want)
+	}
+}
+
+func TestAllocateReturnsExactDurableReplayBeforeMutableActivityGuard(t *testing.T) {
+	reservedAt := time.Date(2026, 9, 7, 2, 3, 4, 500000000, time.UTC)
+	createdAt := reservedAt.Add(-2 * time.Hour)
+	digest := strings.Repeat("ab", 32)
+	event := flashsale.Event{
+		RequestID: "fsr_7_abababababababababababababababab", ActivityID: 7, ActivityVersion: 3,
+		UserID: 11, ReservedAt: reservedAt, IdempotencyDigest: digest,
+	}
+
+	for _, status := range []entity.ReservationStatus{
+		entity.ReservationReserved, entity.ReservationOrderReady, entity.ReservationFailed, entity.ReservationExpired,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			store, mock := newMockStore(t)
+			mock.ExpectBegin()
+			mock.ExpectQuery(lockUserSQL).WithArgs(event.UserID).
+				WillReturnRows(newRows("id").AddRow(event.UserID))
+			mock.ExpectQuery(lockActivitySQL).WithArgs(event.ActivityID).
+				WillReturnRows(newRows("id").AddRow(event.ActivityID))
+			// The current activity is ended. Mutable lifecycle state must not
+			// override an exact reservation already committed durably.
+			mock.ExpectQuery(activitySelect + ` WHERE a.id=?`).WithArgs(event.ActivityID).WillReturnRows(
+				activityRows().AddRow(event.ActivityID, "SALE-SEVEN", "game", "Game", 5, "Deluxe", "CN", "CNY",
+					9900, 5, 1, "ended", reservedAt.Add(-time.Hour), reservedAt.Add(time.Hour), 900, event.ActivityVersion,
+					21, reservedAt.Add(-time.Hour), nil, createdAt, createdAt),
+			)
+			mock.ExpectQuery(`
+				SELECT r.request_id,r.activity_id,r.user_id,LOWER(HEX(r.idempotency_digest)),r.status,r.reserved_at,r.payment_expires_at,
+					a.code,g.slug,g.name,a.edition_id,e.name,a.region_code,a.currency,a.sale_price_minor,a.total_stock,a.allocated_stock,
+					a.status,a.starts_at,a.ends_at,a.payment_timeout_seconds,a.version,a.created_by,
+					a.activated_at,a.cancelled_at,a.created_at,a.updated_at
+				FROM flash_sale_reservation AS r JOIN flash_sale_activity AS a ON a.id=r.activity_id
+				JOIN game_edition AS e ON e.id=a.edition_id JOIN game AS g ON g.id=e.game_id
+				WHERE r.request_id=?`).WithArgs(event.RequestID).WillReturnRows(
+				allocationRows().AddRow(
+					event.RequestID, event.ActivityID, event.UserID, digest, string(status), reservedAt, reservedAt.Add(15*time.Minute),
+					"SALE-SEVEN", "game", "Game", 5, "Deluxe", "CN", "CNY", 9900, 5, 1,
+					"ended", reservedAt.Add(-time.Hour), reservedAt.Add(time.Hour), 900, event.ActivityVersion, 21,
+					reservedAt.Add(-time.Hour), nil, createdAt, createdAt,
+				),
+			)
+			mock.ExpectCommit()
+
+			allocation, err := store.Allocate(context.Background(), event)
+			if err != nil || allocation.RequestID != event.RequestID || allocation.Status != status ||
+				allocation.ActivityID != event.ActivityID || allocation.UserID != event.UserID ||
+				allocation.IdempotencyDigest != event.IdempotencyDigest || !allocation.ReservedAt.Equal(event.ReservedAt) {
+				t.Fatalf("allocation=%+v err=%v", allocation, err)
+			}
+		})
+	}
+}
+
+func TestAllocateRejectsActivityVersionMismatchBeforeReservationLookup(t *testing.T) {
+	reservedAt := time.Date(2026, 9, 7, 2, 3, 4, 500000000, time.UTC)
+	event := flashsale.Event{
+		RequestID: "fsr_7_abababababababababababababababab", ActivityID: 7, ActivityVersion: 3,
+		UserID: 11, ReservedAt: reservedAt, IdempotencyDigest: strings.Repeat("ab", 32),
+	}
+	store, mock := newMockStore(t)
+	mock.ExpectBegin()
+	mock.ExpectQuery(lockUserSQL).WithArgs(event.UserID).
+		WillReturnRows(newRows("id").AddRow(event.UserID))
+	mock.ExpectQuery(lockActivitySQL).WithArgs(event.ActivityID).
+		WillReturnRows(newRows("id").AddRow(event.ActivityID))
+	mock.ExpectQuery(activitySelect + ` WHERE a.id=?`).WithArgs(event.ActivityID).WillReturnRows(
+		activityRows().AddRow(event.ActivityID, "SALE-SEVEN", "game", "Game", 5, "Deluxe", "CN", "CNY",
+			9900, 5, 1, "active", reservedAt.Add(-time.Hour), reservedAt.Add(time.Hour), 900, event.ActivityVersion+1,
+			21, reservedAt.Add(-time.Hour), nil, reservedAt.Add(-2*time.Hour), reservedAt.Add(-2*time.Hour)),
+	)
+	mock.ExpectRollback()
+
+	if _, err := store.Allocate(context.Background(), event); !errors.Is(err, flashsale.ErrUnsupportedEvent) {
+		t.Fatalf("error=%v, want unsupported event", err)
 	}
 }
 
@@ -550,6 +686,16 @@ func activityRows() *testRows {
 		"id", "code", "slug", "game_name", "edition_id", "edition_name", "region_code", "currency",
 		"sale_price_minor", "total_stock", "allocated_stock", "status", "starts_at", "ends_at",
 		"payment_timeout_seconds", "version", "created_by", "activated_at", "cancelled_at", "created_at", "updated_at",
+	)
+}
+
+func allocationRows() *testRows {
+	return newRows(
+		"request_id", "activity_id", "user_id", "idempotency_digest", "reservation_status",
+		"reserved_at", "payment_expires_at", "code", "slug", "game_name", "edition_id",
+		"edition_name", "region_code", "currency", "sale_price_minor", "total_stock",
+		"allocated_stock", "activity_status", "starts_at", "ends_at", "payment_timeout_seconds",
+		"version", "created_by", "activated_at", "cancelled_at", "created_at", "updated_at",
 	)
 }
 

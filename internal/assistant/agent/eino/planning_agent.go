@@ -119,6 +119,9 @@ func (a *PlanningAgent) RunPlanning(ctx context.Context, task entity.PlanningTas
 			if validateErr := a.revalidate(runCtx, task, &artifact); validateErr != nil {
 				return assistant.PlanningWorkerResult{}, validateErr
 			}
+			if validateErr := artifact.Validate(task, known); validateErr != nil {
+				return assistant.PlanningWorkerResult{}, validateErr
+			}
 			artifact.Usage = budget.Usage()
 			return assistant.PlanningWorkerResult{Artifact: artifact, Evidence: knownValues}, nil
 		}
@@ -240,19 +243,41 @@ func (a *PlanningAgent) tools(task entity.PlanningTask) (map[string]tool.Invokab
 }
 
 func (a *PlanningAgent) revalidate(ctx context.Context, task entity.PlanningTask, artifact *entity.PlanningArtifact) error {
+	// Only ranked game recommendations use game slugs as subjects. Team-plan
+	// subjects are evidence-backed roles or characters and cannot be resolved
+	// through the game catalog.
+	if task.SkillID != "recommend_games" {
+		return nil
+	}
+	items := make([]entity.PlanItem, 0, len(artifact.Items))
+	removedOwned := false
 	for i := range artifact.Items {
-		item := &artifact.Items[i]
+		item := artifact.Items[i]
 		game, err := a.catalog.Get(ctx, strings.ToLower(item.SubjectID), task.Constraints.Region, task.Constraints.Currency, task.UserID)
 		if err != nil {
-			return entity.ErrInvalidAgentContract
+			switch {
+			case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+				return err
+			case errors.Is(err, catalog.ErrNotFound):
+				return entity.ErrInvalidAgentContract
+			default:
+				return err
+			}
 		}
 		item.SubjectID = game.Slug
 		if game.Owned {
-			item.MatchedConstraints = appendUnique(item.MatchedConstraints, "owned")
+			removedOwned = true
+			continue
 		}
 		if task.Constraints.MaxPriceMinor != nil && !hasAffordableEdition(game, *task.Constraints.MaxPriceMinor) {
 			item.UnmetConstraints = appendUnique(item.UnmetConstraints, "max_price")
 		}
+		items = append(items, item)
+	}
+	artifact.Items = items
+	if removedOwned && len(artifact.Items) == 0 {
+		artifact.Status = entity.StatusNoResult
+		artifact.StopReason = "no_evidence"
 	}
 	return nil
 }

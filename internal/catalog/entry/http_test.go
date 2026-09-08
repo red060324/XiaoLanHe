@@ -57,7 +57,8 @@ func (s *httpStore) FindBySlug(context.Context, string, catalog.Pricing, int64) 
 func (s *httpStore) FindPurchaseOffer(context.Context, int64, catalog.Pricing) (entity.PurchaseOffer, error) {
 	return entity.PurchaseOffer{}, nil
 }
-func (s *httpStore) Exists(context.Context, int64) (bool, error) { return true, nil }
+func (s *httpStore) Exists(context.Context, int64) (bool, error)             { return true, nil }
+func (s *httpStore) OwnsEdition(context.Context, int64, int64) (bool, error) { return true, nil }
 func (s *httpStore) Save(_ context.Context, _ int64, draft entity.Draft) (entity.Game, error) {
 	s.saved = true
 	game := s.game

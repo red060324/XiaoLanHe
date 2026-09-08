@@ -69,8 +69,12 @@ func (a *GameCopilot) Run(ctx context.Context, input assistant.CopilotInput) (re
 		case "research":
 			task := entity.ResearchTask{Envelope: envelope, Objective: truncateCopilotText(input.Message, 500), QueryUnitIDs: unitIDs(input.Plan), RequiredFacets: planFacets(input.Plan), AllowedTools: delegateTools(input.Skill.Tools, "search_")}
 			workerResult, workerErr := a.researcher.RunResearch(ctx, task, input.Plan, input.Budget)
-			if workerErr != nil {
+			researchUnavailable := assistant.IsResearchEvidenceUnavailable(workerErr)
+			if workerErr != nil && !researchUnavailable {
 				return result, workerErr
+			}
+			if researchUnavailable && len(workerResult.Evidence) != 0 {
+				return result, entity.ErrInvalidAgentContract
 			}
 			for _, value := range workerResult.Evidence {
 				result.Evidence = append(result.Evidence, evidenceStore.Add(value))
@@ -84,6 +88,19 @@ func (a *GameCopilot) Run(ctx context.Context, input assistant.CopilotInput) (re
 				return result, validateErr
 			}
 			result.Notes = append(result.Notes, workerResult.Artifact.Assumptions...)
+			if researchUnavailable {
+				unavailableArtifact := workerResult.Artifact
+				unavailableArtifact.Status = entity.StatusUnavailable
+				unavailableArtifact.StopReason = "dependency_unavailable"
+				if validateErr := unavailableArtifact.Validate(task, known); validateErr != nil {
+					return result, validateErr
+				}
+				if !stringSliceContains(result.Notes, assistant.ResearchEvidenceUnavailableNote) {
+					result.Notes = append(result.Notes, assistant.ResearchEvidenceUnavailableNote)
+				}
+				result.Usage = input.Budget.Usage()
+				return result, nil
+			}
 		case "planning":
 			if len(evidenceStore.IDs()) == 0 {
 				result.Notes = append(result.Notes, "研究阶段没有形成可验证证据，未生成无依据的规划。")

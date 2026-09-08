@@ -18,7 +18,7 @@ The independent LightRAG graph and Multi-Agent work is not part of this spec.
 Add a real, demonstrable limited-stock purchase path in which Redis executes one
 Lua script to atomically validate the activity window, reserve stock, and enforce
 one reservation per user; RocketMQ absorbs accepted traffic and creates orders
-asynchronously; PostgreSQL remains the durable business record and final
+asynchronously; MySQL 8.4/InnoDB remains the durable business record and final
 correctness guard.
 
 The implementation must support an honest resume statement: the system uses
@@ -42,7 +42,7 @@ delivery.
    transaction check resolves from the same Redis request marker. Provider DTOs
    stay inside the RocketMQ adapter.
 4. Treat RocketMQ delivery as at-least-once. The consumer is idempotent by
-   request_id; PostgreSQL unique constraints and a locked stock counter are the
+   request_id; MySQL unique constraints and a locked stock counter are the
    final guard against duplicate orders or a stale/mis-seeded Redis key. No
    exactly-once claim is made.
 5. Run the RocketMQ consumer, transaction checker, recovery dispatcher, and
@@ -54,12 +54,12 @@ delivery.
    reaches a terminal failure. It never treats queue acceptance as an order.
 7. Keep existing sandbox payment only. Flash-sale orders expire after the
    activity-configured payment deadline; a durable release job restores Redis
-   stock after the PostgreSQL state transition. Real payment remains excluded.
+   stock after the MySQL state transition. Real payment remains excluded.
 8. Make the feature opt-in with XLH_FLASH_SALE_ENABLED=false by default. When
-   enabled, PostgreSQL, Redis, and RocketMQ are required readiness dependencies;
+   enabled, MySQL, Redis, and RocketMQ are required readiness dependencies;
    admission fails closed if either external service is unavailable or Redis
    activity state is missing.
-9. Restore local deployment assets for PostgreSQL/pgvector, Redis, RocketMQ
+9. Provide local deployment assets for MySQL 8.4, Redis, RocketMQ
    NameServer, and RocketMQ Broker. The current Render free Blueprint remains a
    non-flash-sale demo unless managed Redis and RocketMQ endpoints are supplied.
 10. Deliver graph-enhanced LightRAG as a separate reviewed spec after this slice.
@@ -68,21 +68,26 @@ delivery.
 
 ### In scope
 
-- Admin create, inspect, activate, and cancel flash-sale activities. Activated
-  price, edition, region/currency, stock, and time window are immutable.
-- Public authenticated activity list/detail and a countdown-ready response.
+- Admin create, list/detail inspect, edit draft, activate, and cancel flash-sale
+  activities. Admin reads include drafts and the management-only `totalStock`
+  and `paymentTimeoutSeconds` fields. Activated price, edition, region/currency,
+  stock, and time window are immutable.
+- Public activity list/detail and a countdown-ready response. Drafts and the
+  management-only fields are never exposed by public reads.
 - Authenticated Idempotency-Key reservation endpoint with quantity fixed to one.
 - Atomic Redis Lua admission with same-key replay, different-key one-user
   rejection, stock exhaustion, activity-time checks, and bounded key retention.
 - RocketMQ transactional publishing, broker transaction checks, consumer group,
   retry/DLQ policy, and an idempotent asynchronous order consumer.
-- PostgreSQL flash-sale activities and reservations, additive order source and
+- MySQL flash-sale activities and reservations, additive order source and
   expiry fields, final stock guard, request status, payment compatibility,
   expiration, durable Redis release jobs, and stale-message recovery.
 - Structured safe logs and counters for admission outcome, transaction state,
   publish/consume retry, lag age, order result, compensation, and stock drift.
 - A user-facing flash-sale page that reserves, polls, links to the created order,
-  and shows loading, exhausted, duplicate, failure, and expiry states.
+  and shows loading, exhausted, duplicate, failure, and expiry states, plus an
+  account-page admin UI for create/edit-draft/activate/cancel that is not rendered
+  for non-admin users.
 - Local Docker Compose, CI integration services, deployment/configuration, backup,
   broker persistence, reconciliation, rollout, and rollback documentation.
 
@@ -98,7 +103,7 @@ delivery.
   Assistant and flash-sale writes.
 - No LightRAG graph, Planning Agent, Supervisor/Worker Multi-Agent, or Skills
   implementation in this spec. Those require separate approval and evals.
-- No replacement of the existing PostgreSQL coupon locking or ordinary order
+- No replacement of the existing MySQL coupon locking or ordinary order
   path.
 
 ## Current-State Evidence
@@ -108,7 +113,7 @@ delivery.
 - Reusable: internal/catalog exposes a narrow purchase-offer capability; auth
   supplies a trusted Principal; HTTP mutations enforce same-origin policy.
 - Reusable: the migration runner serializes immutable additive migrations and
-  the repository has PostgreSQL concurrency/integration tests.
+  the repository has MySQL concurrency/integration tests.
 - Migration debt: current order creation is synchronous and has no source or
   payment-expiry contract. There is no activity/request status API.
 - Missing: the current tree contains no Redis dependency, Lua script, RocketMQ
@@ -126,17 +131,26 @@ delivery.
 
 ## Acceptance Criteria
 
-- AC1: An admin can create and activate a valid future/current flash sale for an
-  active edition and price. Invalid windows, non-positive stock, price/currency
-  mismatch, or mutation of activated commercial fields is rejected.
+- AC1: An admin can list and inspect drafts, create and edit a valid draft, and
+  activate or cancel a valid future/current flash sale from the account page.
+  Admin GET requires authentication plus the admin role but not same-origin;
+  mutations retain same-origin enforcement. Non-admin users do not see the UI.
+  Invalid windows, non-positive stock, price/currency mismatch, or mutation of
+  activated commercial fields is rejected.
 - AC2: One Redis Lua execution uses Redis server time to atomically validate the
   activity, reserve exactly one stock unit, and create one user/request marker.
   Under concurrent load it admits no more than configured stock and no more than
   one request per activity/user.
-- AC3: Reusing the same activity/user/idempotency key returns the stable original
-  request without another decrement or message. A different key for the same user
-  is rejected as already reserved. Raw idempotency keys are not stored in Redis,
-  PostgreSQL, MQ messages, or logs.
+- AC3: Reserve derives the request ID/digest and first returns any authoritative
+  durable exact replay. After a durable miss it validates that the activity exists,
+  then checks Redis exact replay. A normal exact replay returns the stable original
+  request before later state/ownership checks, even if the user subsequently owns
+  the edition; only a pre-durable Redis `failed/technical_rollback` marker permits a
+  safely fenced retry. For a different key, any same-activity/user
+  reservation in either durable storage or Redis returns `already_reserved`; only a
+  wholly new request performs the ownership precheck and then enters Redis/MQ
+  admission. Raw idempotency keys are not stored in Redis, MySQL, MQ messages, or
+  logs.
 - AC4: An accepted request is published as a versioned RocketMQ transactional
   message. Redis rejection rolls the half message back; an uncertain producer
   outcome is resolved by a bounded transaction checker and recoverable pending
@@ -146,10 +160,12 @@ delivery.
   reservation and one purchase_order for a request and activity/user. The
   consumer acknowledges only after durable handling; transient failures retry and
   poison messages reach the configured DLQ/alert path.
-- AC6: PostgreSQL locks the activity row and conditionally increments allocated
-  stock before order creation. Even with stale or deliberately over-provisioned
-  Redis stock, PostgreSQL never records more active allocations than total stock.
-  Final-guard rejection schedules an idempotent Redis compensation.
+- AC6: MySQL locks the activity row and conditionally increments allocated stock
+  before order creation. Even with stale or deliberately over-provisioned Redis
+  stock, MySQL never records more active allocations than total stock.
+  The HTTP ownership precheck does not replace consumer/Order ownership, unique
+  source/request, or final-stock guards. Final-guard rejection schedules an
+  idempotent Redis compensation.
 - AC7: The request owner can poll queued, processing, order-ready, failed, and
   expired states and receives the created order reference only after it exists.
   Other users cannot inspect the request; admins can inspect safe operational
@@ -168,8 +184,8 @@ delivery.
 - AC11: The browser exposes the flash-sale flow accessibly, prevents accidental
   duplicate submission while preserving idempotent retry, polls with cancellation
   and a bound, and renders accepted, exhausted, duplicate, failure, order-ready,
-  and expired states.
-- AC12: Focused unit, Lua/Redis integration, PostgreSQL integration, RocketMQ
+  and expired states. The account page exposes draft management only to admins.
+- AC12: Focused unit, Lua/Redis integration, MySQL integration, RocketMQ
   interface and live-broker integration, HTTP, race, frontend, migration, Docker,
   fault/recovery, concurrency, architecture, public-only, Java-absence, and full
   CI gates pass. Performance numbers appear in documentation only after a recorded

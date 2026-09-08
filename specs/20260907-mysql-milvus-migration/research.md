@@ -1,8 +1,19 @@
 # Research Notes
 
-- Status: `IMPLEMENTED — MYSQL 8.4 METADATA FIX REMOTE PASS; RELEASE CLAIM FIX IN PROGRESS`
+- Status: `IMPLEMENTED — CURRENT LOCAL FULL CI PASS / REMOTE CI PENDING; CUTOVER AND LIFECYCLE NOT RUN`
 - Authoritative spec: `./spec.md`
 - Research date: 2026-09-07
+
+## Verification Evidence Scope
+
+GitHub Actions run `34259498765` is green for commit `5c854dd`. It covers
+repository gates, LightRAG/Milvus empty bootstrap, steady-state live and RBAC checks,
+MySQL 8.4, Redis including the explicit-close fix, RocketMQ, repeated seed and V45
+container smoke. It is historical evidence for that commit only; current uncommitted
+patch passes full local CI, but its exact clean-checkout GitHub run is pending.
+Neither result covers a paid three-target rebuild, complete
+restart/backup/restore lifecycle, real PostgreSQL -> MySQL 8.4 V27/V28 cutover,
+production resources/credentials, restore rehearsal or traffic enablement.
 
 ## Repository Audit
 
@@ -170,6 +181,7 @@ set checks close the readiness gap.
 - [Milvus 2.6.11 standalone Compose](https://github.com/milvus-io/milvus/blob/v2.6.11/deployments/docker/standalone/docker-compose.yml)
 - LightRAG 1.5.7 `lightrag/tools/README_REBUILD_VDB.md`, inspected from the pinned tag
 
-The MySQL rewrite findings are based on the repository's current SQL and Go behavior.
-Implementation will validate every relied-upon MySQL behavior against the pinned 8.4
-container rather than treating dialect documentation as execution evidence.
+The MySQL rewrite findings are based on the repository's SQL and Go behavior. Historical
+run `34259498765` validates the implemented MySQL 8.4 integration gate at `5c854dd`;
+production TLS, real PostgreSQL-to-MySQL cutover, full restore/rebuild lifecycle and
+production rollout remain separate evidence requirements.

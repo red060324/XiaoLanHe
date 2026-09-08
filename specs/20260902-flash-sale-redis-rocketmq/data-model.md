@@ -1,17 +1,18 @@
 # Data Model
 
 - Status: APPROVED (2026-09-03)
-- Migration: planned 006_flash_sale.sql
+- Migration: MySQL `022_create_flash_sale_scope_lock.sql` through
+  `027_add_flash_sale_release_claimable_index.sql`
 
-All business timestamps use timestamptz. Money remains integer minor units with
-a three-character uppercase currency. Migration 006 is additive and is exercised
-against both a clean database and a database containing migrations 001-005 data.
+All business timestamps use UTC `DATETIME(6)`. Money remains integer minor units
+with a three-character uppercase currency. The MySQL migrations are additive and
+are exercised against clean and upgraded MySQL 8.4 schemas.
 
 ## flash_sale_activity
 
 | Column | Contract |
 |---|---|
-| id | bigserial primary key |
+| id | BIGINT AUTO_INCREMENT primary key |
 | code | stable admin-readable code, case-insensitive unique |
 | edition_id | required FK to game_edition |
 | region_code | 2-16 uppercase letters/digits/hyphen |
@@ -58,8 +59,8 @@ Constraints:
 
 | Column | Contract |
 |---|---|
-| id | bigserial primary key |
-| request_id | unique FK to reservation |
+| id | BIGINT AUTO_INCREMENT primary key |
+| request_id | unique request reference; deliberately not an FK to reservation |
 | activity_id, user_id | copied validated identifiers for bounded worker lookup |
 | idempotency_digest, reserved_at | copied request identity for compare-and-release, including pre-durable rollback |
 | reason | technical_rollback, final_guard, payment_expired, or admin_repair |
@@ -84,13 +85,14 @@ Completed jobs may be pruned after 30 days by an explicit maintenance command.
 | source_reference | nullable flash request ID |
 | payment_expires_at | nullable deadline; required for flash-sale pending orders |
 
-A partial unique index on (source_type,source_reference) where the reference is
-not null makes order creation idempotent. Existing ordinary orders retain null
-source reference/deadline and their API shape remains compatible.
+A MySQL unique key on `(source_type,source_reference)` makes non-null flash-sale
+sources idempotent while MySQL's multiple-NULL behavior preserves ordinary orders.
+Existing ordinary orders retain null source reference/deadline and their API shape
+remains compatible.
 
 ## Durable Allocation Saga
 
-For a new MQ request, the FlashSale PostgreSQL adapter:
+For a new MQ request, the FlashSale MySQL adapter:
 
 1. locks the activity row;
 2. verifies active version, event time, and allocated_stock < total_stock;
@@ -120,15 +122,15 @@ republishing.
 The activation path calculates remaining Redis stock from total_stock minus
 allocated_stock; it never blindly restores total stock over a live activity.
 Missing keys fail closed. A repair procedure pauses admission, drains or accounts
-for broker backlog, compares PostgreSQL allocations, and only then primes the new
+for broker backlog, compares MySQL allocations, and only then primes the new
 Redis version.
 
 ## Retention And Backup
 
 - Activities, reservations, and linked orders are retained with commerce records;
   deletion requires a later legal/product retention decision.
-- PostgreSQL backups are the durable recovery source.
-- Redis AOF/snapshots reduce admission-state loss but do not replace PostgreSQL.
+- MySQL backups are the durable recovery source.
+- Redis AOF/snapshots reduce admission-state loss but do not replace MySQL.
 - RocketMQ broker store and consume offsets use persistent volumes or managed
   retention longer than the maximum activity plus recovery window.
 - Backup/restore smoke proves migration, order/reservation links, and that Redis

@@ -1,12 +1,12 @@
 # Test Plan
 
-- Status: `LOCAL GATES PASS — EXTERNAL GATES BLOCKED`
+- Status: `CURRENT LOCAL FULL CI PASS / REMOTE CI PENDING; EXTERNAL GATES BLOCKED`
 - Authoritative spec: `./spec.md`
 
 ## Scope And Environments
 
 PRE_MERGE uses deterministic fake models/tools, `httptest` LightRAG servers,
-race-enabled Go tests, frontend Vitest, isolated XiaoLanHe PostgreSQL/pgvector for
+race-enabled Go tests, frontend Vitest, isolated XiaoLanHe MySQL 8.4 for
 business data, and one live pinned official LightRAG container using its native four
 stores on a temporary persistent volume. Live cases must ingest, persist and retrieve
 real graph/vector data; mocks cannot replace them. `SKIP` is not PASS.
@@ -15,19 +15,23 @@ Paid model/embedding/Web calls remain rollout-only unless credential and expense
 authorization is explicit. A deterministic/local-compatible provider may support the
 live container only if the official indexing/storage/query path remains unchanged.
 
+GitHub Actions run `34259498765` was green at commit `5c854dd`; it proves only that
+historical commit. Current focused ordinary/race tests and full local CI pass; the
+clean-checkout GitHub run remains pending.
+
 ## Cases
 
 | ID | Class | Layer | Scenario | Expected result | Evidence | Status |
 |---|---|---|---|---|---|---|
 | V1 | PRE_MERGE | baseline | current route/query/tool/memory/citation and legacy-knowledge fixtures | immutable versioned baseline | strict JSONL dataset and eval golden | PASS |
-| V2 | PRE_MERGE | contracts | Router, QueryPlan and worker task/result parsing | unknown field/version/run/sequence/Skill/tool/evidence/size fails closed | entity/parser tests | PASS |
+| V2 | PRE_MERGE | contracts | Router, QueryPlan and worker task/result parsing; task-local `queryUnitId`, unknown/foreign ID and mismatched duplicate arguments | the server resolves the ID only in this task and executes exactly `QueryUnit.Text`; every contract mismatch fails closed | current focused ordinary/race tests and full local CI pass | PASS — CURRENT LOCAL |
 | V3 | PRE_MERGE | Skill | four valid definitions plus bad version/write tool/mode/cycle/limit | immutable valid registry; invalid startup rejected | Skill/config tests | PASS |
-| V4 | PRE_MERGE | Router/Planner | routes/Skills/query counts/modes/filters/malformed/failure | one Skill and valid plan or bounded fallback; no CoT | fake Node tests | PASS |
-| V5 | PRE_MERGE | budget | nested concurrent model/tool/delegation/time/output consumption | aggregate cap never exceeded and no race | budget tests + full race gate | PASS |
+| V4 | PRE_MERGE | Router/Planner | routes/Skills/query counts/provider modes and structured filters/malformed/failure, including platform metadata | one Skill and valid plan or bounded fallback; only provider-real mode/filters are mapped and platform is not serialized as a provider filter; no CoT | current focused tests and full local CI pass | PASS — CURRENT LOCAL |
+| V5 | PRE_MERGE | budget | nested concurrent model/tool/delegation/time/output consumption plus ordinary model termination, overall/provider timeout, cancellation, provider contract, model/tool/delegation/Research time-or-iteration exhaustion and cycle detection | aggregate cap never exceeded; every listed terminal outcome fails closed even after earlier evidence and is not converted into limited-answer degradation | current focused ordinary/race tests and full local CI pass | PASS — CURRENT LOCAL |
 | V6 | PRE_MERGE | query adapter | `/auth/verify`, authenticated health/pipeline and `/query/data` body/key/modes plus missing fields, wrong topology, recovery, 401/403/422/429/5xx/timeout/redirect/oversize/malformed | fixed private endpoint, explicit required fields and strict mapped result/error; key absent from output/log | `httptest` adversarial suite | PASS |
 | V7 | PRE_MERGE | evidence | entities/relations/chunks/references, unsafe/foreign source, URL, missing reference and caps | only managed-source bounded evidence reaches run store/citations | adapter/UseCase tests | PASS |
-| V8 | PRE_MERGE | Research Agent | refinement, allowed/forbidden tools, LightRAG partial/down/no-result and limits | typed artifact, explicit unavailable, zero hidden local fallback/unauthorized calls | fake tools + race | PASS |
-| V9 | PRE_MERGE | Planning Agent | recommendations/team plan, preferences, ownership exclusion and stale facts | revalidated evidence-linked artifact or explicit degradation; no mutation | fake tools/module tests | PASS |
+| V8 | PRE_MERGE | Research Agent | task-local `queryUnitId` binding, allowed/forbidden tools, successful-empty, partial evidence, provider failure/unattempted providers, all-planned-provider failure and limits | successful-empty is `no_result`; evidence retained across an ordinary failure is `partial`; terminal timeout/cancel/contract/budget errors fail closed; unattempted is never failed; limited answer requires every planned provider attempted and failed without evidence | current focused ordinary/race tests and full local CI pass | PASS — CURRENT LOCAL |
+| V9 | PRE_MERGE | Planning Agent | recommendations/team plan, preferences, stale facts, mixed/owned-only/all-owned `recommend_games`, owned-subject `build_team`, and revalidation error taxonomy | final revalidation removes owned recommendations, preserves unowned mixed candidates, maps all-owned to `no_result`/`no_evidence`, keeps an owned team subject, preserves cancel/deadline/dependency errors and maps only missing subjects to contract error | current focused ordinary/race tests and full local CI pass | PASS — CURRENT LOCAL |
 | V10 | PRE_MERGE | Game Copilot | Research-only, Planning-only, combined/follow-up, malformed/stale result, recursion and caps | acyclic minimum-context dispatch and correct stop | deterministic supervisor tests | PASS |
 | V11 | PRE_MERGE | context privacy | canaries in unrelated history/profile/provider payload | workers/LightRAG/logs receive no forbidden fields | captured-input and telemetry tests | PASS |
 | V12 | PRE_MERGE | migration | fresh/repeat/concurrent/checksum/001-006 upgrade and duplicate-profile preflight | summary/profile-only 007 applies once; no knowledge/LightRAG table | isolated PostgreSQL 17 + pgvector integration | PASS |
@@ -45,7 +49,7 @@ live container only if the official indexing/storage/query path remains unchange
 | V24 | PRE_MERGE | HTTP/SSE/UI | direct/research/planning, async knowledge UI, citations, no-result, disconnect/account switch/a11y and initial-entry budget | compatible chat plus intentional knowledge-contract migration; heavy renderer is lazy and entry stays at or below 500 KiB | Hertz/socket/Vitest/build budget | PASS |
 | V25 | PRE_MERGE | safety/privacy | injection, attempted mutation, forged identity/budget/endpoint and captured telemetry | content remains data; writes unavailable; secrets/content absent | adversarial/static/log/metric tests | PASS |
 | V26 | PRE_MERGE | observability/eval | bounded Agent/model/LightRAG/memory metrics, redaction and baseline comparison | protected low-cardinality metrics and all deterministic thresholds pass; host volume/process metrics remain external | registry/model/HTTP/telemetry tests and eval report | PASS |
-| V27 | PRE_MERGE | lifecycle/CI | disabled/enabled-invalid/down/readiness/shutdown/rollback and repository regressions | baseline compatible; enabled fails closed on auth/version/store/topology/recovery mismatch; no required skip | full local CI and PostgreSQL integration PASS; official lifecycle and clean-checkout Actions remain unavailable | PARTIAL |
+| V27 | PRE_MERGE | lifecycle/CI | disabled/enabled-invalid/down/readiness/shutdown/rollback and repository regressions | baseline compatible; enabled fails closed on auth/version/store/topology/recovery mismatch; no required skip | current local full CI passes; run `34259498765` at `5c854dd` is old clean-checkout evidence; exact-revision remote CI and official lifecycle/restore pending | PARTIAL |
 | V28 | ROLLOUT | isolated deployment | private one-replica LightRAG volume, migration, import, restore and rollback | survives clean restart/restore within declared small-corpus envelope | no approved target/runtime | BLOCKED |
 | V29 | ROLLOUT | real provider eval | pinned LightRAG/model/embedding/Skills/dataset flow | quality/P50/P95/calls/tokens/cost/failures recorded | no credential/cost authorization | BLOCKED |
 | V30 | ROLLOUT | observation | Web enabled/disabled/down plus memory/corpus/volume/pipeline/failure/privacy | alerts and rollback decision with no HA/scale claim | requires deployed cohort and orchestrator telemetry | BLOCKED |

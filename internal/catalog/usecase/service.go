@@ -33,6 +33,7 @@ type Store interface {
 	FindBySlug(context.Context, string, Pricing, int64) (entity.Game, error)
 	FindPurchaseOffer(context.Context, int64, Pricing) (entity.PurchaseOffer, error)
 	Exists(context.Context, int64) (bool, error)
+	OwnsEdition(context.Context, int64, int64) (bool, error)
 	Save(context.Context, int64, entity.Draft) (entity.Game, error)
 }
 
@@ -66,6 +67,13 @@ func (s *Service) GameExists(ctx context.Context, id int64) (bool, error) {
 		return false, nil
 	}
 	return s.store.Exists(ctx, id)
+}
+
+func (s *Service) OwnsEdition(ctx context.Context, userID, editionID int64) (bool, error) {
+	if userID <= 0 || editionID <= 0 {
+		return false, nil
+	}
+	return s.store.OwnsEdition(ctx, userID, editionID)
 }
 
 func (s *Service) PurchaseOffer(ctx context.Context, editionID int64, region, currency string) (entity.PurchaseOffer, error) {

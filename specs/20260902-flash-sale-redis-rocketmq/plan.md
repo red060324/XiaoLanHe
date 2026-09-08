@@ -6,13 +6,18 @@
 ## Selected Architecture
 
 Keep one Go modular monolith and add one flashsale module plus Redis and
-RocketMQ adapters. PostgreSQL remains the durable source of business truth.
+RocketMQ adapters. MySQL 8.4/InnoDB remains the durable source of business truth.
 Redis owns fast admission and pending-delivery markers; RocketMQ owns durable
 asynchronous transport, not business state.
 
 ~~~text
 POST reservation
   -> FlashSale Entry / Presenter / Reserve UseCase
+       -> derive request ID + idempotency digest
+       -> exact replay: durable MySQL first
+       -> on durable miss, validate activity then inspect Redis replay
+       -> different-key activity/user conflict: durable store, then Redis
+       -> only a new request: ownership precheck
   -> RocketMQ transactional producer sends half message
        -> local transaction: Redis EVALSHA reserve.lua
             time + state + stock + one-user + idempotency
@@ -21,18 +26,18 @@ POST reservation
 
 RocketMQ consumer (at-least-once)
   -> FlashSale Fulfil UseCase
-       -> lock PostgreSQL activity + final stock allocation
+       -> lock MySQL activity + final stock allocation
        -> Order.CreateFromFlashSale (idempotent public capability)
        -> mark reservation order_ready
   -> ACK only after durable success
 
 GET request status
-  -> PostgreSQL reservation/order when durable
-  -> Redis pending marker only while the event has not reached PostgreSQL
+  -> MySQL reservation/order when durable
+  -> Redis pending marker only while the event has not reached MySQL
 
 Expiry reaper
   -> lock expired pending order with SKIP LOCKED
-  -> expire order + release PostgreSQL allocation + enqueue release job
+  -> expire order + release MySQL allocation + enqueue release job
   -> Redis compensation worker executes compare-and-release Lua
 ~~~
 
@@ -43,11 +48,11 @@ internal/flashsale/entity/                 activity/request invariants
 internal/flashsale/usecase/                reserve, fulfil, status, admin, expiry
 internal/flashsale/entry/                  HTTP and background lifecycle entry
 internal/flashsale/presenter/              request/response mapping
-internal/flashsale/repository/postgres/    activity, reservation, release job
+internal/flashsale/repository/mysql/       activity, reservation, release job
 internal/flashsale/repository/redis/       Lua execution and Redis state
 internal/flashsale/repository/rocketmq/    producer/consumer provider boundary
 internal/order/usecase/                    narrow CreateFromFlashSale capability
-internal/order/repository/postgres/        idempotent sourced order write
+internal/order/repository/mysql/           idempotent sourced order write
 cmd/xiaolanhe/                             concrete composition and lifecycle
 ~~~
 
@@ -64,6 +69,30 @@ discarded before repository calls. The transaction message contains only a
 version, request ID, activity ID, trusted user ID, SHA-256 idempotency digest, and
 reservation timestamp. The digest is safe for equality checks but cannot recover
 the raw client key.
+
+Reserve then applies this order exactly:
+
+1. look up the derived request ID for the authenticated user in MySQL and return
+   that authoritative exact replay immediately when found;
+2. after a durable miss, load the activity before consulting Redis so a stale Redis
+   marker or Redis outage cannot replace the stable not-found result for an unknown
+   activity;
+3. look up the exact request in Redis and return a normal replay when found; only a
+   pre-durable `failed/technical_rollback` marker falls through after its buyer
+   marker was removed, and Lua requires a strictly newer reservation timestamp so
+   delayed release work cannot undo the new attempt;
+4. check MySQL and then Redis for any reservation by the same
+   activity/user under a different key, returning `already_reserved` on either
+   hit;
+5. only for a wholly new request, perform the edition
+   ownership precheck, returning `already_owned` when applicable; and
+6. only after those checks, enter RocketMQ transactional publication and Redis
+   Lua admission.
+
+Normal exact replay therefore wins over a later ownership state. Any dependency error
+in these checks fails closed before admission. The HTTP ownership precheck is an
+early rejection only: the consumer's durable allocation/uniqueness/final-stock
+guards and Order's exact-source replay and final ownership guard remain required.
 
 The Lua script receives namespaced keys and bounded scalar arguments. It calls
 Redis TIME; client time cannot open or extend an activity. In one evaluation it:
@@ -103,7 +132,7 @@ messages remain safe at the consumer.
 - Mark the reservation order_ready after the Order capability succeeds. A crash
   between those operations redelivers: allocation and order both replay, then the
   status transition completes.
-- Return retry for timeout, cancellation, PostgreSQL unavailability, or other
+- Return retry for timeout, cancellation, MySQL unavailability, or other
   transient errors. Permanent validation/final-stock/ownership failures mark a
   terminal status, enqueue Redis compensation where appropriate, and ACK.
 - Configure broker retries and DLQ. A DLQ event is not silently consumed; safe
@@ -120,14 +149,14 @@ edit it while draft. Activation validates database time and then performs a
 fail-closed publish:
 
 1. write Redis metadata and stock with admission disabled;
-2. mark the PostgreSQL activity active;
+2. mark the MySQL activity active;
 3. atomically enable the Redis marker.
 
-Failure after step 2 leaves PostgreSQL active but Redis disabled, so reservation
+Failure after step 2 leaves MySQL active but Redis disabled, so reservation
 returns dependency-unavailable rather than bypassing stock control. Retrying
 activation repairs the same version. Cancellation first atomically closes Redis
 admission and records its Redis-time cutoff, then stores that cutoff and cancelled
-state in PostgreSQL. If the durable write fails, the activity remains unavailable
+state in MySQL. If the durable write fails, the activity remains unavailable
 and retry repairs it; there is no fail-open intake window. Every reservation also
 validates the durable activity version before transactional send. The consumer
 still fulfils an accepted message whose Redis reservation time is no later than
@@ -139,7 +168,7 @@ revoking accepted work. Activated commercial fields are immutable.
 Add an order source (standard or flash_sale), unique source reference, and
 nullable payment deadline. Ordinary order behavior is unchanged. Flash-sale
 orders use the activity price and exclude coupons. Existing sandbox payment locks
-the order and compares PostgreSQL statement_timestamp() with payment_expires_at;
+the order and compares MySQL `CURRENT_TIMESTAMP(6)` with `payment_expires_at`;
 it cannot pay an expired order.
 
 A bounded reaper selects overdue pending_payment flash-sale orders using
@@ -151,7 +180,7 @@ request and has not already been released. It then marks the job done. Retries a
 safe; a paid order never matches the reaper.
 
 Business expiry retains the one-user marker through the activity so the user
-cannot cycle reservations. Technical rollback before PostgreSQL has accepted the
+cannot cycle reservations. Technical rollback before MySQL has accepted the
 reservation removes the marker and restores stock.
 
 ## Storage And Migration
@@ -173,7 +202,7 @@ future Redis Cluster evaluates all script keys in one slot:
 ~~~
 
 No raw username, idempotency key, cookie, credential, or request body is a key or
-value. Key TTL is activity end plus a bounded recovery grace. PostgreSQL records
+value. Key TTL is activity end plus a bounded recovery grace. MySQL records
 are retained with orders; completed release jobs may be pruned after 30 days.
 
 ## HTTP And Serialization Boundaries
@@ -183,10 +212,16 @@ origin enforcement, bounded decoding, and cancellation. Presenter owns string ID
 timestamp, enum, and error-envelope mapping. The UseCase accepts trusted numeric
 user identity and provider-neutral commands/results.
 
+Public list/detail hide drafts and omit `totalStock` and
+`paymentTimeoutSeconds`. Admin list/detail include drafts and those management
+fields. Admin GET routes require an authenticated admin role only; reservation
+and admin mutation routes retain same-origin protection. The account page renders
+create/edit-draft/activate/cancel controls only for admins.
+
 The reservation endpoint returns 202 for accepted/queued work and never embeds a
 fabricated order. Status polling is capped client-side and cancellable. A stable
 request remains queryable after the Redis pending marker is removed because the
-PostgreSQL reservation becomes authoritative.
+MySQL reservation becomes authoritative.
 
 ## Configuration And Required Dependencies
 
@@ -203,8 +238,8 @@ When XLH_FLASH_SALE_ENABLED=true, validate at startup:
 No credential appears in .env.example, logs, readiness responses, or frontend
 assets. When disabled, clients are not constructed, background components do not
 start, routes return a documented unavailable response or are hidden from
-navigation, and current /readyz semantics remain PostgreSQL-only. When enabled,
-readiness checks PostgreSQL, Redis PING, and a bounded authenticated RocketMQ admin
+navigation, and current /readyz semantics remain MySQL-only. When enabled,
+readiness checks MySQL, Redis PING, and a bounded authenticated RocketMQ admin
 lookup for the configured topic with at least one publishable queue. One in-flight
 gate bounds admin-client creation under concurrent probes. Missing credentials, an
 unreachable dependency, an inaccessible or missing topic, or an empty publish route
@@ -215,8 +250,10 @@ makes the process unready.
 - User identity comes only from authentication middleware, never JSON, headers,
   Redis values, or MQ message fields supplied by a client. The producer constructs
   the internal event after authentication.
-- Admin checks exist at both Entry and UseCase boundaries. Activity price is
-  server-resolved; clients cannot submit quantity, order status, or trusted user.
+- Admin checks exist at both Entry and UseCase boundaries. Admin reads require
+  authentication and role authorization; same-origin remains mandatory for
+  mutations, not GET. Activity price is server-resolved; clients cannot submit
+  quantity, order status, or trusted user.
 - Lua uses only KEYS supplied by the adapter and fixed commands. IDs and digests
   are validated bounded scalars; no dynamic Lua source is built.
 - MQ payload size/version and every field are validated before database work.
@@ -252,7 +289,7 @@ non-empty DLQ, repeated transaction UNKNOWN, release backlog, and any stock drif
    until queued requests reach terminal status. Do not delete Redis keys, broker
    storage, or database rows during rollback.
 5. Roll back the application revision after consumers are drained. Additive tables
-   and columns remain. Resume only after Redis is reconciled from PostgreSQL and
+   and columns remain. Resume only after Redis is reconciled from MySQL and
    broker backlog has been inspected.
 
 ## Rejected Alternatives
@@ -264,7 +301,7 @@ non-empty DLQ, repeated transaction UNKNOWN, release backlog, and any stock drif
 - Plain publish after Lua: creates an untracked crash window between reservation
   and message publication. Transaction messages plus a pending recovery ledger
   make that uncertainty observable and recoverable.
-- PostgreSQL-only locking: correct for the current coupon flow but does not
+- MySQL-only locking: correct for the current coupon flow but does not
   implement the requested Redis Lua admission or queue buffering. It remains the
   final durable guard.
 - Distributed lock around read/decrement/write: slower and less precise than one
@@ -279,12 +316,12 @@ non-empty DLQ, repeated transaction UNKNOWN, release backlog, and any stock drif
 
 | Planned change | Owner/module | Requirement |
 |---|---|---|
-| activity invariants/admin lifecycle | flashsale | AC1 |
+| activity invariants/admin list/detail/lifecycle | flashsale | AC1 |
 | atomic admission Lua and Redis adapter | flashsale/repository/redis | AC2, AC3 |
 | transactional producer/checker | flashsale/repository/rocketmq | AC4 |
 | idempotent consumer and order capability | flashsale + order | AC5, AC6 |
-| request/status HTTP contracts | flashsale Entry/Presenter | AC3, AC7 |
+| request/status and public/admin activity HTTP contracts | flashsale Entry/Presenter | AC1, AC3, AC7 |
 | order expiry and release jobs | order + flashsale | AC8 |
 | optional wiring and readiness | config + cmd | AC9, AC10 |
-| accessible asynchronous UI | frontend | AC11 |
+| accessible asynchronous buyer UI and account-page admin UI | frontend | AC1, AC11 |
 | Compose, CI, docs, fault/load proof | repository harness | AC12 |

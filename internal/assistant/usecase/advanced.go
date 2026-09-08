@@ -34,6 +34,24 @@ type AdvancedAssistant struct {
 
 type runIDContextKey struct{}
 
+const ResearchEvidenceUnavailableNote = "所有检索来源暂时不可用，当前没有可验证证据。请明确告知用户这一限制，只提供不依赖未核实事实的有限回答，并且不要生成引用。"
+
+// IsResearchEvidenceUnavailable recognizes the one recoverable research failure.
+// Any stronger classification keeps its fail-closed behavior even when errors are joined.
+func IsResearchEvidenceUnavailable(err error) bool {
+	if !errors.Is(err, legacy.ErrAllResearchToolsFailed) {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, entity.ErrInvalidAgentContract) || errors.Is(err, ErrModelBudget) ||
+		errors.Is(err, ErrToolBudget) || errors.Is(err, ErrDelegationBudget) ||
+		errors.Is(err, ErrDelegationCycle) || errors.Is(err, legacy.ErrResearchBudgetExceeded) {
+		return false
+	}
+	var timeout interface{ Timeout() bool }
+	return !errors.As(err, &timeout) || !timeout.Timeout()
+}
+
 func NewAdvancedAssistant(router RouterNode, planner QueryPlannerNode, copilot Copilot, answerer legacy.AnswerNode, skills *skill.Registry, profiles ProfileStore, config AdvancedConfig) (*AdvancedAssistant, error) {
 	if router == nil || planner == nil || copilot == nil || answerer == nil || skills == nil || profiles == nil {
 		return nil, entity.ErrInvalidAgentContract
@@ -152,8 +170,11 @@ func (a *AdvancedAssistant) prepare(parent context.Context, input legacy.Assista
 	copilotStarted := time.Now()
 	result, err := a.copilot.Run(runCtx, CopilotInput{RunID: runID, Message: input.Message, Context: input.Context, UserID: input.UserID, Profile: profile, Decision: decision, Plan: plan, Skill: definition, Budget: requestBudget, WebEnabled: a.config.WebEnabled})
 	if err != nil {
-		cancel()
-		return legacy.AnswerRequest{}, nil, nil, nil, fmt.Errorf("copilot: %w", err)
+		if !IsResearchEvidenceUnavailable(err) {
+			cancel()
+			return legacy.AnswerRequest{}, nil, nil, nil, fmt.Errorf("copilot: %w", err)
+		}
+		result = CopilotResult{Notes: []string{ResearchEvidenceUnavailableNote}, Usage: requestBudget.Usage()}
 	}
 	slog.InfoContext(runCtx, "assistant copilot completed", "event", "assistant.copilot", "run_id", runID, "skill_id", definition.ID, "skill_version", definition.Version, "evidence_count", len(result.Evidence), "has_plan", result.Plan != nil, "model_calls", result.Usage.ModelCalls, "tool_calls", result.Usage.ToolCalls, "delegations", result.Usage.Delegations, "outcome", "ok")
 	RecordAssistantEvent("assistant.copilot", "game_copilot", "supervise", "ok", "complete", string(decision.Route), definition.ID, copilotStarted)

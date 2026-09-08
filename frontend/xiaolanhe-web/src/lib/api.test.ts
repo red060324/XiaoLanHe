@@ -1,15 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  activateAdminFlashSale,
+  cancelAdminFlashSale,
   claimCoupon,
   clearAssistantProfile,
+  createAdminFlashSale,
   createCommunityPost,
   createKnowledgeDocument,
   createOrder,
   getFlashSaleRequest,
+  getAdminFlashSale,
   getAssistantProfile,
   getKnowledgeTrack,
   getMe,
   listCommunityPosts,
+  listAdminFlashSales,
   listCouponClaims,
   listDeals,
   listFlashSales,
@@ -22,7 +27,8 @@ import {
   replaceAssistantProfile,
   sendChatMessage,
   setCommunityReaction,
-  streamChatMessage
+  streamChatMessage,
+  updateAdminFlashSale
 } from './api';
 
 const fetchMock = vi.fn();
@@ -155,6 +161,53 @@ describe('assistant profile and LightRAG admin API', () => {
 });
 
 describe('commerce API', () => {
+  it('lists and gets admin flash sales including drafts', async () => {
+    const flashSale = {
+      id: '41', code: 'AUTUMN-DELUXE', gameSlug: 'demo', gameName: 'Demo', editionId: '7', editionName: 'Deluxe',
+      region: 'CN', currency: 'CNY', salePriceMinor: 9900, totalStock: 100, paymentTimeoutSeconds: 900,
+      status: 'draft', startsAt: '2026-09-10T12:00:00Z', endsAt: '2026-09-10T13:00:00Z', availability: 'unavailable'
+    };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ items: [flashSale], nextCursor: 'draft page' }), { status: 200 }));
+    await expect(listAdminFlashSales('admin page')).resolves.toMatchObject({ items: [{ status: 'draft', totalStock: 100 }], nextCursor: 'draft page' });
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/admin/flash-sales?cursor=admin+page', expect.objectContaining({ credentials: 'include' }));
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ flashSale }), { status: 200 }));
+    await expect(getAdminFlashSale('41/42')).resolves.toMatchObject({ id: '41', paymentTimeoutSeconds: 900 });
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/admin/flash-sales/41%2F42', expect.objectContaining({ credentials: 'include' }));
+  });
+
+  it('creates and updates admin flash-sale drafts with the complete commercial payload', async () => {
+    const draft = {
+      code: 'AUTUMN-DELUXE', editionId: '7', region: 'CN', currency: 'CNY', salePriceMinor: 9900, totalStock: 100,
+      startsAt: '2026-09-10T12:00:00.000Z', endsAt: '2026-09-10T13:00:00.000Z', paymentTimeoutSeconds: 900
+    };
+    const flashSale = { ...draft, id: '41', gameSlug: 'demo', gameName: 'Demo', editionName: 'Deluxe', status: 'draft', availability: 'unavailable' };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ flashSale }), { status: 201 }));
+    await expect(createAdminFlashSale(draft)).resolves.toMatchObject({ id: '41' });
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/admin/flash-sales', expect.objectContaining({
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft), credentials: 'include'
+    }));
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ flashSale }), { status: 200 }));
+    await updateAdminFlashSale('41/42', draft);
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/admin/flash-sales/41%2F42', expect.objectContaining({
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft), credentials: 'include'
+    }));
+  });
+
+  it('activates and cancels admin flash sales with empty request bodies', async () => {
+    const flashSale = { id: '41', code: 'AUTUMN-DELUXE', totalStock: 100, paymentTimeoutSeconds: 900 };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ flashSale: { ...flashSale, status: 'active' } }), { status: 200 }));
+    await activateAdminFlashSale('41/42');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/admin/flash-sales/41%2F42/activate', { method: 'POST', credentials: 'include' });
+    expect(fetchMock.mock.calls.at(-1)?.[1]).not.toHaveProperty('body');
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ flashSale: { ...flashSale, status: 'cancelled' } }), { status: 200 }));
+    await cancelAdminFlashSale('41/42');
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/admin/flash-sales/41%2F42/cancel', { method: 'POST', credentials: 'include' });
+    expect(fetchMock.mock.calls.at(-1)?.[1]).not.toHaveProperty('body');
+  });
+
   it('encodes deal and order cursors', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ items: [], nextCursor: 'deal-next' }), { status: 200 }));
     await expect(listDeals('42', 'deal page')).resolves.toMatchObject({ nextCursor: 'deal-next' });

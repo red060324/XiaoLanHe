@@ -70,9 +70,86 @@ func TestRedisAdmissionLifecycleIntegration(t *testing.T) {
 	if err != nil || released {
 		t.Fatalf("replayed release=%v err=%v", released, err)
 	}
+	if reserved, err := store.HasActivityReservation(ctx, activity.ID, first.UserID); err != nil || reserved {
+		t.Fatalf("technical rollback buyer marker exists=%v err=%v", reserved, err)
+	}
+	first = admissionAfter(ctx, t, store, first, accepted.ReservedAt)
+	retried, err := store.Reserve(ctx, first)
+	if err != nil || retried.Outcome != flashsale.AdmissionAccepted || retried.RequestID != first.RequestID {
+		t.Fatalf("retry after technical rollback=%+v err=%v", retried, err)
+	}
 	remaining, err := store.Remaining(ctx, activity.ID)
-	if err != nil || remaining != 1 {
+	if err != nil || remaining != 0 {
 		t.Fatalf("remaining=%d err=%v", remaining, err)
+	}
+}
+
+func TestRedisTechnicalRollbackFencesOldReleaseAfterRetryIntegration(t *testing.T) {
+	store, activity, cleanup := integrationStore(t, 1)
+	defer cleanup()
+	ctx := context.Background()
+	if err := store.Stage(ctx, activity); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Enable(ctx, activity); err != nil {
+		t.Fatal(err)
+	}
+
+	command := admissionCommand(activity, 7, "retry-fence-key")
+	first, err := store.Reserve(ctx, command)
+	if err != nil || first.Outcome != flashsale.AdmissionAccepted {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	oldRelease := flashsale.ReleaseCommand{
+		RequestID: command.RequestID, ActivityID: activity.ID, UserID: command.UserID, IdempotencyDigest: command.IdempotencyDigest,
+		ReservedAt: first.ReservedAt, Reason: "technical_rollback", RemoveBuyer: true,
+	}
+	released, err := store.Release(ctx, oldRelease)
+	if err != nil || !released {
+		t.Fatalf("first release=%v err=%v", released, err)
+	}
+
+	// The same millisecond cannot safely distinguish a new incarnation from the
+	// released one, so admission must fail closed until Redis TIME advances.
+	command.ReservedAt = first.ReservedAt
+	sameMillisecond, err := store.Reserve(ctx, command)
+	if err != nil || sameMillisecond.Outcome != flashsale.AdmissionUnavailable {
+		t.Fatalf("same-millisecond retry=%+v err=%v", sameMillisecond, err)
+	}
+
+	command = admissionAfter(ctx, t, store, command, first.ReservedAt)
+	retry, err := store.Reserve(ctx, command)
+	if err != nil || retry.Outcome != flashsale.AdmissionAccepted || !retry.ReservedAt.After(first.ReservedAt) {
+		t.Fatalf("retry=%+v first=%+v err=%v", retry, first, err)
+	}
+
+	// A delayed execution of the old job is a successful no-op. It must not
+	// restore stock, remove the new buyer, replace the new marker, or dequeue it.
+	released, err = store.Release(ctx, oldRelease)
+	if err != nil || released {
+		t.Fatalf("old release after retry=%v err=%v", released, err)
+	}
+	remaining, err := store.Remaining(ctx, activity.ID)
+	if err != nil || remaining != 0 {
+		t.Fatalf("remaining=%d err=%v", remaining, err)
+	}
+	reserved, err := store.HasActivityReservation(ctx, activity.ID, command.UserID)
+	if err != nil || !reserved {
+		t.Fatalf("new buyer exists=%v err=%v", reserved, err)
+	}
+	marker, found, err := store.Lookup(ctx, command.RequestID, activity.ID)
+	if err != nil || !found || marker.Status != "queued" || !marker.ReservedAt.Equal(retry.ReservedAt) {
+		t.Fatalf("new marker=%+v found=%v err=%v", marker, found, err)
+	}
+
+	if err := store.CompletePending(ctx, flashsale.Event{
+		Version: 1, RequestID: command.RequestID, ActivityID: activity.ID, ActivityVersion: activity.Version,
+		UserID: command.UserID, ReservedAt: first.ReservedAt, IdempotencyDigest: command.IdempotencyDigest,
+	}); !errors.Is(err, flashsale.ErrUnavailable) {
+		t.Fatalf("old pending completion error=%v, want unavailable", err)
+	}
+	if _, err := store.client.ZScore(ctx, store.keys(activity.ID).pending, command.RequestID).Result(); err != nil {
+		t.Fatalf("new pending marker missing: %v", err)
 	}
 }
 
@@ -400,6 +477,20 @@ func admissionCommand(activity entity.Activity, userID int64, key string) flashs
 	return flashsale.AdmissionCommand{
 		RequestID: "fsr_" + strconv.FormatInt(activity.ID, 36) + "_" + digest[:32], ActivityID: activity.ID,
 		ActivityVersion: activity.Version, UserID: userID, IdempotencyDigest: digest,
+	}
+}
+
+func admissionAfter(ctx context.Context, t *testing.T, store *Store, command flashsale.AdmissionCommand, previous time.Time) flashsale.AdmissionCommand {
+	t.Helper()
+	for {
+		serverTime, err := store.ServerTime(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		command.ReservedAt = serverTime
+		if command.ReservedAt.UnixMilli() > previous.UnixMilli() {
+			return command
+		}
 	}
 }
 

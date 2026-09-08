@@ -37,11 +37,14 @@ func (h *HTTP) Register(router *server.Hertz) {
 	public.GET("/:activityId", h.get)
 	public.POST("/:activityId/reservations", httpauth.RequireOrigin(h.origin), httpauth.Require(h.auth), h.reserve)
 	router.GET("/api/flash-sale-requests/:requestId", httpauth.Require(h.auth), h.getRequest)
-	admin := router.Group("/api/admin/flash-sales", httpauth.RequireOrigin(h.origin), httpauth.RequireRole(h.auth, auth.RoleAdmin))
-	admin.POST("", h.create)
-	admin.PUT("/:activityId", h.update)
-	admin.POST("/:activityId/activate", h.activate)
-	admin.POST("/:activityId/cancel", h.cancel)
+	adminRead := router.Group("/api/admin/flash-sales", httpauth.RequireRole(h.auth, auth.RoleAdmin))
+	adminRead.GET("", h.listAdmin)
+	adminRead.GET("/:activityId", h.getAdmin)
+	adminWrite := router.Group("/api/admin/flash-sales", httpauth.RequireOrigin(h.origin), httpauth.RequireRole(h.auth, auth.RoleAdmin))
+	adminWrite.POST("", h.create)
+	adminWrite.PUT("/:activityId", h.update)
+	adminWrite.POST("/:activityId/activate", h.activate)
+	adminWrite.POST("/:activityId/cancel", h.cancel)
 }
 
 func (h *HTTP) list(ctx context.Context, c *app.RequestContext) {
@@ -75,6 +78,41 @@ func (h *HTTP) get(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	c.JSON(consts.StatusOK, map[string]any{"flashSale": flashpresenter.PresentActivity(activity, false, time.Now().UTC())})
+}
+
+func (h *HTTP) listAdmin(ctx context.Context, c *app.RequestContext) {
+	limit, err := optionalLimit(string(c.Query("limit")))
+	if err != nil {
+		h.writeError(ctx, c, "list_admin_flash_sales", err)
+		return
+	}
+	principal, _ := httpauth.Principal(c)
+	items, next, err := h.service.ListAdminActivities(ctx, principal, string(c.Query("cursor")), limit)
+	if err != nil {
+		h.writeError(ctx, c, "list_admin_flash_sales", err)
+		return
+	}
+	now := time.Now().UTC()
+	responses := make([]flashpresenter.ActivityResponse, len(items))
+	for i := range items {
+		responses[i] = flashpresenter.PresentActivity(items[i], true, now)
+	}
+	c.JSON(consts.StatusOK, map[string]any{"items": responses, "nextCursor": next})
+}
+
+func (h *HTTP) getAdmin(ctx context.Context, c *app.RequestContext) {
+	id, err := activityID(c)
+	if err != nil {
+		h.writeError(ctx, c, "get_admin_flash_sale", flashsale.ErrNotFound)
+		return
+	}
+	principal, _ := httpauth.Principal(c)
+	activity, err := h.service.GetAdminActivity(ctx, principal, id)
+	if err != nil {
+		h.writeError(ctx, c, "get_admin_flash_sale", err)
+		return
+	}
+	c.JSON(consts.StatusOK, map[string]any{"flashSale": flashpresenter.PresentActivity(activity, true, time.Now().UTC())})
 }
 
 func (h *HTTP) reserve(ctx context.Context, c *app.RequestContext) {

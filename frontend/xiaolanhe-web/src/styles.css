@@ -798,6 +798,109 @@ button {
   color: #1e40af !important;
 }
 
+.flash-sale-admin {
+  display: grid;
+  gap: 20px;
+}
+
+.flash-sale-admin-form h3 {
+  margin: 0;
+}
+
+.flash-sale-admin-list {
+  display: grid;
+  gap: 12px;
+}
+
+.flash-sale-admin-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+}
+
+.flash-sale-admin-summary {
+  min-width: 0;
+}
+
+.flash-sale-admin-summary > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.flash-sale-admin-summary p {
+  margin: 5px 0 0;
+}
+
+.flash-sale-admin-summary small {
+  display: block;
+  margin-top: 5px;
+  color: #6b7280;
+}
+
+.flash-sale-admin-status {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.flash-sale-admin-status.draft {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.flash-sale-admin-status.active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.flash-sale-admin-status.cancelled,
+.flash-sale-admin-status.ended {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.flash-sale-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.flash-sale-admin-actions button,
+.danger-button {
+  padding: 10px 16px;
+  border-radius: 12px;
+}
+
+.flash-sale-admin-actions button:not(.outline-button):not(.danger-button) {
+  background: #111827;
+  color: #fff;
+}
+
+.flash-sale-admin-actions .danger-button {
+  border: 1px solid #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.flash-sale-admin button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.flash-sale-load-more {
+  justify-self: center;
+}
+
 .community-stage {
   width: 100%;
 }
@@ -1295,6 +1398,14 @@ button {
   .purchase-list article,
   .order-card {
     grid-template-columns: 1fr;
+  }
+
+  .flash-sale-admin-list article {
+    grid-template-columns: 1fr;
+  }
+
+  .flash-sale-admin-actions {
+    justify-content: flex-start;
   }
 
   .comment-form > div,

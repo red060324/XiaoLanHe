@@ -3,18 +3,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AccountSettings from './AccountSettings';
 
 const api = vi.hoisted(() => ({
+  activateAdminFlashSale: vi.fn(),
+  cancelAdminFlashSale: vi.fn(),
   clearAssistantProfile: vi.fn(),
+  createAdminFlashSale: vi.fn(),
   createKnowledgeDocument: vi.fn(),
   deleteKnowledgeDocument: vi.fn(),
+  getAdminFlashSale: vi.fn(),
   getAssistantProfile: vi.fn(),
   getKnowledgeTrack: vi.fn(),
+  listAdminFlashSales: vi.fn(),
   listKnowledgeDocuments: vi.fn(),
-  replaceAssistantProfile: vi.fn()
+  replaceAssistantProfile: vi.fn(),
+  updateAdminFlashSale: vi.fn()
 }));
 vi.mock('../lib/api', () => api);
 
 beforeEach(() => {
   api.getAssistantProfile.mockResolvedValue({ favoriteGenres: ['rpg'], preferredPlatforms: ['pc'], defaultRegion: 'CN', preferredLanguages: ['zh-CN'], maxPriceMinor: 30000, currency: 'CNY' });
+  api.listAdminFlashSales.mockResolvedValue({ items: [] });
   api.listKnowledgeDocuments.mockResolvedValue({ items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0 });
 });
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); });
@@ -29,6 +36,7 @@ describe('AccountSettings', () => {
     await waitFor(() => expect(api.replaceAssistantProfile).toHaveBeenCalledWith(expect.objectContaining({ favoriteGenres: ['rpg', 'strategy'], defaultRegion: 'CN' })));
     expect(await screen.findByText('助手偏好已保存。')).toBeInTheDocument();
     expect(api.listKnowledgeDocuments).not.toHaveBeenCalled();
+    expect(api.listAdminFlashSales).not.toHaveBeenCalled();
   });
 
   it('clears only the assistant profile', async () => {
@@ -46,6 +54,8 @@ describe('AccountSettings', () => {
     api.listKnowledgeDocuments.mockResolvedValue({ items: [{ documentId: 'doc-1', sourceKey: 'xlh-source.txt', status: 'PROCESSED', contentLength: 4, chunksCount: 1 }], page: 1, pageSize: 20, totalCount: 1, totalPages: 1 });
     render(<AccountSettings user={{ id: '1', username: 'admin', displayName: 'Admin', role: 'admin' }} authBusy={false} onSignOut={vi.fn()} />);
     expect(await screen.findByText('LightRAG 知识管理')).toBeInTheDocument();
+    expect(screen.getByText('秒杀活动管理')).toBeInTheDocument();
+    await waitFor(() => expect(api.listAdminFlashSales).toHaveBeenCalledWith(''));
     fireEvent.change(screen.getByLabelText('知识标题'), { target: { value: 'Guide' } });
     fireEvent.change(screen.getByLabelText('知识正文'), { target: { value: 'body' } });
     fireEvent.click(screen.getByRole('button', { name: '提交并跟踪索引' }));
