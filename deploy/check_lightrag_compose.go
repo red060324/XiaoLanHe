@@ -102,6 +102,11 @@ func checkCompose(document composeFile) error {
 				return fmt.Errorf("%s.%s must equal %q", name, key, expected)
 			}
 		}
+		for _, key := range []string{"EMBEDDING_DOCUMENT_PREFIX", "EMBEDDING_QUERY_PREFIX"} {
+			if _, exists := service.Environment[key]; exists {
+				return fmt.Errorf("%s.%s must remain unset", name, key)
+			}
+		}
 		if env(service, "MILVUS_TOKEN") != "${XLH_MILVUS_TOKEN:?XLH_MILVUS_TOKEN is required}" {
 			return fmt.Errorf("%s must require the steady-state Milvus token", name)
 		}

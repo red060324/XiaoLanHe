@@ -16,8 +16,10 @@ export EMBEDDING_MODEL=${XLH_LIGHTRAG_EMBEDDING_MODEL:-text-embedding-v4}
 export EMBEDDING_DIM=${XLH_LIGHTRAG_EMBEDDING_DIM:-1024}
 export EMBEDDING_SEND_DIM=false
 export EMBEDDING_ASYMMETRIC=false
-export EMBEDDING_DOCUMENT_PREFIX=
-export EMBEDDING_QUERY_PREFIX=
+# LightRAG 1.5.7 rejects explicitly empty prefix variables. This symmetric
+# embedding contract requires both keys to be absent, including when inherited
+# from the operator shell.
+unset EMBEDDING_DOCUMENT_PREFIX EMBEDDING_QUERY_PREFIX
 export MILVUS_INDEX_TYPE=AUTOINDEX
 export MILVUS_METRIC_TYPE=COSINE
 

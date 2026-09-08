@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -89,6 +92,66 @@ func TestLightRAGServicesMustPreserveOfficialPrivilegeDrop(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestEmbeddingPrefixesMustRemainUnset(t *testing.T) {
+	for _, serviceName := range []string{"lightrag", "lightrag-bootstrap"} {
+		for _, key := range []string{"EMBEDDING_DOCUMENT_PREFIX", "EMBEDDING_QUERY_PREFIX"} {
+			for _, value := range []string{"", "NO_PREFIX"} {
+				t.Run(serviceName+"/"+key+"/"+value, func(t *testing.T) {
+					document := cloneCompose(t, checkedInCompose(t))
+					service := document.Services[serviceName]
+					service.Environment[key] = value
+					document.Services[serviceName] = service
+					if err := checkCompose(document); err == nil || !strings.Contains(err.Error(), key+" must remain unset") {
+						t.Fatalf("got %v", err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestContractHashClearsInheritedEmbeddingPrefixes(t *testing.T) {
+	const expectedDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000\n"
+	shimDirectory := t.TempDir()
+	shimPath := filepath.Join(shimDirectory, "python3")
+	shim := `#!/bin/sh
+set -eu
+if [ "${EMBEDDING_DOCUMENT_PREFIX+x}" = x ] || [ "${EMBEDDING_QUERY_PREFIX+x}" = x ]; then
+  echo "embedding prefix leaked into contract builder" >&2
+  exit 41
+fi
+printf '%s\n' 'sha256:0000000000000000000000000000000000000000000000000000000000000000'
+`
+	if err := os.WriteFile(shimPath, []byte(shim), 0o700); err != nil {
+		t.Fatalf("write python3 shim: %v", err)
+	}
+
+	command := exec.Command("bash", "deploy/lightrag-contract-hash.sh")
+	command.Dir = ".."
+	environment := make([]string, 0, len(os.Environ())+3)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "PATH=") ||
+			strings.HasPrefix(entry, "EMBEDDING_DOCUMENT_PREFIX=") ||
+			strings.HasPrefix(entry, "EMBEDDING_QUERY_PREFIX=") {
+			continue
+		}
+		environment = append(environment, entry)
+	}
+	command.Env = append(
+		environment,
+		"PATH="+shimDirectory+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"EMBEDDING_DOCUMENT_PREFIX=inherited-document-prefix",
+		"EMBEDDING_QUERY_PREFIX=inherited-query-prefix",
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("contract hash rejected inherited environment: %v\n%s", err, output)
+	}
+	if string(output) != expectedDigest {
+		t.Fatalf("contract helper did not execute the environment-checking shim: %q", output)
 	}
 }
 

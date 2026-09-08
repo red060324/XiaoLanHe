@@ -57,8 +57,6 @@ require_literal 'EMBEDDING_MODEL: ${XLH_LIGHTRAG_EMBEDDING_MODEL:-text-embedding
 require_literal 'EMBEDDING_DIM: ${XLH_LIGHTRAG_EMBEDDING_DIM:-1024}'
 require_literal 'EMBEDDING_SEND_DIM: "false"'
 require_literal 'EMBEDDING_ASYMMETRIC: "false"'
-require_literal 'EMBEDDING_DOCUMENT_PREFIX: ""'
-require_literal 'EMBEDDING_QUERY_PREFIX: ""'
 require_literal 'LIGHTRAG_API_KEY: ${XLH_LIGHTRAG_API_KEY:?XLH_LIGHTRAG_API_KEY is required}'
 require_literal 'WHITELIST_PATHS: /health'
 require_literal 'ENABLE_API_DOCS: "false"'
