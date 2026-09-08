@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestLightRAGWorkflowPersistsVerifiedContractBeforeLaterStages(t *testing.T) {
@@ -115,6 +117,48 @@ func TestLightRAGFailureLogsIncludeOneShotServices(t *testing.T) {
 	want := []string{"lightrag", "lightrag-bootstrap", "milvus-init", "milvus", "milvus-etcd", "milvus-minio"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("LightRAG diagnostic services mismatch: got %q, want %q", got, want)
+	}
+}
+
+func TestRepositoryGatesDoNotCollectGeneratedPythonBytecode(t *testing.T) {
+	workflowBytes, err := os.ReadFile("../.github/workflows/go.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Env map[string]string `yaml:"env"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(workflowBytes, &workflow); err != nil {
+		t.Fatalf("parse CI workflow: %v", err)
+	}
+	verify, ok := workflow.Jobs["verify"]
+	if !ok {
+		t.Fatal("CI verify job is missing")
+	}
+	if got := verify.Env["PYTHONDONTWRITEBYTECODE"]; got != "1" {
+		t.Fatalf("CI verify job must prevent every Python step from writing bytecode into the checkout: got %q", got)
+	}
+
+	for _, path := range []string{
+		"deploy/lightrag/__pycache__/guarded_start.cpython-312.pyc",
+		"scripts/__pycache__/ci-openai-stub.cpython-312.pyc",
+		"scripts/ci-openai-stub.pyc",
+	} {
+		command := exec.Command("git", "check-ignore", "--no-index", "--quiet", path)
+		command.Dir = ".."
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("generated Python bytecode %q must be ignored: %v\n%s", path, err, output)
+		}
+	}
+
+	command := exec.Command("git", "check-ignore", "--no-index", "--quiet", "scripts/new-source.py")
+	command.Dir = ".."
+	if err := command.Run(); err == nil {
+		t.Fatal("untracked Python source must remain visible to repository gates")
+	} else if exitError, ok := err.(*exec.ExitError); !ok || exitError.ExitCode() != 1 {
+		t.Fatalf("check untracked Python source: %v", err)
 	}
 }
 
