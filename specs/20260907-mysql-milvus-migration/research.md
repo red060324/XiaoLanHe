@@ -1,17 +1,16 @@
 # Research Notes
 
-- Status: `IMPLEMENTED — CURRENT LOCAL FULL CI PASS / REMOTE CI PENDING; CUTOVER AND LIFECYCLE NOT RUN`
+- Status: `IMPLEMENTED — CURRENT LOCAL/REMOTE CI PASS; CUTOVER AND LIFECYCLE NOT RUN`
 - Authoritative spec: `./spec.md`
 - Research date: 2026-09-07
 
 ## Verification Evidence Scope
 
-GitHub Actions run `34259498765` is green for commit `5c854dd`. It covers
+GitHub Actions run `34274141157` is green for implementation commit `583f42a`. It covers
 repository gates, LightRAG/Milvus empty bootstrap, steady-state live and RBAC checks,
 MySQL 8.4, Redis including the explicit-close fix, RocketMQ, repeated seed and V45
-container smoke. It is historical evidence for that commit only; current uncommitted
-patch passes full local CI, but its exact clean-checkout GitHub run is pending.
-Neither result covers a paid three-target rebuild, complete
+container smoke. The current patch also passes full local CI. Neither result covers
+a paid three-target rebuild, complete
 restart/backup/restore lifecycle, real PostgreSQL -> MySQL 8.4 V27/V28 cutover,
 production resources/credentials, restore rehearsal or traffic enablement.
 

@@ -1,6 +1,6 @@
 # Test Plan
 
-- Status: `IMPLEMENTED — CURRENT LOCAL FULL CI PASS / REMOTE CI PENDING; V27/V28 AND FULL LIFECYCLE BLOCK PRE_MERGE`
+- Status: `IMPLEMENTED — CURRENT LOCAL/REMOTE CI PASS; V27/V28 AND FULL LIFECYCLE BLOCK PRE_MERGE`
 - Authoritative spec: `./spec.md`
 
 ## Scope And Environments
@@ -51,7 +51,7 @@ the corresponding live cases remain blocked rather than being replaced with mock
 | V28 | PRE_MERGE | authenticated read-only verification | separate trusted source and target key/key-ID verification of both manifest-embedded evidence records, target canonical payload/digests, expected deployment generation and referenced immutable reconciliation report; table counts, canonical row digests, orphan/uniqueness/status, coupon/stock/order/payment/entitlement/flash-sale totals; snapshot checkpoint directory and both databases before/after | wrong/missing/cross-used key, key ID or generation, tampered evidence/payload/digest/report and every data mismatch fail closed; verify accepts neither external attestation path, creates no lock/artifact and changes zero filesystem/database bytes | real PostgreSQL -> MySQL 8.4 verification rehearsal plus before/after filesystem and database evidence | BLOCKED — NOT RUN |
 | V29 | PRE_MERGE | dependencies/static | normal binaries/import graph/config/docs contain no PostgreSQL/pgvector/Nano runtime assumption | pgx absent or isolated only to migration tool; architecture follows spec | static checks | PASS — LOCAL |
 | V30 | PRE_MERGE | observability/privacy | DB retries/pool/migration/rebuild metrics and logs under errors | bounded labels; no SQL text, DSN, keys, content or user IDs leak | telemetry tests | PASS — LOCAL |
-| V31 | PRE_MERGE | full regression | Go tests/race/vet/fmt, eval, frontend, hooks, architecture, MySQL/Redis/RocketMQ, two-stage Milvus URI checks and container build | all required gates exit zero without skip; focused tests alone are not complete-gate evidence | canonical Make/remote-CI evidence | PARTIAL — STANDARD GATES PASS RUN 34259498765; V27/V28 AND FULL LIFECYCLE NOT RUN |
+| V31 | PRE_MERGE | full regression | Go tests/race/vet/fmt, eval, frontend, hooks, architecture, MySQL/Redis/RocketMQ, two-stage Milvus URI checks and container build | all required gates exit zero without skip; focused tests alone are not complete-gate evidence | canonical Make/remote-CI evidence | PARTIAL — CURRENT STANDARD GATES PASS RUN 34274141157; V27/V28 AND FULL LIFECYCLE NOT RUN |
 | V32 | PRE_MERGE | connection lifecycle | force pool growth/replacement beyond idle capacity and inspect each physical connection | every connection has TLS/UTC/strict mode; none bypass connector initialization | MySQL integration with connection IDs | PASS — GITHUB MYSQL 8.4 RUN 34259498765 |
 | V33 | PRE_MERGE | affected-row semantics | insert/update/no-op/upsert paths with `clientFoundRows=false` | every `RowsAffected` branch matches actual changed-row semantics | repository + MySQL integration | PASS — GITHUB MYSQL 8.4 RUN 34259498765 |
 | V34 | PRE_MERGE | utf8mb4 capacity | maximum-rune game descriptions, conversation messages/summaries, post/comment text and 4-byte code points | accepted values round trip; over-limit values fail without truncation/warning | schema/repository boundary tests | PASS — GITHUB MYSQL 8.4 RUN 34259498765 |
@@ -162,10 +162,9 @@ and flash-sale concurrency invariants hold; official LightRAG/Milvus ingestion, 
 restart and full restore are proven; and no critical/high correctness, data-loss,
 security, privacy or provenance defect remains. V41-V43 remain rollout-only until the
 user separately authorizes infrastructure, credentials, cost and live mutations.
-GitHub Actions run `34259498765` passed repository, LightRAG/Milvus
+GitHub Actions run `34274141157` passed repository, LightRAG/Milvus
 bootstrap/live/RBAC, MySQL 8.4, Redis, RocketMQ, repeated seed and V45 container-smoke
-gates for commit `5c854dd`. This is historical evidence for that commit only; current
-uncommitted patches have not run CI. V27/V28, paid rebuild and the complete
+gates for implementation commit `583f42a`. V27/V28, paid rebuild and the complete
 ingestion/restart/backup/restore lifecycle remain `BLOCKED — not run`, so overall
 PRE_MERGE readiness remains `BLOCKED`. V41-V43 and production resources, credentials,
 restore, cutover and traffic enablement remain rollout-only and not run.

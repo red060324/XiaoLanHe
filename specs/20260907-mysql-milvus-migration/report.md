@@ -13,11 +13,10 @@ Milvus 2.6.11 for its vector projections. PostgreSQL remains only in explicit
 operator-run migration/import packages, and the Go application does not access Milvus
 directly.
 
-GitHub Actions run `34259498765` passed at commit `5c854dd`: repository gates,
-official LightRAG/Milvus empty bootstrap, steady-state live and RBAC checks, pinned MySQL
-8.4, Redis, RocketMQ, repeated seed and V45 container smoke were all green. This is
-historical clean-checkout evidence for that commit only. The current patch passes
-full local `make ci BASE_REF=HEAD`; remote CI for its exact commit is pending.
+GitHub Actions run `34274141157` passed at implementation commit `583f42a`: repository
+gates, official LightRAG/Milvus empty bootstrap, steady-state live and RBAC checks,
+pinned MySQL 8.4, Redis, RocketMQ, repeated seed and V45 container smoke were all
+green. The current patch also passes full local `make ci BASE_REF=HEAD`.
 It does not prove a paid provider-backed rebuild, complete restart/backup/restore
 lifecycle, real PostgreSQL-to-MySQL V27/V28 cutover rehearsal, or production resources,
 credentials and rollout. This delivery is not production ready.
@@ -65,7 +64,7 @@ credentials and rollout. This delivery is not production ready.
 | AC3 — migration history | dirty/checksum/GET_LOCK/repair implementation and deterministic plus live migration tests pass | PARTIAL — DESTRUCTIVE CRASH/REPAIR REHEARSAL NOT RUN |
 | AC4 — relational compatibility | repository, HTTP, race, MySQL 8.4 and container-smoke gates pass | PASS — GITHUB MYSQL/CONTAINER |
 | AC5 — transactional invariants | lock order, replay, commit ambiguity, state CHECK, retry and bounded release-claim regressions pass | PASS — GITHUB MYSQL 8.4 |
-| AC6 — flash-sale integrity | MySQL claim, Redis admission/recovery including explicit-close precedence, RocketMQ integration and V45 flash-sale smoke pass | PASS — GITHUB RUN 34259498765 |
+| AC6 — flash-sale integrity | MySQL claim, Redis admission/recovery including explicit-close and retry-generation fencing, RocketMQ integration and V45 flash-sale smoke pass | PASS — GITHUB RUN 34274141157 |
 | AC7 — LightRAG-only knowledge | architecture and client/importer tests prove no SQL knowledge fallback or direct application Milvus path | PASS — LOCAL |
 | AC8 — official Milvus backend | two-stage URI, empty bootstrap, live first connection, schema and RBAC allow/deny contracts pass | PASS — GITHUB LIGHTRAG/MILVUS |
 | AC9 — Milvus lifecycle | lifecycle/backup/restore runner and fault contracts are implemented | BLOCKED — LIVE LIFECYCLE NOT RUN |
@@ -86,6 +85,7 @@ uncommitted patch; run `34259498765` is bound to commit `5c854dd`.
 | Historical MySQL metadata regression | `GOCACHE=/private/tmp/xlh-go-cache-mysql go test -count=1 ./internal/adapter/mysql -run 'TestCanonicalSQLExpression|TestRepairCreateTableAcceptsMySQL84|TestRepairCreateTableRejects'` | PASS — PRE-CURRENT-PATCH SNAPSHOT |
 | Linux GitHub Actions | run `34259498765`, commit `5c854dd` | PASS — REPOSITORY, LIGHTRAG/MILVUS BOOTSTRAP/LIVE/RBAC, MYSQL 8.4, REDIS, ROCKETMQ, SEED AND CONTAINER SMOKE |
 | Current patch full local CI | `GOCACHE=/private/tmp/xlh-go-cache PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/private/tmp/xlh-pycache make ci BASE_REF=HEAD` | PASS — all repository gates after final safety fixes |
+| Current implementation GitHub Actions | run `34274141157`, commit `583f42a` | PASS — REPOSITORY, LIGHTRAG/MILVUS BOOTSTRAP/LIVE/RBAC, MYSQL 8.4, REDIS, ROCKETMQ, SEED AND CONTAINER SMOKE |
 | Go unit packages | `go test -count=1 ./...` through current `make ci` | PASS — CURRENT LOCAL |
 | Go race packages | `go test -race -count=1 ./...` through current `make ci`; importer completed in about 212 seconds | PASS — CURRENT LOCAL |
 | Go static/style | `go vet ./...`, `fmt-check`, hooks, architecture and spec-drift through current `make ci` | PASS — CURRENT LOCAL |
@@ -125,8 +125,8 @@ after the final evidence sync before commit.
 The branch is implementation-complete for the approved architecture but is not ready for
 production traffic. Before a production decision, operators must still:
 
-1. Run GitHub Actions on the exact committed patch; local full CI passed while run
-   `34259498765` applies only to `5c854dd`.
+1. Preserve current local and GitHub run `34274141157` evidence for implementation
+   commit `583f42a`.
 2. Run the isolated official LightRAG/Milvus lifecycle, including PyMilvus 3.0.0 version
    and first-client database selection, no target collections or database-scoped grants
    in `default`, exact runtime RBAC allow/deny probes, ingestion/query, clean restart,

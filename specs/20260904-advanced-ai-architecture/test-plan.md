@@ -1,6 +1,6 @@
 # Test Plan
 
-- Status: `CURRENT LOCAL FULL CI PASS / REMOTE CI PENDING; EXTERNAL GATES BLOCKED`
+- Status: `CURRENT LOCAL/REMOTE CI PASS; EXTERNAL GATES BLOCKED`
 - Authoritative spec: `./spec.md`
 
 ## Scope And Environments
@@ -15,9 +15,9 @@ Paid model/embedding/Web calls remain rollout-only unless credential and expense
 authorization is explicit. A deterministic/local-compatible provider may support the
 live container only if the official indexing/storage/query path remains unchanged.
 
-GitHub Actions run `34259498765` was green at commit `5c854dd`; it proves only that
-historical commit. Current focused ordinary/race tests and full local CI pass; the
-clean-checkout GitHub run remains pending.
+Current focused ordinary/race tests and full local CI pass. GitHub Actions run
+`34274141157` also passes at implementation commit `583f42a`; external lifecycle and
+paid-provider gates remain separate.
 
 ## Cases
 
@@ -49,7 +49,7 @@ clean-checkout GitHub run remains pending.
 | V24 | PRE_MERGE | HTTP/SSE/UI | direct/research/planning, async knowledge UI, citations, no-result, disconnect/account switch/a11y and initial-entry budget | compatible chat plus intentional knowledge-contract migration; heavy renderer is lazy and entry stays at or below 500 KiB | Hertz/socket/Vitest/build budget | PASS |
 | V25 | PRE_MERGE | safety/privacy | injection, attempted mutation, forged identity/budget/endpoint and captured telemetry | content remains data; writes unavailable; secrets/content absent | adversarial/static/log/metric tests | PASS |
 | V26 | PRE_MERGE | observability/eval | bounded Agent/model/LightRAG/memory metrics, redaction and baseline comparison | protected low-cardinality metrics and all deterministic thresholds pass; host volume/process metrics remain external | registry/model/HTTP/telemetry tests and eval report | PASS |
-| V27 | PRE_MERGE | lifecycle/CI | disabled/enabled-invalid/down/readiness/shutdown/rollback and repository regressions | baseline compatible; enabled fails closed on auth/version/store/topology/recovery mismatch; no required skip | current local full CI passes; run `34259498765` at `5c854dd` is old clean-checkout evidence; exact-revision remote CI and official lifecycle/restore pending | PARTIAL |
+| V27 | PRE_MERGE | lifecycle/CI | disabled/enabled-invalid/down/readiness/shutdown/rollback and repository regressions | baseline compatible; enabled fails closed on auth/version/store/topology/recovery mismatch; no required skip | current local CI and GitHub run `34274141157` at `583f42a` pass; official full lifecycle/restore remains unavailable | PARTIAL |
 | V28 | ROLLOUT | isolated deployment | private one-replica LightRAG volume, migration, import, restore and rollback | survives clean restart/restore within declared small-corpus envelope | no approved target/runtime | BLOCKED |
 | V29 | ROLLOUT | real provider eval | pinned LightRAG/model/embedding/Skills/dataset flow | quality/P50/P95/calls/tokens/cost/failures recorded | no credential/cost authorization | BLOCKED |
 | V30 | ROLLOUT | observation | Web enabled/disabled/down plus memory/corpus/volume/pipeline/failure/privacy | alerts and rollback decision with no HA/scale claim | requires deployed cohort and orchestrator telemetry | BLOCKED |

@@ -1,6 +1,6 @@
 # Tasks
 
-- Status: `IMPLEMENTED — CURRENT LOCAL FULL CI PASS / REMOTE CI PENDING; PRE_MERGE CUTOVER/LIFECYCLE BLOCKED`
+- Status: `IMPLEMENTED — CURRENT LOCAL/REMOTE CI PASS; PRE_MERGE CUTOVER/LIFECYCLE BLOCKED`
 - Authoritative spec: `./spec.md`
 
 | ID | Class | Status | Task | Acceptance criteria | Evidence |
@@ -20,8 +20,8 @@
 | T11 | PRE_MERGE | DONE | Add pinned Milvus 2.6.11, etcd 3.5.25 and MinIO stack with init/steady-state identities, private network, semantic health, resource limits and all persistent volumes | AC8, AC9, AC12 | Compose plus real empty bootstrap, steady-state live, schema and RBAC checks pass in run `34259498765`; full restore/lifecycle remains T12 work |
 | T12 | PRE_MERGE | BLOCKED | Implement guarded NanoVectorDB-to-Milvus three-library-function rebuild runner; legal/abandoned five-state transitions; strict Python/Go report schema; checksum/expiry-bound external writer and reviewed duplicate-policy evidence; exact database/final-namespace/field/index/ID verification; a serving-lifetime shared lease that excludes mutating controllers; canonical no-follow host bind-source validation; a full-tree pre-mutation ownership initializer with stable lock inodes and sealed final publish; cross-UID shared-GID fence readers; deferred-LightRAG argv isolation; and a per-file checksum manifest with new-generation `restore_verify` restore flow | AC8-AC10, AC12 | 190 Python host/preparer/controller/guard metadata and fault tests (64 preparer, 29 host validator, 86 controller, 11 guarded-start) plus Go deployment contract tests pass; isolated Linux cross-UID rebuild/restart/backup/restore lifecycle is ENVIRONMENT BLOCKED and not authorized |
 | T13 | PRE_MERGE | BLOCKED | Implement operator-only PostgreSQL-to-MySQL snapshot-bound copy/resume/strictly-read-only authenticated verify tooling, separate external signed source-freeze and target-writer-fence evidence, per-target-write/live-completion fence revalidation, manifest-only verification, derived embedded/live target migration provenance, and legacy-knowledge manifest/import/reconciliation without runtime dual write | AC7, AC11 | implementation and focused adversarial tests pass; V27/V28 are BLOCKED — NOT RUN without a real PostgreSQL -> MySQL 8.4 rehearsal |
-| T14 | PRE_MERGE | DONE | Update GitHub Actions, Make targets, environment examples, Render boundary, README, architecture and deployment/backup/rollback docs, including production HTTPS/TLS/ACL defaults and explicit local-only LightRAG, Redis and RocketMQ insecure override guidance | AC12-AC14 | current full local CI passes; clean-checkout GitHub Actions pending; historical run `34259498765` passed at `5c854dd` |
-| T15 | PRE_MERGE | BLOCKED | Run all unit, race, MySQL, Redis, RocketMQ, LightRAG/Milvus, frontend, eval, architecture and full CI gates; write final report | AC1-AC14 | run `34259498765` passes repository, LightRAG/Milvus bootstrap/live/RBAC, MySQL 8.4, Redis, RocketMQ, seed and container smoke for `5c854dd`; full lifecycle, paid rebuild and V27/V28 remain BLOCKED — NOT RUN |
+| T14 | PRE_MERGE | DONE | Update GitHub Actions, Make targets, environment examples, Render boundary, README, architecture and deployment/backup/rollback docs, including production HTTPS/TLS/ACL defaults and explicit local-only LightRAG, Redis and RocketMQ insecure override guidance | AC12-AC14 | current full local CI and clean-checkout run `34274141157` at `583f42a` pass |
+| T15 | PRE_MERGE | BLOCKED | Run all unit, race, MySQL, Redis, RocketMQ, LightRAG/Milvus, frontend, eval, architecture and full CI gates; write final report | AC1-AC14 | run `34274141157` passes current repository, LightRAG/Milvus bootstrap/live/RBAC, MySQL 8.4, Redis, RocketMQ, seed and container smoke; full lifecycle, paid rebuild and V27/V28 remain BLOCKED — NOT RUN |
 | T16 | ROLLOUT | TODO | Provision approved production MySQL and Milvus target, verify MySQL/Milvus TLS/auth/least privilege, encrypted backups/private connectivity/monitoring, and rehearse restores | AC9, AC11, AC12 | operator/provider evidence and restore report |
 | T17 | ROLLOUT | TODO | Freeze writes, drain consumers, execute and reconcile PostgreSQL-to-MySQL cutover, smoke, enable writes and observe | AC5, AC6, AC11-AC14 | signed cutover checklist and metrics |
 | T18 | ROLLOUT | TODO | Quiesce LightRAG, back up native workspace, run authorized paid rebuild-all into Milvus, validate and resume writers | AC8-AC10, AC12-AC14 | rebuild counts, retrieval/eval and rollback evidence |
@@ -36,7 +36,7 @@ credential, destructive-action and model-cost authorization.
 
 Statuses are `TODO`, `IN_PROGRESS`, `DONE`, or `BLOCKED`. Every incomplete PRE_MERGE
 row blocks READY.
-Run `34259498765` is historical evidence for commit `5c854dd` only; current
-uncommitted patches have not run CI. T12/T13, paid rebuild, full restore/lifecycle,
+Run `34274141157` is current implementation evidence for commit `583f42a`. T12/T13,
+paid rebuild, full restore/lifecycle,
 V27/V28 and overall PRE_MERGE readiness remain `BLOCKED — NOT RUN`; repository,
 middleware and container success is not a real PostgreSQL -> MySQL 8.4 cutover rehearsal.

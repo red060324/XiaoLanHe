@@ -1,10 +1,10 @@
 # Delivery And Verification Report
 
-- Status: `VERIFYING — CURRENT LOCAL FULL CI PASS / REMOTE CI PENDING; EXTERNAL PRE_MERGE GATES BLOCKED`
+- Status: `IMPLEMENTATION VERIFIED — LOCAL/REMOTE CI PASS; EXTERNAL PRE_MERGE GATES BLOCKED`
 - Evidence update: 2026-09-09; historical local snapshot: 2026-09-04
 - Branch: `codex/clean-architecture-refactor`
 - Authoritative spec: `./spec.md`
-- Worktree: existing dirty worktree preserved; no commit, push or deployment performed
+- Implementation revision: `583f42a` (pushed); no deployment performed
 
 ## Outcome
 
@@ -27,14 +27,11 @@ unauthenticated health path is limited to liveness and is checked not to disclos
 configuration, paths or topology.
 
 This revision is not yet READY for production or merge under the approved spec.
-GitHub Actions run `34259498765` was green at commit `5c854dd`, but that evidence
-applies only to the old commit. The current patch passes the full local
-`make ci BASE_REF=HEAD` gate; GitHub Actions for the exact committed revision is
-pending. Historical live
-PostgreSQL 17 + pgvector and full-product evidence is likewise not current-patch
-evidence. That historical run covered LightRAG/Milvus bootstrap/live/RBAC and an
-ingestion/query smoke, but the full four-mode/restart/backup/restore lifecycle and
-paid real-provider activity remain externally blocked.
+GitHub Actions run `34274141157` is green at implementation commit `583f42a`. It
+covers the clean-checkout repository gate, LightRAG/Milvus bootstrap/live/RBAC and
+ingestion/query smoke, MySQL 8.4, Redis, RocketMQ, repeated seed and container smoke.
+The full four-mode/restart/backup/restore lifecycle and paid real-provider activity
+remain externally blocked.
 
 ## Acceptance Criteria
 
@@ -44,7 +41,7 @@ paid real-provider activity remain externally blocked.
 | AC2 typed minimum-context delegation | versioned envelopes, task-local `queryUnitId` binding to server-executed `QueryUnit.Text`, server-owned evidence IDs and foreign/stale rejection | PASS — CURRENT LOCAL FULL CI |
 | AC3 reusable Skills | four embedded JSON Skills with delegate/tool/mode/budget/output startup validation | PASS |
 | AC4 Agentic query planning | bounded 1-8 unit planner plus provider-real filter/mode projection with platform retained as orchestration metadata | PASS — CURRENT LOCAL FULL CI |
-| AC5 real official LightRAG retrieval | strict official `/query/data` adapter and contract/adversarial tests implemented; historical LightRAG/Milvus live query smoke passed in run `34259498765`; no Go substitute | PARTIAL — current patch and full four-mode lifecycle pending |
+| AC5 real official LightRAG retrieval | strict official `/query/data` adapter and contract/adversarial tests implemented; current LightRAG/Milvus live query smoke passed in run `34274141157`; no Go substitute | PARTIAL — full four-mode lifecycle pending |
 | AC6 native LightRAG storage | digest-pinned one-replica/two-worker/four-store manifest, strict topology readiness and isolated lifecycle checker implemented | BLOCKED — no local container runtime for ingestion/restart/restore evidence |
 | AC7 LightRAG-owned knowledge | direct create/track/list/exact-delete facade, provider-neutral search, no projection/sync, one-time importer | PARTIAL — adapter/HTTP tests pass; official live lifecycle blocked |
 | AC8 layered memory | latest-eight context, 12,000-rune refresh threshold, 2,000-rune cap and monotonic CAS implementation | PASS — unit/race and live PostgreSQL CAS |
@@ -54,7 +51,7 @@ paid real-provider activity remain externally blocked.
 | AC12 truthful observability | protected Prometheus registry, fixed label vocabularies, safe logs and provider-reported usage semantics | PASS — host volume/process metrics remain deployment-owned; no OTel span claim |
 | AC13 measurable quality | versioned 8-case baseline/candidate deterministic evaluation | PASS |
 | AC14 contracts and architecture | compatible REST/SSE, intentional async knowledge migration, boundary import hook and full local regressions | PASS |
-| AC15 controlled delivery | additive migration, feature flag, fail-closed readiness, guarded lifecycle runner, docs and rollback implemented | PARTIAL — live DB passes; official container/GitHub Actions evidence incomplete |
+| AC15 controlled delivery | additive migration, feature flag, fail-closed readiness, guarded lifecycle runner, docs and rollback implemented | PARTIAL — current GitHub/live smoke passes; full lifecycle remains incomplete |
 
 ## Verification Evidence
 
@@ -72,6 +69,7 @@ paid real-provider activity remain externally blocked.
 | Historical PostgreSQL integration | temporary PostgreSQL 17.11 + pgvector 0.8.6; `TestProductPostgres` ran in ordinary and race suites | PASS — historical snapshot only |
 | Historical GitHub Actions | run `34259498765` at commit `5c854dd` | PASS — repository, LightRAG/Milvus bootstrap/live/RBAC, MySQL 8.4, Redis, RocketMQ, repeated seed and container smoke; old commit only, not current-patch evidence |
 | Current patch full local CI | `GOCACHE=/private/tmp/xlh-go-cache PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/private/tmp/xlh-pycache make ci BASE_REF=HEAD` | PASS — all Go/race packages, 8-case eval, 7 files / 90 Vitest tests, hooks, architecture, MySQL/LightRAG static checks, 190 fence tests, spec drift and build |
+| Current implementation GitHub Actions | run `34274141157` at commit `583f42a` | PASS — clean checkout, LightRAG/Milvus bootstrap/live/RBAC, repository, MySQL/Redis/RocketMQ integration, repeated seed and container smoke |
 | Full isolated LightRAG lifecycle | historical bootstrap/live/RBAC and query smoke passed, but guarded `make lightrag-lifecycle` was not executed here | ENVIRONMENT BLOCKED — restart/backup/restore and all-mode evidence incomplete |
 | Real model/embedding/Web | needs credentials, network, cost approval and an isolated target | ROLLOUT BLOCKED |
 
@@ -129,9 +127,8 @@ functional gate.
 Before marking this spec READY, run and attach evidence for all blocked PRE_MERGE
 cases:
 
-1. Run GitHub Actions on a clean checkout of the exact resulting revision. Current
-   local full CI passed; historical
-   run `34259498765` at `5c854dd` is not a substitute.
+1. Preserve current local and GitHub run `34274141157` evidence for implementation
+   commit `583f42a`.
 2. In an isolated host with Docker and approved test LLM/embedding credentials, run
    `XLH_LIGHTRAG_LIFECYCLE_ACK=isolated-destructive-test make lightrag-lifecycle`.
    The checked-in runner uses a unique empty Compose project and fixed loopback
