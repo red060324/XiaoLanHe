@@ -1,6 +1,6 @@
 # Delivery Report
 
-- Status: `IMPLEMENTATION DELIVERED — LOCAL CI PASS; MYSQL 8.4 REMOTE REVERIFY/LIVE READINESS BLOCKED`
+- Status: `IMPLEMENTATION DELIVERED — LOCAL CI AND MYSQL 8.4 LIVE PASS; REDIS LIVE REVERIFY/LIVE READINESS BLOCKED`
 - Authoritative spec: `./spec.md`
 - Evidence date: 2026-09-08
 
@@ -20,8 +20,11 @@ variants and an over-broad release-worker lock footprint caused by the old OR/fi
 claim query. The implementation now verifies READ COMMITTED behavior directly, pairs
 accepted indexes with bounded key prefixes, and uses forward migrations 026/027 to add
 a generated `claimable_at` time axis plus `(claimable_at,id)` index for one ordered
-`FOR UPDATE SKIP LOCKED` range. Focused tests and the complete local suite pass, but the
-patch still requires the same remote MySQL gate. This is not production-ready evidence:
+`FOR UPDATE SKIP LOCKED` range. Run `34256811765` verifies those MySQL changes against
+MySQL 8.4, then exposed that an explicitly closed future Redis activity still returned
+`not_started`. The admission Lua now gives the persisted close marker terminal precedence
+while retaining existing request replay behavior; focused local tests pass and the Redis
+fix awaits the same remote integration gate. This is not production-ready evidence:
 this host has no Docker or configured real middleware,
 and no authorized provider-backed LightRAG lifecycle or real PostgreSQL-to-MySQL
 cutover rehearsal was run.
@@ -65,11 +68,11 @@ cutover rehearsal was run.
 | Criterion | Delivered evidence | Result |
 |---|---|---|
 | AC1 — MySQL-only runtime | composition/import scan and all normal Go packages pass; pgx is isolated to operator migration/import | PASS — LOCAL |
-| AC2 — MySQL schema | 27 MySQL migrations and schema/repository tests pass | PARTIAL — REAL MYSQL REVERIFY PENDING |
+| AC2 — MySQL schema | 27 MySQL migrations and schema/repository tests pass | PASS — GITHUB MYSQL 8.4 |
 | AC3 — migration history | dirty/checksum/GET_LOCK/repair implementation and deterministic tests pass | PARTIAL — REAL MYSQL BLOCKED |
 | AC4 — relational compatibility | account/chat/catalog/community/promotion/order/memory unit, HTTP and race tests pass | PARTIAL — REAL MYSQL BLOCKED |
-| AC5 — transactional invariants | lock order, replay, commit ambiguity, state CHECK, retry and bounded release-claim regressions pass locally | PARTIAL — LIVE CONTENTION REVERIFY PENDING |
-| AC6 — flash-sale integrity | Redis Lua/RocketMQ/MySQL paths and unit/race tests pass; timestamp precision is normalized to the Redis millisecond contract | PARTIAL — LIVE MIDDLEWARE BLOCKED |
+| AC5 — transactional invariants | lock order, replay, commit ambiguity, state CHECK, retry and bounded release-claim regressions pass | PASS — GITHUB MYSQL 8.4 |
+| AC6 — flash-sale integrity | MySQL claim and most Redis live cases pass; explicit-close precedence is fixed locally; RocketMQ was not reached after the Redis failure | PARTIAL — REDIS REMOTE REVERIFY PENDING |
 | AC7 — LightRAG-only knowledge | architecture and client/importer tests prove no SQL knowledge fallback or direct application Milvus path | PASS — LOCAL |
 | AC8 — official Milvus backend | two-stage URI and unchanged RBAC contracts pass complete local CI, but a real PyMilvus/Milvus first-connection check remains | PARTIAL — DOCKER/LIVE BLOCKED |
 | AC9 — Milvus lifecycle | lifecycle/backup/restore runner and fault contracts are implemented | BLOCKED — LIVE LIFECYCLE NOT RUN |
@@ -77,7 +80,7 @@ cutover rehearsal was run.
 | AC11 — safe data cutover | copy/resume/authenticated read-only verify implementation and adversarial tests pass | BLOCKED — V27/V28 NOT RUN |
 | AC12 — deployment/security | fail-closed TLS/HTTPS/ACL/config tests and static deployment checks pass | PARTIAL — REAL INFRASTRUCTURE BLOCKED |
 | AC13 — compatibility/safety | full local Go/race/HTTP/eval suite and public-search capacity tests pass | PARTIAL — DEPLOYMENT SMOKE BLOCKED |
-| AC14 — verification/delivery | Linux repository/LightRAG and MySQL metadata stages pass in run `34248233589`; the RC/plan/release fixes pass complete local CI but still need the remote integration rerun | BLOCKED — MYSQL REMOTE REVERIFY/LIVE/CUTOVER REQUIRED |
+| AC14 — verification/delivery | Linux repository, live LightRAG/Milvus and full MySQL 8.4 gates pass in run `34256811765`; Redis close semantics fix awaits rerun | BLOCKED — REDIS REMOTE REVERIFY/LIVE/CUTOVER REQUIRED |
 
 ## Executed Verification
 
@@ -85,7 +88,8 @@ cutover rehearsal was run.
 |---|---|---|
 | Complete local PRE_MERGE | `GOCACHE=/private/tmp/xlh-go-cache PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX=/private/tmp/xlh-pycache make ci BASE_REF=HEAD^` | PASS — CURRENT RC/PLAN/RELEASE PATCH |
 | Current MySQL metadata regression | `GOCACHE=/private/tmp/xlh-go-cache-mysql go test -count=1 ./internal/adapter/mysql -run 'TestCanonicalSQLExpression|TestRepairCreateTableAcceptsMySQL84|TestRepairCreateTableRejects'` | PASS |
-| Linux GitHub Actions | run `34248233589`, commit `0510df3b2c7d3c9b36c358a13e0000c93fc78516` | REPOSITORY/LIGHTRAG AND MYSQL METADATA/MIGRATION STAGES PASS; RC/PLAN/RELEASE FIXES NOT YET PUSHED |
+| Linux GitHub Actions | run `34256811765`, commit `69696d912e9863892403fa8e9b2393f4a8dd646d` | REPOSITORY, LIVE LIGHTRAG/MILVUS AND COMPLETE MYSQL 8.4 PASS; REDIS FAILED ONLY CLOSE-BEFORE-START SEMANTICS |
+| Redis explicit-close regression | `go test ./internal/flashsale/repository/redis ./internal/flashsale/usecase ./internal/flashsale/repository/rocketmq -count=1` | PASS — FIX AWAITS REMOTE LIVE REDIS |
 | Go unit packages | `go test -count=1 ./...` through `make ci` | PASS |
 | Go race packages | `go test -race -count=1 ./...` through `make ci`; importer completed in about 231 seconds | PASS |
 | Go static/style | `go vet ./...`, `fmt-check`, hooks, architecture and spec-drift through `make ci` | PASS |

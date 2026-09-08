@@ -62,3 +62,14 @@ func TestAdmissionScriptCapturesReleasedMarkerTimestampOnly(t *testing.T) {
 		t.Fatal("released replay must not parse the timestamp and reason as one number")
 	}
 }
+
+func TestAdmissionScriptTreatsExplicitCloseAsTerminalBeforeStart(t *testing.T) {
+	if !strings.Contains(admitLua, "'ends_at_ms', 'closed_at_ms'") {
+		t.Fatal("admission script must read the explicit close marker")
+	}
+	closed := strings.Index(admitLua, "metadata[5] ~= false")
+	notStarted := strings.Index(admitLua, "now_ms < starts_at_ms")
+	if closed < 0 || notStarted < 0 || closed > notStarted {
+		t.Fatal("explicit close must take precedence over the not-started window")
+	}
+}

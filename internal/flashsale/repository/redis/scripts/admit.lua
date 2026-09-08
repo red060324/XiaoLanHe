@@ -1,4 +1,4 @@
-local metadata = redis.call('HMGET', KEYS[1], 'version', 'active', 'starts_at_ms', 'ends_at_ms')
+local metadata = redis.call('HMGET', KEYS[1], 'version', 'active', 'starts_at_ms', 'ends_at_ms', 'closed_at_ms')
 if metadata[1] == false or metadata[1] ~= ARGV[2] then
   return {-5, '', 0}
 end
@@ -29,6 +29,9 @@ if buyer then
   return {2, ARGV[1], reserved_at_ms}
 end
 
+if metadata[5] ~= false then
+  return {-2, '', now_ms}
+end
 if now_ms < starts_at_ms then
   return {-1, '', now_ms}
 end
