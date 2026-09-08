@@ -31,7 +31,7 @@ type targetTableContract struct {
 
 type targetColumnContract struct {
 	name, columnType, defaultValue, generated, charset, collation string
-	nullable, hasDefault, autoIncrement                           bool
+	nullable, hasDefault, autoIncrement, storedGenerated          bool
 }
 
 type targetIndexContract struct {
@@ -108,11 +108,7 @@ func expectedTargetSchemaContract(specs []tableSpec) (targetSchemaContract, erro
 			if table == nil {
 				return targetSchemaContract{}, fmt.Errorf("embedded MySQL ALTER TABLE precedes CREATE TABLE for %s", matches[1])
 			}
-			constraint, parseErr := parseTargetConstraint(matches[2])
-			if parseErr != nil {
-				return targetSchemaContract{}, fmt.Errorf("parse embedded MySQL migration %s: %w", name, parseErr)
-			}
-			if parseErr = addTargetConstraint(table, constraint); parseErr != nil {
+			if parseErr := mergeTargetAlterTableAdd(table, matches[2]); parseErr != nil {
 				return targetSchemaContract{}, fmt.Errorf("parse embedded MySQL migration %s: %w", name, parseErr)
 			}
 			continue
@@ -219,19 +215,54 @@ func parseTargetCreateTable(statement, tableName string) (*targetTableContract, 
 			if parseErr != nil {
 				return nil, fmt.Errorf("parse index %q: %w", part, parseErr)
 			}
-			if _, duplicate := table.indexes[index.name]; duplicate {
-				return nil, fmt.Errorf("duplicate index %s.%s", table.name, index.name)
+			if parseErr = addTargetIndex(table, index); parseErr != nil {
+				return nil, parseErr
 			}
-			table.indexes[index.name] = index
 		default:
 			column, parseErr := parseTargetColumn(part, *table)
 			if parseErr != nil {
 				return nil, fmt.Errorf("parse column %q: %w", part, parseErr)
 			}
-			table.columns = append(table.columns, column)
+			if parseErr = addTargetColumn(table, column); parseErr != nil {
+				return nil, parseErr
+			}
 		}
 	}
 	return table, nil
+}
+
+func mergeTargetAlterTableAdd(table *targetTableContract, definition string) error {
+	parts, err := splitTargetTopLevel(strings.TrimSpace(definition), ',')
+	if err != nil {
+		return err
+	}
+	if len(parts) != 1 || parts[0] == "" {
+		return errors.New("ALTER TABLE ADD must contain exactly one definition")
+	}
+	definition = parts[0]
+	upper := strings.ToUpper(definition)
+	switch {
+	case strings.HasPrefix(upper, "CONSTRAINT "):
+		constraint, parseErr := parseTargetConstraint(definition)
+		if parseErr != nil {
+			return parseErr
+		}
+		return addTargetConstraint(table, constraint)
+	case strings.HasPrefix(upper, "KEY "):
+		index, parseErr := parseTargetIndex(definition, false)
+		if parseErr != nil {
+			return parseErr
+		}
+		return addTargetIndex(table, index)
+	case strings.HasPrefix(upper, "COLUMN "):
+		column, parseErr := parseTargetColumn(strings.TrimSpace(definition[len("COLUMN"):]), *table)
+		if parseErr != nil {
+			return parseErr
+		}
+		return addTargetColumn(table, column)
+	default:
+		return fmt.Errorf("unsupported ALTER TABLE ADD definition %q", definition)
+	}
 }
 
 func parseTargetColumn(definition string, table targetTableContract) (targetColumnContract, error) {
@@ -268,13 +299,27 @@ func parseTargetColumn(definition string, table targetTableContract) (targetColu
 		column.defaultValue = normalizeTargetDefault(raw, column.columnType)
 	}
 	if offset := targetPhraseOffset(rest, "GENERATED ALWAYS AS"); offset >= 0 {
-		raw, _, valueErr := targetLeadingSQLValue(strings.TrimSpace(rest[offset+len("GENERATED ALWAYS AS"):]))
+		raw, remaining, valueErr := targetLeadingSQLValue(strings.TrimSpace(rest[offset+len("GENERATED ALWAYS AS"):]))
 		if valueErr != nil {
 			return targetColumnContract{}, fmt.Errorf("column %s generated expression: %w", name, valueErr)
 		}
+		if !strings.EqualFold(strings.TrimSpace(remaining), "STORED") {
+			return targetColumnContract{}, fmt.Errorf("column %s generated expression must be STORED", name)
+		}
 		column.generated = normalizeTargetExpression(raw)
+		column.storedGenerated = true
 	}
 	return column, nil
+}
+
+func addTargetColumn(table *targetTableContract, column targetColumnContract) error {
+	for _, existing := range table.columns {
+		if strings.EqualFold(existing.name, column.name) {
+			return fmt.Errorf("duplicate column %s.%s", table.name, column.name)
+		}
+	}
+	table.columns = append(table.columns, column)
+	return nil
 }
 
 func parseTargetConstraint(definition string) (targetConstraintContract, error) {
@@ -328,17 +373,43 @@ func parseTargetConstraint(definition string) (targetConstraintContract, error) 
 }
 
 func addTargetConstraint(table *targetTableContract, constraint targetConstraintContract) error {
-	if _, duplicate := table.constraints[constraint.name]; duplicate {
-		return fmt.Errorf("duplicate constraint %s.%s", table.name, constraint.name)
+	for name := range table.constraints {
+		if strings.EqualFold(name, constraint.name) {
+			return fmt.Errorf("duplicate constraint %s.%s", table.name, constraint.name)
+		}
 	}
-	table.constraints[constraint.name] = constraint
 	if constraint.kind == "PRIMARY KEY" || constraint.kind == "UNIQUE" {
 		columns := make([]targetIndexColumnContract, len(constraint.columns))
 		for i, column := range constraint.columns {
 			columns[i] = targetIndexColumnContract{name: column}
 		}
-		table.indexes[constraint.name] = targetIndexContract{name: constraint.name, unique: true, columns: columns}
+		if err := addTargetIndex(table, targetIndexContract{name: constraint.name, unique: true, columns: columns}); err != nil {
+			return err
+		}
 	}
+	table.constraints[constraint.name] = constraint
+	return nil
+}
+
+func addTargetIndex(table *targetTableContract, index targetIndexContract) error {
+	for name := range table.indexes {
+		if strings.EqualFold(name, index.name) {
+			return fmt.Errorf("duplicate index %s.%s", table.name, index.name)
+		}
+	}
+	if len(index.columns) == 0 {
+		return fmt.Errorf("index %s.%s has no columns", table.name, index.name)
+	}
+	columns := make(map[string]bool, len(table.columns))
+	for _, column := range table.columns {
+		columns[strings.ToLower(column.name)] = true
+	}
+	for _, column := range index.columns {
+		if !columns[strings.ToLower(column.name)] {
+			return fmt.Errorf("index %s.%s references unknown column %s", table.name, index.name, column.name)
+		}
+	}
+	table.indexes[index.name] = index
 	return nil
 }
 
@@ -397,7 +468,7 @@ func expectedTargetSchemaSignatures(contract targetSchemaContract) []string {
 			if column.hasDefault {
 				defaultValue = column.defaultValue
 			}
-			result = append(result, targetSignature("column", table.name, strconv.Itoa(ordinal+1), column.name, column.columnType, strconv.FormatBool(column.nullable), defaultValue, strconv.FormatBool(column.autoIncrement), column.generated, column.charset, column.collation))
+			result = append(result, targetSignature("column", table.name, strconv.Itoa(ordinal+1), column.name, column.columnType, strconv.FormatBool(column.nullable), defaultValue, strconv.FormatBool(column.autoIncrement), column.generated, strconv.FormatBool(column.storedGenerated), column.charset, column.collation))
 		}
 		columns := make(map[string]targetColumnContract, len(table.columns))
 		for _, column := range table.columns {
@@ -462,7 +533,7 @@ func targetSchemaObjectsForContract(contract targetSchemaContract) []targetSchem
 			if column.autoIncrement {
 				extra = "auto_increment"
 			}
-			if column.generated != "" {
+			if column.storedGenerated {
 				extra = "STORED GENERATED"
 			}
 			if column.hasDefault && !strings.HasPrefix(column.defaultValue, "string:") {
@@ -584,12 +655,16 @@ func targetSchemaObjectSignature(object targetSchemaObject, table targetTableCon
 		}
 		extra := strings.ToLower(strings.TrimSpace(targetJSONText(values[4])))
 		autoIncrement := strings.Contains(extra, "auto_increment")
-		generated := normalizeTargetExpression(targetJSONText(values[5]))
+		generated, err := normalizeTargetLiveExpression(targetJSONText(values[5]))
+		if err != nil {
+			return "", fmt.Errorf("normalize generated expression: %w", err)
+		}
+		storedGenerated := strings.Contains(extra, "stored generated")
 		unsupportedExtra := strings.TrimSpace(strings.NewReplacer("auto_increment", "", "default_generated", "", "stored generated", "", "virtual generated", "").Replace(extra))
 		if unsupportedExtra != "" || strings.Contains(extra, "virtual generated") {
 			return "", fmt.Errorf("unsupported column extra %q", extra)
 		}
-		return targetSignature("column", object.Table, strings.TrimLeft(ordinal, "0"), name, columnType, strconv.FormatBool(nullable), defaultValue, strconv.FormatBool(autoIncrement), generated, strings.ToLower(targetJSONText(values[6])), strings.ToLower(targetJSONText(values[7]))), nil
+		return targetSignature("column", object.Table, strings.TrimLeft(ordinal, "0"), name, columnType, strconv.FormatBool(nullable), defaultValue, strconv.FormatBool(autoIncrement), generated, strconv.FormatBool(storedGenerated), strings.ToLower(targetJSONText(values[6])), strings.ToLower(targetJSONText(values[7]))), nil
 	case "index":
 		if len(values) != 10 {
 			return "", fmt.Errorf("index definition has %d fields", len(values))
@@ -687,6 +762,22 @@ func normalizeTargetDefault(value, columnType string) string {
 }
 
 func normalizeTargetExpression(value string) string {
+	decoded, err := decodeTargetIntroducedLiterals(value)
+	if err != nil {
+		return "\x00invalid-target-expression:" + value
+	}
+	return normalizeDecodedTargetExpression(decoded)
+}
+
+func normalizeTargetLiveExpression(value string) (string, error) {
+	decoded, err := decodeTargetIntroducedLiterals(value)
+	if err != nil {
+		return "", err
+	}
+	return normalizeDecodedTargetExpression(decoded), nil
+}
+
+func normalizeDecodedTargetExpression(value string) string {
 	value = stripOuterTargetSQLParens(strings.TrimSpace(value))
 	var result strings.Builder
 	inQuote := false
@@ -728,6 +819,170 @@ func normalizeTargetExpression(value string) string {
 		result.WriteRune(unicode.ToLower(rune(ch)))
 	}
 	return removeRedundantTargetSQLParens(stripOuterTargetSQLParens(result.String()))
+}
+
+// decodeTargetIntroducedLiterals accepts the ordinary MySQL spelling and the
+// two-layer escaped spelling emitted by MySQL 8.4 INFORMATION_SCHEMA. The
+// escaped form is intentionally limited to the exact _utf8mb4 introducer and
+// encoding produced by MySQL; malformed and lookalike forms fail closed.
+func decodeTargetIntroducedLiterals(value string) (string, error) {
+	var result strings.Builder
+	for i := 0; i < len(value); {
+		switch value[i] {
+		case '\'':
+			end, err := targetQuotedExpressionEnd(value, i, '\'')
+			if err != nil {
+				return "", err
+			}
+			result.WriteString(value[i:end])
+			i = end
+			continue
+		case '`':
+			end, err := targetQuotedExpressionEnd(value, i, '`')
+			if err != nil {
+				return "", err
+			}
+			result.WriteString(value[i:end])
+			i = end
+			continue
+		case '\\':
+			return "", errors.New("escaped quote outside an exact _utf8mb4 introduced literal")
+		}
+
+		if !targetIdentifierByte(value[i]) {
+			result.WriteByte(value[i])
+			i++
+			continue
+		}
+		start := i
+		for i < len(value) && targetIdentifierByte(value[i]) {
+			i++
+		}
+		identifier := value[start:i]
+		lower := strings.ToLower(identifier)
+		if i+1 < len(value) && value[i] == '\\' && value[i+1] == '\'' {
+			if lower != "_utf8mb4" {
+				return "", fmt.Errorf("unsupported escaped string introducer %q", identifier)
+			}
+			literal, next, err := decodeTargetEscapedIntroducedLiteral(value, i)
+			if err != nil {
+				return "", err
+			}
+			result.WriteByte('\'')
+			result.WriteString(strings.ReplaceAll(literal, "'", "''"))
+			result.WriteByte('\'')
+			i = next
+			continue
+		}
+		if i < len(value) && value[i] == '\'' {
+			if !isAllowedTargetIntroducer(lower) {
+				if strings.HasPrefix(lower, "_") {
+					return "", fmt.Errorf("unsupported string introducer %q", identifier)
+				}
+				result.WriteString(identifier)
+			} // Allowed introducers are omitted before the ordinary literal.
+			continue
+		}
+		result.WriteString(identifier)
+	}
+	return result.String(), nil
+}
+
+func isAllowedTargetIntroducer(value string) bool {
+	switch value {
+	case "_utf8mb4", "_utf8", "_ascii", "_binary":
+		return true
+	default:
+		return false
+	}
+}
+
+func targetQuotedExpressionEnd(value string, start int, quote byte) (int, error) {
+	for i := start + 1; i < len(value); i++ {
+		if quote == '\'' && value[i] == '\\' {
+			if i+1 >= len(value) {
+				return 0, errors.New("unterminated SQL string literal")
+			}
+			i++
+			continue
+		}
+		if value[i] != quote {
+			continue
+		}
+		if i+1 < len(value) && value[i+1] == quote {
+			i++
+			continue
+		}
+		return i + 1, nil
+	}
+	return 0, errors.New("unterminated quoted SQL token")
+}
+
+func decodeTargetEscapedIntroducedLiteral(value string, openingSlash int) (string, int, error) {
+	i := openingSlash + 2
+	var result strings.Builder
+	for i < len(value) {
+		if value[i] == '\'' {
+			return "", 0, errors.New("raw quote in escaped introduced literal")
+		}
+		if value[i] != '\\' {
+			if value[i] == 0 || value[i] == '\n' || value[i] == '\r' || value[i] == 0x1a {
+				return "", 0, errors.New("raw control byte in escaped introduced literal")
+			}
+			result.WriteByte(value[i])
+			i++
+			continue
+		}
+
+		start := i
+		for i < len(value) && value[i] == '\\' {
+			i++
+		}
+		slashes := i - start
+		if i < len(value) && value[i] == '\'' {
+			for range slashes / 4 {
+				result.WriteByte('\\')
+			}
+			switch slashes % 4 {
+			case 1:
+				return result.String(), i + 1, nil
+			case 3:
+				result.WriteByte('\'')
+				i++
+				continue
+			default:
+				return "", 0, errors.New("invalid escaped quote in introduced literal")
+			}
+		}
+
+		for range slashes / 4 {
+			result.WriteByte('\\')
+		}
+		switch slashes % 4 {
+		case 0:
+			continue
+		case 2:
+			if i >= len(value) {
+				return "", 0, errors.New("unterminated escape in introduced literal")
+			}
+			switch value[i] {
+			case '0':
+				result.WriteByte(0)
+			case 'n':
+				result.WriteByte('\n')
+			case 'r':
+				result.WriteByte('\r')
+			case 'Z':
+				result.WriteByte(0x1a)
+			default:
+				return "", 0, fmt.Errorf("unsupported escaped introduced-literal byte %q", value[i])
+			}
+			i++
+		default:
+			return "", 0, errors.New("invalid escape width in introduced literal")
+		}
+	}
+	return "", 0, errors.New("unterminated escaped introduced literal")
 }
 
 func removeRedundantTargetSQLParens(expression string) string {

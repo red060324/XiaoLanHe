@@ -216,8 +216,11 @@ The existing flow remains:
    records under row locks and unique keys.
 4. Completion marks Redis; failures create durable MySQL release jobs and Redis Lua
    restores stock at most once.
-5. Release workers claim work by `SELECT id ... FOR UPDATE SKIP LOCKED LIMIT ?`, then
-   update and read those IDs inside one transaction.
+5. Release workers scan the generated `claimable_at` column through
+   `(claimable_at,id)`, claim by `SELECT id ... ORDER BY claimable_at,id LIMIT ? FOR
+   UPDATE SKIP LOCKED`, then update and read those IDs inside one transaction. This
+   keeps mixed pending/expired work globally ordered without an OR/filesort lock
+   footprint larger than the requested batch.
 
 Tests re-prove no oversell, one-user-one-order, replay compatibility, compensation and
 multiple-worker lease ownership under MySQL Read Committed.

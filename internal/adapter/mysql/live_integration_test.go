@@ -54,6 +54,9 @@ func runMySQLLiveIntegrationSuite(t *testing.T, ctx context.Context, db *sql.DB)
 	t.Run("same-scope flash-sale activation cannot overlap", func(t *testing.T) {
 		testMySQLFlashSaleActivationConcurrency(t, ctx, newMySQLLiveFixture(t, db))
 	})
+	t.Run("read committed refreshes consistent reads", func(t *testing.T) {
+		testMySQLReadCommittedVisibility(t, ctx, newMySQLLiveFixture(t, db))
+	})
 	t.Run("lock timeout retries discard and reread the whole transaction", func(t *testing.T) {
 		testMySQLTransactionRetry(t, ctx, newMySQLLiveFixture(t, db))
 	})
@@ -585,6 +588,69 @@ func testMySQLFlashSaleActivationConcurrency(t *testing.T, ctx context.Context, 
 	}
 }
 
+func testMySQLReadCommittedVisibility(t *testing.T, ctx context.Context, fixture *mysqlLiveFixture) {
+	t.Helper()
+	userID := fixture.insertUser(t, ctx, "read_committed")
+
+	readerConn, err := fixture.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readerConn.Close()
+	writerConn, err := fixture.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writerConn.Close()
+
+	reader, err := readerConn.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readerOpen := true
+	defer func() {
+		if readerOpen {
+			_ = reader.Rollback()
+		}
+	}()
+
+	var firstRead string
+	if err := reader.QueryRowContext(ctx, `SELECT display_name FROM user_account WHERE id=?`, userID).Scan(&firstRead); err != nil {
+		t.Fatal(err)
+	}
+
+	writer, err := writerConn.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writerOpen := true
+	defer func() {
+		if writerOpen {
+			_ = writer.Rollback()
+		}
+	}()
+	const committedName = "committed between consistent reads"
+	if _, err := writer.ExecContext(ctx, `UPDATE user_account SET display_name=? WHERE id=?`, committedName, userID); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	writerOpen = false
+
+	var secondRead string
+	if err := reader.QueryRowContext(ctx, `SELECT display_name FROM user_account WHERE id=?`, userID).Scan(&secondRead); err != nil {
+		t.Fatal(err)
+	}
+	if firstRead != "Live read_committed" || secondRead != committedName {
+		t.Fatalf("READ COMMITTED consistent reads before/after writer commit = %q/%q", firstRead, secondRead)
+	}
+	if err := reader.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	readerOpen = false
+}
+
 func testMySQLTransactionRetry(t *testing.T, ctx context.Context, fixture *mysqlLiveFixture) {
 	t.Helper()
 	userID := fixture.insertUser(t, ctx, "lock_timeout_retry")
@@ -606,11 +672,7 @@ func testMySQLTransactionRetry(t *testing.T, ctx context.Context, fixture *mysql
 
 	firstAttemptStarted := make(chan struct{})
 	secondAttemptStarted := make(chan struct{})
-	type attemptFailure struct {
-		isolation string
-		err       error
-	}
-	firstFailure := make(chan attemptFailure, 1)
+	firstFailure := make(chan error, 1)
 	type outcome struct {
 		value string
 		err   error
@@ -622,10 +684,6 @@ func testMySQLTransactionRetry(t *testing.T, ctx context.Context, fixture *mysql
 			MaxAttempts: 2, Backoff: func(int) time.Duration { return 0 },
 		}, func(tx *sql.Tx) (string, error) {
 			attempts++
-			var isolation string
-			if err := tx.QueryRowContext(ctx, `SELECT @@transaction_isolation`).Scan(&isolation); err != nil {
-				return "", err
-			}
 			if attempts == 1 {
 				if _, err := tx.ExecContext(ctx, `SET innodb_lock_wait_timeout=1`); err != nil {
 					return "", err
@@ -641,11 +699,11 @@ func testMySQLTransactionRetry(t *testing.T, ctx context.Context, fixture *mysql
 			var displayName string
 			if err := tx.QueryRowContext(ctx, `SELECT display_name FROM user_account WHERE id=? FOR UPDATE`, userID).Scan(&displayName); err != nil {
 				if attempts == 1 {
-					firstFailure <- attemptFailure{isolation: isolation, err: err}
+					firstFailure <- err
 				}
 				return "", err
 			}
-			return fmt.Sprintf("%d|%s|%s", attempts, displayName, isolation), nil
+			return fmt.Sprintf("%d|%s", attempts, displayName), nil
 		})
 		done <- outcome{value: value, err: err}
 	}()
@@ -655,16 +713,13 @@ func testMySQLTransactionRetry(t *testing.T, ctx context.Context, fixture *mysql
 	case <-ctx.Done():
 		t.Fatalf("retry transaction did not start: %v", ctx.Err())
 	}
-	var failure attemptFailure
+	var failure error
 	select {
 	case failure = <-firstFailure:
 	case <-ctx.Done():
 		t.Fatalf("waiting for lock timeout: %v", ctx.Err())
 	}
-	if failure.isolation != "READ-COMMITTED" {
-		t.Fatalf("first-attempt isolation=%q, want READ-COMMITTED", failure.isolation)
-	}
-	requireMySQLErrorNumber(t, failure.err, 1205)
+	requireMySQLErrorNumber(t, failure, 1205)
 	select {
 	case <-secondAttemptStarted:
 	case outcome := <-done:
@@ -686,8 +741,8 @@ func testMySQLTransactionRetry(t *testing.T, ctx context.Context, fixture *mysql
 	if result.err != nil {
 		t.Fatal(result.err)
 	}
-	if result.value != "2|committed by blocker|READ-COMMITTED" {
-		t.Fatalf("retry result=%q, want attempt two with committed value under READ-COMMITTED", result.value)
+	if result.value != "2|committed by blocker" {
+		t.Fatalf("retry result=%q, want fresh attempt two with the committed value", result.value)
 	}
 	var firstRows, secondRows int
 	if err := fixture.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM conversation_session WHERE session_key=?`, retryKeys[0]).Scan(&firstRows); err != nil {
@@ -728,20 +783,28 @@ func testMySQLLockingQueryPlans(t *testing.T, ctx context.Context, fixture *mysq
 		}
 	}
 
+	type indexAccess struct {
+		name          string
+		usedKeyPrefix []string
+	}
 	cases := []struct {
-		name, query     string
-		args            []any
-		wantTables      map[string][]string
-		wantKeyPrefixes map[string][]string
+		name, query string
+		args        []any
+		wantAccess  map[string][]indexAccess
 	}{
 		{
 			name: "price",
 			query: `SELECT active_from FROM game_price
 				WHERE edition_id=? AND active_until IS NULL
 				ORDER BY region_code,currency,active_from,id FOR UPDATE`,
-			args:            []any{offer.EditionID},
-			wantTables:      map[string][]string{"game_price": {"uk_game_price_one_active", "idx_game_price_lookup"}},
-			wantKeyPrefixes: map[string][]string{"game_price": {"edition_id"}},
+			args: []any{offer.EditionID},
+			wantAccess: map[string][]indexAccess{
+				"game_price": {
+					{name: "uk_game_price_active_key", usedKeyPrefix: []string{"edition_id"}},
+					{name: "uk_game_price_one_active", usedKeyPrefix: []string{"edition_id"}},
+					{name: "idx_game_price_lookup", usedKeyPrefix: []string{"edition_id"}},
+				},
+			},
 		},
 		{
 			name: "coupon",
@@ -752,13 +815,14 @@ func testMySQLLockingQueryPlans(t *testing.T, ctx context.Context, fixture *mysq
 				FROM coupon_definition d JOIN coupon_campaign c ON c.id=d.campaign_id
 				WHERE d.code=? FOR UPDATE`,
 			args: []any{userID, couponCode},
-			wantTables: map[string][]string{
-				"d":  {"uk_coupon_definition_code"},
-				"c":  {"PRIMARY"},
-				"cl": {"idx_coupon_claim_coupon"},
-			},
-			wantKeyPrefixes: map[string][]string{
-				"d": {"code"}, "c": {"id"}, "cl": {"coupon_id", "user_id"},
+			wantAccess: map[string][]indexAccess{
+				"d": {{name: "uk_coupon_definition_code", usedKeyPrefix: []string{"code"}}},
+				"c": {{name: "PRIMARY", usedKeyPrefix: []string{"id"}}},
+				"cl": {
+					{name: "idx_coupon_claim_coupon", usedKeyPrefix: []string{"coupon_id", "user_id"}},
+					{name: "uk_coupon_claim_idempotency", usedKeyPrefix: []string{"user_id"}},
+					{name: "idx_coupon_claim_user", usedKeyPrefix: []string{"user_id"}},
+				},
 			},
 		},
 		{
@@ -767,11 +831,10 @@ func testMySQLLockingQueryPlans(t *testing.T, ctx context.Context, fixture *mysq
 				JOIN purchase_order_item i ON i.order_id=o.id
 				WHERE o.order_no=? FOR UPDATE`,
 			args: []any{created.OrderNo},
-			wantTables: map[string][]string{
-				"o": {"uk_purchase_order_no"},
-				"i": {"uk_purchase_order_item"},
+			wantAccess: map[string][]indexAccess{
+				"o": {{name: "uk_purchase_order_no", usedKeyPrefix: []string{"order_no"}}},
+				"i": {{name: "uk_purchase_order_item", usedKeyPrefix: []string{"order_id"}}},
 			},
-			wantKeyPrefixes: map[string][]string{"o": {"order_no"}, "i": {"order_id"}},
 		},
 		{
 			name: "activity",
@@ -779,61 +842,51 @@ func testMySQLLockingQueryPlans(t *testing.T, ctx context.Context, fixture *mysq
 				WHERE id<>? AND edition_id=? AND region_code=? AND currency=? AND status='active'
 					AND starts_at<? AND ends_at>?
 				ORDER BY id LIMIT 1 FOR UPDATE`,
-			args:            []any{int64(-1), offer.EditionID, "GLOBAL", "USD", now.Add(2 * time.Hour), now.Add(-2 * time.Hour)},
-			wantTables:      map[string][]string{"flash_sale_activity": {"idx_flash_sale_activity_scope_window"}},
-			wantKeyPrefixes: map[string][]string{"flash_sale_activity": {"edition_id", "region_code", "currency", "status", "starts_at"}},
+			args: []any{int64(-1), offer.EditionID, "GLOBAL", "USD", now.Add(2 * time.Hour), now.Add(-2 * time.Hour)},
+			wantAccess: map[string][]indexAccess{
+				"flash_sale_activity": {{
+					name:          "idx_flash_sale_activity_scope_window",
+					usedKeyPrefix: []string{"edition_id", "region_code", "currency", "status", "starts_at"},
+				}},
+			},
 		},
 		{
-			name: "release pending",
+			name: "release claimable",
 			query: `SELECT id FROM flash_sale_release_job
-				WHERE status='pending' AND next_attempt_at<=CURRENT_TIMESTAMP(6)
-				ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`,
-			wantTables:      map[string][]string{"flash_sale_release_job": {"idx_flash_sale_release_job_due"}},
-			wantKeyPrefixes: map[string][]string{"flash_sale_release_job": {"status", "next_attempt_at"}},
-		},
-		{
-			name: "release expired lease",
-			query: `SELECT id FROM flash_sale_release_job
-				WHERE status='leased' AND lease_until<CURRENT_TIMESTAMP(6)
-				ORDER BY lease_until,id LIMIT 1 FOR UPDATE SKIP LOCKED`,
-			wantTables:      map[string][]string{"flash_sale_release_job": {"idx_flash_sale_release_job_expired"}},
-			wantKeyPrefixes: map[string][]string{"flash_sale_release_job": {"status", "lease_until"}},
+				WHERE claimable_at<=CURRENT_TIMESTAMP(6)
+				ORDER BY claimable_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`,
+			wantAccess: map[string][]indexAccess{
+				"flash_sale_release_job": {{
+					name:          "idx_flash_sale_release_job_claimable",
+					usedKeyPrefix: []string{"claimable_at"},
+				}},
+			},
 		},
 	}
 
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			plan := explainJSON(t, ctx, fixture.db, test.query, test.args...)
-			for table, indexes := range test.wantTables {
+			for table, accepted := range test.wantAccess {
 				key, usedParts, ok := planAccessForTable(plan, table)
 				if !ok {
-					t.Fatalf("EXPLAIN did not contain table %q: %s", table, plan)
+					t.Fatalf("EXPLAIN did not contain an indexed access for table %q: %s", table, plan)
 				}
-				if !containsString(indexes, key) {
-					t.Fatalf("EXPLAIN table %q used key %q, want one of %v: %s", table, key, indexes, plan)
+				var wantedPrefix []string
+				for _, access := range accepted {
+					if access.name == key {
+						wantedPrefix = access.usedKeyPrefix
+						break
+					}
 				}
-				if wanted := test.wantKeyPrefixes[table]; !hasStringPrefix(usedParts, wanted) {
-					t.Fatalf("EXPLAIN table %q used key parts %v, want prefix %v: %s", table, usedParts, wanted, plan)
+				if wantedPrefix == nil {
+					t.Fatalf("EXPLAIN table %q used key %q, want one of %+v: %s", table, key, accepted, plan)
+				}
+				if !hasStringPrefix(usedParts, wantedPrefix) {
+					t.Fatalf("EXPLAIN table %q used key %q with parts %v, want paired prefix %v: %s", table, key, usedParts, wantedPrefix, plan)
 				}
 			}
 		})
-	}
-
-	// The production release query combines pending and expired-lease ranges.
-	// Assert that MySQL retains both dedicated indexes as usable candidates;
-	// the optimizer may choose index_merge or one range based on live cardinality.
-	plan := explainJSON(t, ctx, fixture.db, `SELECT id FROM flash_sale_release_job
-		WHERE (status='pending' AND next_attempt_at<=CURRENT_TIMESTAMP(6))
-			OR (status='leased' AND lease_until<CURRENT_TIMESTAMP(6))
-		ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`)
-	key, possibleKeys, ok := planAccessCandidatesForTable(plan, "flash_sale_release_job")
-	if !ok {
-		t.Fatalf("production release EXPLAIN did not contain release table: %s", plan)
-	}
-	for _, index := range []string{"idx_flash_sale_release_job_due", "idx_flash_sale_release_job_expired"} {
-		if !containsString(possibleKeys, index) {
-			t.Fatalf("production release plan key=%q does not expose usable index %q among %v: %s", key, index, possibleKeys, plan)
-		}
 	}
 }
 
@@ -855,14 +908,6 @@ func planAccessForTable(plan, table string) (string, []string, bool) {
 		return "", nil, false
 	}
 	return findPlanAccess(value, table)
-}
-
-func planAccessCandidatesForTable(plan, table string) (string, []string, bool) {
-	var value any
-	if err := json.Unmarshal([]byte(plan), &value); err != nil {
-		return "", nil, false
-	}
-	return findPlanAccessCandidates(value, table)
 }
 
 func findPlanAccess(value any, table string) (string, []string, bool) {
@@ -893,45 +938,6 @@ func findPlanAccess(value any, table string) (string, []string, bool) {
 		}
 	}
 	return "", nil, false
-}
-
-func findPlanAccessCandidates(value any, table string) (string, []string, bool) {
-	switch value := value.(type) {
-	case map[string]any:
-		if name, ok := value["table_name"].(string); ok && name == table {
-			key, _ := value["key"].(string)
-			possible := make([]string, 0)
-			if raw, ok := value["possible_keys"].([]any); ok {
-				for _, candidate := range raw {
-					if candidate, ok := candidate.(string); ok {
-						possible = append(possible, candidate)
-					}
-				}
-			}
-			return key, possible, true
-		}
-		for _, nested := range value {
-			if key, possible, ok := findPlanAccessCandidates(nested, table); ok {
-				return key, possible, true
-			}
-		}
-	case []any:
-		for _, nested := range value {
-			if key, possible, ok := findPlanAccessCandidates(nested, table); ok {
-				return key, possible, true
-			}
-		}
-	}
-	return "", nil, false
-}
-
-func containsString(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
 }
 
 func hasStringPrefix(values, prefix []string) bool {
@@ -1183,54 +1189,95 @@ func testMySQLReleaseJobWorkers(t *testing.T, ctx context.Context, fixture *mysq
 	offer := fixture.insertCatalog(t, ctx, "release-workers", 1700)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	activityID := fixture.insertActivity(t, ctx, offer.EditionID, userID, "GLOBAL", "release-workers", "active", now.Add(-time.Hour), now.Add(time.Hour))
-	allIDs := make(map[int64]struct{}, 4)
+	allIDs := make([]int64, 0, 4)
 	for index := range 4 {
 		id := fixture.insertReleaseJob(t, ctx, activityID, userID, fmt.Sprintf("worker-%d", index), now.Add(-time.Minute+time.Duration(index)*time.Microsecond))
-		allIDs[id] = struct{}{}
+		allIDs = append(allIDs, id)
 	}
 
-	store := flashmysql.NewStore(fixture.db)
-	type outcome struct {
+	workerA, err := fixture.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerAOpen := true
+	defer func() {
+		if workerAOpen {
+			_ = workerA.Rollback()
+		}
+	}()
+	rows, err := workerA.QueryContext(ctx, `SELECT id FROM flash_sale_release_job
+		WHERE claimable_at<=CURRENT_TIMESTAMP(6)
+		ORDER BY claimable_at,id LIMIT 2 FOR UPDATE SKIP LOCKED`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerAIDs := make([]int64, 0, 2)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		workerAIDs = append(workerAIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(workerAIDs) != 2 || workerAIDs[0] != allIDs[0] || workerAIDs[1] != allIDs[1] {
+		t.Fatalf("worker A locked jobs %v, want first due jobs %v", workerAIDs, allIDs[:2])
+	}
+
+	type claimOutcome struct {
 		jobs []flashsale.ReleaseJob
 		err  error
 	}
-	start := make(chan struct{})
-	outcomes := make(chan outcome, 2)
-	for range 2 {
-		go func() {
-			<-start
-			jobs, err := store.ClaimReleaseJobs(ctx, 2, 10*time.Second)
-			outcomes <- outcome{jobs: jobs, err: err}
-		}()
+	workerBCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	workerBDone := make(chan claimOutcome, 1)
+	go func() {
+		jobs, err := flashmysql.NewStore(fixture.db).ClaimReleaseJobs(workerBCtx, 2, 10*time.Second)
+		workerBDone <- claimOutcome{jobs: jobs, err: err}
+	}()
+
+	var workerB claimOutcome
+	select {
+	case workerB = <-workerBDone:
+	case <-workerBCtx.Done():
+		t.Fatalf("worker B did not skip worker A's uncommitted LIMIT 2 locks: %v", workerBCtx.Err())
 	}
-	close(start)
-	claimed := make(map[int64]struct{}, 4)
-	for worker := range 2 {
-		outcome := <-outcomes
-		if outcome.err != nil {
-			t.Fatalf("worker %d claim: %v", worker, outcome.err)
-		}
-		if len(outcome.jobs) != 2 {
-			t.Fatalf("worker %d claimed %d jobs, want 2: %+v", worker, len(outcome.jobs), outcome.jobs)
-		}
-		for _, job := range outcome.jobs {
-			if _, belongs := allIDs[job.ID]; !belongs {
-				t.Fatalf("worker %d claimed unrelated job %d", worker, job.ID)
-			}
-			if _, duplicate := claimed[job.ID]; duplicate {
-				t.Fatalf("release job %d was returned to both workers", job.ID)
-			}
-			if job.LeaseGeneration != 1 || job.Attempts != 1 {
-				t.Fatalf("release job %d generation=%d attempts=%d, want 1/1", job.ID, job.LeaseGeneration, job.Attempts)
-			}
-			claimed[job.ID] = struct{}{}
+	if workerB.err != nil {
+		t.Fatal(workerB.err)
+	}
+	if len(workerB.jobs) != 2 || workerB.jobs[0].ID != allIDs[2] || workerB.jobs[1].ID != allIDs[3] {
+		t.Fatalf("worker B claimed jobs %+v while worker A held %v, want remaining jobs %v", workerB.jobs, workerAIDs, allIDs[2:])
+	}
+	for _, job := range workerB.jobs {
+		if job.LeaseGeneration != 1 || job.Attempts != 1 {
+			t.Fatalf("release job %d generation=%d attempts=%d, want 1/1", job.ID, job.LeaseGeneration, job.Attempts)
 		}
 	}
-	if len(claimed) != len(allIDs) {
-		t.Fatalf("workers claimed %d unique jobs, want %d", len(claimed), len(allIDs))
+	updated, err := workerA.ExecContext(ctx, `
+		UPDATE flash_sale_release_job
+		SET status='leased',attempts=attempts+1,
+			lease_until=TIMESTAMPADD(MICROSECOND,?,CURRENT_TIMESTAMP(6)),updated_at=CURRENT_TIMESTAMP(6)
+		WHERE id IN (?,?)`, (10 * time.Second).Microseconds(), workerAIDs[0], workerAIDs[1])
+	if err != nil {
+		t.Fatal(err)
 	}
+	if affected := rowsAffected(t, updated); affected != 2 {
+		t.Fatalf("worker A updated %d locked jobs, want 2", affected)
+	}
+	if err := workerA.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	workerAOpen = false
+
 	var leased, attemptsOne int
-	args := int64Args(fixture.releaseJobIDs)
+	args := int64Args(allIDs)
 	if err := fixture.db.QueryRowContext(ctx, `
 		SELECT SUM(status='leased'),SUM(attempts=1) FROM flash_sale_release_job
 		WHERE id IN (`+livePlaceholders(len(args))+`)`, args...).Scan(&leased, &attemptsOne); err != nil {
@@ -1246,8 +1293,7 @@ func requireNoDueReleaseJobs(t *testing.T, ctx context.Context, db *sql.DB) {
 	var existingDue int
 	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM flash_sale_release_job
-		WHERE (status='pending' AND next_attempt_at<=CURRENT_TIMESTAMP(6))
-		   OR (status='leased' AND lease_until<CURRENT_TIMESTAMP(6))`).Scan(&existingDue); err != nil {
+		WHERE claimable_at<=CURRENT_TIMESTAMP(6)`).Scan(&existingDue); err != nil {
 		t.Fatal(err)
 	}
 	if existingDue != 0 {

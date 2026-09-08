@@ -38,9 +38,8 @@ const (
 		) VALUES (?,?,?,?,?,?,0,'draft',?,?,?,0,?)`
 	selectReleaseJobIDsSQL = `
 		SELECT id FROM flash_sale_release_job
-		WHERE (status='pending' AND next_attempt_at<=CURRENT_TIMESTAMP(6))
-			OR (status='leased' AND lease_until<CURRENT_TIMESTAMP(6))
-		ORDER BY next_attempt_at,id LIMIT ? FOR UPDATE SKIP LOCKED`
+		WHERE claimable_at<=CURRENT_TIMESTAMP(6)
+		ORDER BY claimable_at,id LIMIT ? FOR UPDATE SKIP LOCKED`
 	lockUserSQL               = `SELECT id FROM user_account WHERE id=? FOR UPDATE`
 	lockUserSkipLockedSQL     = `SELECT id FROM user_account WHERE id=? FOR UPDATE SKIP LOCKED`
 	lockActivitySQL           = `SELECT id FROM flash_sale_activity WHERE id=? FOR UPDATE`

@@ -77,7 +77,10 @@ func TestClaimReleaseJobsSelectsUpdatesAndReadsInOneTransaction(t *testing.T) {
 	requestTwo := "fsr_2_fedcba9876543210fedcba9876543210"
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(selectReleaseJobIDsSQL).WithArgs(2).WillReturnRows(
+	mock.ExpectQuery(`
+		SELECT id FROM flash_sale_release_job
+		WHERE claimable_at<=CURRENT_TIMESTAMP(6)
+		ORDER BY claimable_at,id LIMIT ? FOR UPDATE SKIP LOCKED`).WithArgs(2).WillReturnRows(
 		newRows("id").AddRow(int64(4)).AddRow(int64(9)),
 	)
 	mock.ExpectExec(`

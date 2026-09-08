@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,7 +18,7 @@ func TestExpectedTargetMigrationManifestMatchesEmbeddedHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest) != 25 || manifest[0].Version != "001_create_user_account.sql" || manifest[len(manifest)-1].Version != "025_create_flash_sale_release_job.sql" {
+	if len(manifest) != 27 || manifest[0].Version != "001_create_user_account.sql" || manifest[len(manifest)-2].Version != "026_add_flash_sale_release_claimable_at.sql" || manifest[len(manifest)-1].Version != "027_add_flash_sale_release_claimable_index.sql" {
 		t.Fatalf("unexpected embedded migration manifest: first=%+v last=%+v count=%d", manifest[0], manifest[len(manifest)-1], len(manifest))
 	}
 	for _, item := range manifest {
@@ -63,11 +64,30 @@ func TestTargetSchemaContractIsExactAndDetectsSemanticDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	releaseJob := contract.tables["flash_sale_release_job"]
+	if releaseJob == nil {
+		t.Fatal("flash_sale_release_job contract is missing")
+	}
+	var claimable *targetColumnContract
+	for i := range releaseJob.columns {
+		if releaseJob.columns[i].name == "claimable_at" {
+			claimable = &releaseJob.columns[i]
+			break
+		}
+	}
+	wantGenerated := normalizeTargetExpression("IF(status='pending',next_attempt_at,IF(status='leased',lease_until,NULL))")
+	if claimable == nil || claimable.columnType != "datetime(6)" || !claimable.nullable || claimable.generated != wantGenerated || !claimable.storedGenerated {
+		t.Fatalf("unexpected claimable_at contract: %+v", claimable)
+	}
+	claimableIndex, ok := releaseJob.indexes["idx_flash_sale_release_job_claimable"]
+	if !ok || claimableIndex.unique || len(claimableIndex.columns) != 2 || claimableIndex.columns[0].name != "claimable_at" || claimableIndex.columns[0].descending || claimableIndex.columns[1].name != "id" || claimableIndex.columns[1].descending {
+		t.Fatalf("unexpected claimable index contract: %+v", claimableIndex)
+	}
 	objects := targetSchemaObjectsForContract(contract)
 	if err := validateTargetSchemaObjects(objects, contract); err != nil {
 		t.Fatalf("exact schema rejected: %v", err)
 	}
-	for _, kind := range []string{"column", "check", "referential"} {
+	for _, kind := range []string{"column", "index", "check", "referential"} {
 		t.Run(kind, func(t *testing.T) {
 			drifted := append([]targetSchemaObject(nil), objects...)
 			for i := range drifted {
@@ -81,6 +101,69 @@ func TestTargetSchemaContractIsExactAndDetectsSemanticDrift(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTargetSchemaGeneratedExpressionAcceptsMySQL84IntroducedLiterals(t *testing.T) {
+	contract, err := expectedTargetSchemaContract(tables())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := expectedTargetSchemaSignatures(contract)
+	for _, expression := range []string{
+		"if((`status` = _utf8mb4'pending'),`next_attempt_at`,if((`status` = _utf8mb4'leased'),`lease_until`,NULL))",
+		"if((`status` = _utf8mb4\\'pending\\'),`next_attempt_at`,if((`status` = _UTF8MB4\\'leased\\'),`lease_until`,NULL))",
+	} {
+		objects := targetSchemaObjectsForContract(contract)
+		setTargetClaimableExpression(t, objects, expression)
+		got, err := targetSchemaSemanticSignatures(objects, contract)
+		if err != nil {
+			t.Fatalf("normalize live generated expression %q: %v", expression, err)
+		}
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Fatalf("introduced literal changed schema identity for %q", expression)
+		}
+	}
+}
+
+func TestTargetSchemaGeneratedExpressionRejectsMalformedIntroducedLiterals(t *testing.T) {
+	contract, err := expectedTargetSchemaContract(tables())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expression := range []string{
+		`if(status=_utf8mb4evil\'pending\',next_attempt_at,NULL)`,
+		`if(status=_utf8mb4_0900_ai_ci\'pending\',next_attempt_at,NULL)`,
+		`if(status=_latin1\'pending\',next_attempt_at,NULL)`,
+		`if(status=_utf8mb4 \'pending\',next_attempt_at,NULL)`,
+		`if(status=_utf8mb4\'pending,next_attempt_at,NULL)`,
+	} {
+		objects := targetSchemaObjectsForContract(contract)
+		setTargetClaimableExpression(t, objects, expression)
+		if _, err := targetSchemaSemanticSignatures(objects, contract); err == nil {
+			t.Fatalf("malformed introduced literal %q was accepted", expression)
+		}
+	}
+}
+
+func setTargetClaimableExpression(t *testing.T, objects []targetSchemaObject, expression string) {
+	t.Helper()
+	for i := range objects {
+		if objects[i].Type != "column" || objects[i].Table != "flash_sale_release_job" || !strings.HasSuffix(objects[i].Name, ".claimable_at") {
+			continue
+		}
+		var definition []any
+		if err := json.Unmarshal([]byte(objects[i].Definition), &definition); err != nil {
+			t.Fatal(err)
+		}
+		definition[5] = expression
+		encoded, err := json.Marshal(definition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		objects[i].Definition = string(encoded)
+		return
+	}
+	t.Fatal("claimable_at live schema object is missing")
 }
 
 func TestTargetRunLockUsesCoordinatesAndDedicatedConnection(t *testing.T) {

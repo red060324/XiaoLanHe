@@ -24,10 +24,10 @@ func TestLoadMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 25 {
+	if len(entries) != 27 {
 		t.Fatalf("migration count=%d", len(entries))
 	}
-	if entries[0].version != "001_create_user_account.sql" || entries[len(entries)-1].version != "025_create_flash_sale_release_job.sql" {
+	if entries[0].version != "001_create_user_account.sql" || entries[len(entries)-1].version != "027_add_flash_sale_release_claimable_index.sql" {
 		t.Fatalf("range=%s..%s", entries[0].version, entries[len(entries)-1].version)
 	}
 	seen := map[[32]byte]string{}
@@ -601,6 +601,202 @@ func TestCreateTableOptionsFailClosed(t *testing.T) {
 	}
 }
 
+func TestEmbeddedAlterTableContractsParse(t *testing.T) {
+	entries, err := loadMigrations(migrations.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alters := 0
+	for _, entry := range entries {
+		if !startsWithSQLKeywords(entry.sql, "ALTER", "TABLE") {
+			continue
+		}
+		alters++
+		contract, err := parseAlterTableContract(entry.sql)
+		if err != nil {
+			t.Errorf("%s: %v", entry.version, err)
+			continue
+		}
+		objects := 0
+		if contract.column != nil {
+			objects++
+		}
+		if contract.index != nil {
+			objects++
+		}
+		if contract.constraint != nil {
+			objects++
+		}
+		if contract.table == "" || objects != 1 {
+			t.Errorf("%s produced incomplete ALTER contract: %+v", entry.version, contract)
+		}
+	}
+	if alters != 5 {
+		t.Fatalf("ALTER TABLE migration count=%d", alters)
+	}
+}
+
+func TestRepairEmbeddedAlterTableGeneratedColumn(t *testing.T) {
+	const version = "026_add_flash_sale_release_claimable_at.sql"
+	ddl, err := fs.ReadFile(migrations.Files, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, checksum := migrationFiles(t, version, string(ddl))
+	state := &migrationFakeState{
+		lock: ptr(1), release: ptr(1), storedChecksum: checksum, storedDirty: true,
+		schema: alterGeneratedColumnSchema(),
+	}
+	db := sql.OpenDB(migrationFakeConnector{state: state})
+	defer db.Close()
+
+	if err := Repair(context.Background(), db, files, version); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(state.execs, "\n"), "SET dirty=0") {
+		t.Fatalf("verified generated-column migration was not marked clean: %v", state.execs)
+	}
+	if !strings.Contains(strings.Join(state.queries, "\n"), "information_schema.columns") {
+		t.Fatalf("generated-column repair did not inspect columns: %v", state.queries)
+	}
+}
+
+func TestRepairAlterTableGeneratedColumnRejectsSemanticTampering(t *testing.T) {
+	const version = "026_add_flash_sale_release_claimable_at.sql"
+	ddl, err := fs.ReadFile(migrations.Files, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]func(*migrationFakeSchema){
+		"missing column":    func(schema *migrationFakeSchema) { schema.columns = nil },
+		"wrong type":        func(schema *migrationFakeSchema) { schema.columns[0][1] = "datetime" },
+		"wrong nullability": func(schema *migrationFakeSchema) { schema.columns[0][2] = "NO" },
+		"unexpected default": func(schema *migrationFakeSchema) {
+			schema.columns[0][3] = "current_timestamp(6)"
+			schema.columns[0][4] = "DEFAULT_GENERATED STORED GENERATED"
+		},
+		"wrong expression": func(schema *migrationFakeSchema) {
+			schema.columns[0][5] = "if(status='pending',lease_until,if(status='leased',next_attempt_at,NULL))"
+		},
+		"virtual instead of stored": func(schema *migrationFakeSchema) { schema.columns[0][4] = "VIRTUAL GENERATED" },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			files, checksum := migrationFiles(t, version, string(ddl))
+			schema := alterGeneratedColumnSchema()
+			mutate(schema)
+			state := &migrationFakeState{lock: ptr(1), release: ptr(1), storedChecksum: checksum, storedDirty: true, schema: schema}
+			db := sql.OpenDB(migrationFakeConnector{state: state})
+			defer db.Close()
+
+			err := Repair(context.Background(), db, files, version)
+			if err == nil || !strings.Contains(err.Error(), "postcondition failed") {
+				t.Fatalf("expected generated-column semantic mismatch, got %v", err)
+			}
+			if strings.Contains(strings.Join(state.execs, "\n"), "SET dirty=0") {
+				t.Fatalf("tampered generated column was marked clean: %v", state.execs)
+			}
+		})
+	}
+}
+
+func TestRepairEmbeddedAlterTableCompositeIndex(t *testing.T) {
+	const version = "027_add_flash_sale_release_claimable_index.sql"
+	ddl, err := fs.ReadFile(migrations.Files, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, checksum := migrationFiles(t, version, string(ddl))
+	state := &migrationFakeState{
+		lock: ptr(1), release: ptr(1), storedChecksum: checksum, storedDirty: true,
+		schema: alterCompositeIndexSchema(),
+	}
+	db := sql.OpenDB(migrationFakeConnector{state: state})
+	defer db.Close()
+
+	if err := Repair(context.Background(), db, files, version); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(state.execs, "\n"), "SET dirty=0") {
+		t.Fatalf("verified composite-index migration was not marked clean: %v", state.execs)
+	}
+	if !strings.Contains(strings.Join(state.queries, "\n"), "information_schema.statistics") {
+		t.Fatalf("composite-index repair did not inspect indexes: %v", state.queries)
+	}
+}
+
+func TestRepairAlterTableCompositeIndexRejectsSemanticTampering(t *testing.T) {
+	const version = "027_add_flash_sale_release_claimable_index.sql"
+	ddl, err := fs.ReadFile(migrations.Files, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]func(*migrationFakeSchema){
+		"missing index": func(schema *migrationFakeSchema) { schema.indexes = nil },
+		"wrong name": func(schema *migrationFakeSchema) {
+			schema.indexes[0][0] = "idx_other"
+			schema.indexes[1][0] = "idx_other"
+		},
+		"wrong order":    func(schema *migrationFakeSchema) { schema.indexes[0][3], schema.indexes[1][3] = "id", "claimable_at" },
+		"missing id":     func(schema *migrationFakeSchema) { schema.indexes = schema.indexes[:1] },
+		"unique":         func(schema *migrationFakeSchema) { schema.indexes[0][1] = int64(0); schema.indexes[1][1] = int64(0) },
+		"descending":     func(schema *migrationFakeSchema) { schema.indexes[1][4] = "D" },
+		"prefix":         func(schema *migrationFakeSchema) { schema.indexes[0][5] = int64(8) },
+		"expression":     func(schema *migrationFakeSchema) { schema.indexes[0][6] = "(`claimable_at`)" },
+		"non btree":      func(schema *migrationFakeSchema) { schema.indexes[0][7] = "HASH" },
+		"invisible":      func(schema *migrationFakeSchema) { schema.indexes[0][8] = "NO" },
+		"wrong sequence": func(schema *migrationFakeSchema) { schema.indexes[0][2] = int64(2) },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			files, checksum := migrationFiles(t, version, string(ddl))
+			schema := alterCompositeIndexSchema()
+			mutate(schema)
+			state := &migrationFakeState{lock: ptr(1), release: ptr(1), storedChecksum: checksum, storedDirty: true, schema: schema}
+			db := sql.OpenDB(migrationFakeConnector{state: state})
+			defer db.Close()
+
+			err := Repair(context.Background(), db, files, version)
+			if err == nil || !strings.Contains(err.Error(), "postcondition failed") {
+				t.Fatalf("expected composite-index semantic mismatch, got %v", err)
+			}
+			if strings.Contains(strings.Join(state.execs, "\n"), "SET dirty=0") {
+				t.Fatalf("tampered composite index was marked clean: %v", state.execs)
+			}
+		})
+	}
+}
+
+func TestRepairAlterTableColumnAndIndexQueryErrorsFailClosed(t *testing.T) {
+	tests := []struct {
+		version, query string
+		schema         *migrationFakeSchema
+	}{
+		{"026_add_flash_sale_release_claimable_at.sql", "information_schema.columns", alterGeneratedColumnSchema()},
+		{"027_add_flash_sale_release_claimable_index.sql", "information_schema.statistics", alterCompositeIndexSchema()},
+	}
+	for _, test := range tests {
+		t.Run(test.version, func(t *testing.T) {
+			ddl, err := fs.ReadFile(migrations.Files, test.version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files, checksum := migrationFiles(t, test.version, string(ddl))
+			state := &migrationFakeState{lock: ptr(1), release: ptr(1), storedChecksum: checksum, storedDirty: true, schema: test.schema, failQueryContains: test.query}
+			db := sql.OpenDB(migrationFakeConnector{state: state})
+			defer db.Close()
+
+			err = Repair(context.Background(), db, files, test.version)
+			if err == nil || !strings.Contains(err.Error(), "injected schema query failure") {
+				t.Fatalf("expected ALTER query failure, got %v", err)
+			}
+			if strings.Contains(strings.Join(state.execs, "\n"), "SET dirty=0") {
+				t.Fatalf("query failure marked migration clean: %v", state.execs)
+			}
+		})
+	}
+}
+
 func TestRepairEmbeddedAlterTableForeignKeys(t *testing.T) {
 	tests := []struct {
 		version          string
@@ -742,6 +938,20 @@ func alterForeignKeySchema(constraint string, foreignKeys [][]driver.Value) *mig
 		constraints: [][]driver.Value{{constraint, "FOREIGN KEY"}},
 		foreignKeys: foreignKeys,
 	}
+}
+
+func alterGeneratedColumnSchema() *migrationFakeSchema {
+	return &migrationFakeSchema{columns: [][]driver.Value{{
+		"claimable_at", "datetime(6)", "YES", nil, "STORED GENERATED",
+		"if(status='pending',next_attempt_at,if(status='leased',lease_until,NULL))", nil, nil,
+	}}}
+}
+
+func alterCompositeIndexSchema() *migrationFakeSchema {
+	return &migrationFakeSchema{indexes: [][]driver.Value{
+		indexRow("idx_flash_sale_release_job_claimable", 1, 1, "claimable_at", "A"),
+		indexRow("idx_flash_sale_release_job_claimable", 1, 2, "id", "A"),
+	}}
 }
 
 type migrationFakeState struct {

@@ -579,6 +579,7 @@ fixed-width `CHAR(n)`.
 | `attempts` | `INT` | no | `0` |
 | `next_attempt_at` | `DATETIME(6)` | no | `CURRENT_TIMESTAMP(6)` |
 | `lease_until` | `DATETIME(6)` | yes | `NULL` |
+| `claimable_at` | `DATETIME(6) GENERATED ... STORED` | yes | derived |
 | `last_error_code` | `A(48)` | yes | `NULL` |
 | `completed_at` | `DATETIME(6)` | yes | `NULL` |
 | `created_at` | `DATETIME(6)` | no | `CURRENT_TIMESTAMP(6)` |
@@ -593,12 +594,16 @@ fixed-width `CHAR(n)`.
   `pending|leased|done`; `attempts>=0`; pending has null lease and completion, leased
   has a non-null lease, null completion and positive attempts, and done has a null lease,
   non-null completion and positive attempts. Digest length is enforced by its type.
-- Indexes: `idx_flash_sale_release_job_due (status,next_attempt_at,id)`,
+- `claimable_at` is `next_attempt_at` for pending jobs, `lease_until` for leased jobs,
+  and `NULL` for completed jobs. It is introduced by a forward migration; migration
+  `025` remains immutable.
+- Indexes: `idx_flash_sale_release_job_claimable (claimable_at,id)`,
+  `idx_flash_sale_release_job_due (status,next_attempt_at,id)`,
   `idx_flash_sale_release_job_expired (status,lease_until,id)`,
   `idx_flash_sale_release_job_activity (activity_id)`, and
-  `idx_flash_sale_release_job_user (user_id)`. Pending and expired lease scans
-  use separate leading-column indexes; the combined worker predicate may use
-  index merge and is verified separately on MySQL 8.4.
+  `idx_flash_sale_release_job_user (user_id)`. Workers scan the single claimable index
+  in `(claimable_at,id)` order so `LIMIT` bounds the locking-read footprint while the
+  older indexes remain available for compatibility and diagnostics.
 
 ## Migration Metadata
 

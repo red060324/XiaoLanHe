@@ -411,11 +411,11 @@ func postcondition(ctx context.Context, c *sql.Conn, migration migrationFile) (b
 		return verifyCreateTableContract(ctx, c, contract)
 	}
 	if startsWithSQLKeywords(migration.sql, "ALTER", "TABLE") {
-		table, constraint, index, err := parseAlterTableConstraint(migration.sql)
+		contract, err := parseAlterTableContract(migration.sql)
 		if err != nil {
 			return false, fmt.Errorf("ALTER TABLE migration cannot be repaired automatically; repair manually: %w", err)
 		}
-		return verifyAlterTableConstraint(ctx, c, table, constraint, index)
+		return verifyAlterTableContract(ctx, c, contract)
 	}
 	return false, errors.New("migration has no repair postcondition")
 }
@@ -526,59 +526,112 @@ func verifyCreateTableContract(ctx context.Context, c *sql.Conn, expected create
 	return equalCreateTableForeignKeys(expected.constraints, foreignKeys), nil
 }
 
-func parseAlterTableConstraint(statement string) (string, createTableConstraint, *createTableIndex, error) {
+type alterTableContract struct {
+	table      string
+	column     *createTableColumn
+	index      *createTableIndex
+	constraint *createTableConstraint
+}
+
+func parseAlterTableContract(statement string) (alterTableContract, error) {
 	statement = strings.TrimSpace(statement)
 	if strings.HasSuffix(statement, ";") {
 		statement = strings.TrimSpace(strings.TrimSuffix(statement, ";"))
 	}
 	p := ddlParser{text: statement}
 	if !p.keyword("ALTER") || !p.keyword("TABLE") {
-		return "", createTableConstraint{}, nil, errors.New("expected ALTER TABLE")
+		return alterTableContract{}, errors.New("expected ALTER TABLE")
 	}
 	table, ok := p.identifier()
 	if !ok || !p.keyword("ADD") {
-		return "", createTableConstraint{}, nil, errors.New("invalid ALTER TABLE target")
+		return alterTableContract{}, errors.New("invalid ALTER TABLE target")
 	}
 	rest := strings.TrimSpace(p.text[p.pos:])
-	contract := createTableContract{table: table}
-	if err := contract.addNamedConstraint(rest); err != nil {
-		return "", createTableConstraint{}, nil, err
+	if rest == "" {
+		return alterTableContract{}, errors.New("ALTER TABLE ADD has no definition")
 	}
-	if len(contract.constraints) != 1 || contract.constraints[0].foreignKey == nil {
-		return "", createTableConstraint{}, nil, errors.New("only named FOREIGN KEY additions are repairable automatically")
+
+	parsed := createTableContract{table: table}
+	result := alterTableContract{table: table}
+	switch {
+	case startsWithSQLKeywords(rest, "COLUMN"):
+		columnParser := ddlParser{text: rest}
+		columnParser.keyword("COLUMN")
+		definition := strings.TrimSpace(rest[columnParser.pos:])
+		if definition == "" {
+			return alterTableContract{}, errors.New("ADD COLUMN has no definition")
+		}
+		if err := parsed.addColumn(definition); err != nil {
+			return alterTableContract{}, err
+		}
+		if len(parsed.columns) != 1 {
+			return alterTableContract{}, errors.New("ADD COLUMN must add exactly one column")
+		}
+		result.column = &parsed.columns[0]
+	case startsWithSQLKeywords(rest, "KEY") || startsWithSQLKeywords(rest, "INDEX"):
+		if err := parsed.addNamedIndex(rest); err != nil {
+			return alterTableContract{}, err
+		}
+		if len(parsed.indexes) != 1 {
+			return alterTableContract{}, errors.New("ADD KEY must add exactly one index")
+		}
+		result.index = &parsed.indexes[0]
+	case startsWithSQLKeywords(rest, "CONSTRAINT"):
+		if err := parsed.addNamedConstraint(rest); err != nil {
+			return alterTableContract{}, err
+		}
+		if len(parsed.constraints) != 1 || parsed.constraints[0].foreignKey == nil {
+			return alterTableContract{}, errors.New("only named FOREIGN KEY constraint additions are repairable automatically")
+		}
+		result.constraint = &parsed.constraints[0]
+	default:
+		return alterTableContract{}, errors.New("only ADD COLUMN, ADD KEY, and named FOREIGN KEY additions are repairable automatically")
 	}
-	var index *createTableIndex
-	if len(contract.indexes) > 0 {
-		index = &contract.indexes[0]
-	}
-	return table, contract.constraints[0], index, nil
+	return result, nil
 }
 
-func verifyAlterTableConstraint(ctx context.Context, c *sql.Conn, table string, expected createTableConstraint, index *createTableIndex) (bool, error) {
-	constraints, err := readCreateTableConstraints(ctx, c, table)
-	if err != nil {
-		return false, err
+func verifyAlterTableContract(ctx context.Context, c *sql.Conn, expected alterTableContract) (bool, error) {
+	switch {
+	case expected.column != nil:
+		columns, err := readCreateTableColumns(ctx, c, expected.table)
+		if err != nil {
+			return false, err
+		}
+		found := false
+		for _, column := range columns {
+			if !strings.EqualFold(column.name, expected.column.name) {
+				continue
+			}
+			if found || !equalCreateTableColumn(*expected.column, column) {
+				return false, nil
+			}
+			found = true
+		}
+		return found, nil
+	case expected.index != nil:
+		indexes, err := readCreateTableIndexes(ctx, c, expected.table)
+		if err != nil {
+			return false, err
+		}
+		return containsCreateTableIndexes(indexes, []createTableIndex{*expected.index}), nil
+	case expected.constraint != nil:
+		constraints, err := readCreateTableConstraints(ctx, c, expected.table)
+		if err != nil {
+			return false, err
+		}
+		actual, ok := constraints[strings.ToLower(expected.constraint.name)]
+		if !ok || actual.kind != expected.constraint.kind {
+			return false, nil
+		}
+		foreignKeys, err := readCreateTableForeignKeys(ctx, c, expected.table)
+		if err != nil {
+			return false, err
+		}
+		foreignKey, ok := foreignKeys[strings.ToLower(expected.constraint.name)]
+		return ok && equalCreateTableForeignKey(expected.constraint.foreignKey, foreignKey), nil
+	default:
+		return false, errors.New("empty ALTER TABLE postcondition")
 	}
-	actual, ok := constraints[strings.ToLower(expected.name)]
-	if !ok || actual.kind != expected.kind {
-		return false, nil
-	}
-	foreignKeys, err := readCreateTableForeignKeys(ctx, c, table)
-	if err != nil {
-		return false, err
-	}
-	foreignKey, ok := foreignKeys[strings.ToLower(expected.name)]
-	if !ok || !equalCreateTableForeignKey(expected.foreignKey, foreignKey) {
-		return false, nil
-	}
-	if index == nil {
-		return true, nil
-	}
-	indexes, err := readCreateTableIndexes(ctx, c, table)
-	if err != nil {
-		return false, err
-	}
-	return containsCreateTableIndexes(indexes, []createTableIndex{*index}), nil
 }
 
 func readCreateTableColumns(ctx context.Context, c *sql.Conn, table string) ([]createTableColumn, error) {

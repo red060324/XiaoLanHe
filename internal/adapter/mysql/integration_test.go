@@ -47,7 +47,7 @@ func TestMySQLMigrationIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(inspection.Pending) != 0 || len(inspection.Dirty) != 0 || len(inspection.Applied) != 25 {
+	if len(inspection.Pending) != 0 || len(inspection.Dirty) != 0 || len(inspection.Applied) != 27 {
 		t.Fatalf("inspection=%+v", inspection)
 	}
 	t.Run("live schema and repository invariants", func(t *testing.T) {

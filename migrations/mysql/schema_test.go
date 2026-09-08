@@ -78,6 +78,7 @@ func TestFlashSaleSchemasContainReconciliationIndexes(t *testing.T) {
 	}{
 		{"023_create_flash_sale_activity.sql", "KEY idx_flash_sale_activity_scope_window(edition_id,region_code,currency,status,starts_at,ends_at,id)"},
 		{"025_create_flash_sale_release_job.sql", "KEY idx_flash_sale_release_job_expired(status,lease_until,id)"},
+		{"027_add_flash_sale_release_claimable_index.sql", "ADD KEY idx_flash_sale_release_job_claimable(claimable_at,id)"},
 	} {
 		schema := migrationSQL(t, tc.migration)
 		if !strings.Contains(schema, tc.index) {
@@ -86,8 +87,24 @@ func TestFlashSaleSchemasContainReconciliationIndexes(t *testing.T) {
 	}
 }
 
+func TestFlashSaleReleaseClaimableAtUsesForwardMigrations(t *testing.T) {
+	if schema := migrationSQL(t, "025_create_flash_sale_release_job.sql"); strings.Contains(schema, "claimable_at") {
+		t.Fatal("migration 025 is immutable; claimable_at must be introduced by a forward migration")
+	}
+
+	const columnDDL = "ALTER TABLE flash_sale_release_job ADD COLUMN claimable_at DATETIME(6) GENERATED ALWAYS AS(IF(status='pending',next_attempt_at,IF(status='leased',lease_until,NULL))) STORED;"
+	if schema := strings.TrimSpace(migrationSQL(t, "026_add_flash_sale_release_claimable_at.sql")); schema != columnDDL {
+		t.Fatalf("unexpected claimable_at migration:\n%s", schema)
+	}
+
+	const indexDDL = "ALTER TABLE flash_sale_release_job ADD KEY idx_flash_sale_release_job_claimable(claimable_at,id);"
+	if schema := strings.TrimSpace(migrationSQL(t, "027_add_flash_sale_release_claimable_index.sql")); schema != indexDDL {
+		t.Fatalf("unexpected claimable index migration:\n%s", schema)
+	}
+}
+
 func TestOrderInvariantMigrationsRemainSingleStatement(t *testing.T) {
-	for _, name := range []string{"016_create_purchase_order_item.sql", "017_create_payment_record.sql"} {
+	for _, name := range []string{"016_create_purchase_order_item.sql", "017_create_payment_record.sql", "026_add_flash_sale_release_claimable_at.sql", "027_add_flash_sale_release_claimable_index.sql"} {
 		schema := strings.TrimSpace(migrationSQL(t, name))
 		withoutTerminator := strings.TrimSpace(strings.TrimSuffix(schema, ";"))
 		if withoutTerminator == "" || strings.Contains(withoutTerminator, ";") {

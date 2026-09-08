@@ -1,6 +1,6 @@
 # Research Notes
 
-- Status: `IMPLEMENTED — LOCAL CI PASS; MYSQL 8.4 REMOTE REVERIFY PENDING`
+- Status: `IMPLEMENTED — MYSQL 8.4 METADATA FIX REMOTE PASS; RELEASE CLAIM FIX IN PROGRESS`
 - Authoritative spec: `./spec.md`
 - Research date: 2026-09-07
 
@@ -36,6 +36,16 @@ uniqueness behavior.
   ASCII normalization. Machine identifiers require explicit binary semantics.
 - `SKIP LOCKED` exists, but the old modifying CTE does not. Workers need locked ID
   selection followed by update/read in the same transaction and new contention tests.
+- GitHub Actions run `34248233589` proved the CHECK metadata fix against MySQL 8.4,
+  then exposed that combining pending and expired leases with `OR` can require index
+  merge/filesort and lock more candidate rows than the final `LIMIT`. Release workers
+  therefore use one generated `claimable_at` time axis and one ordered range index.
+- A transaction-local `SET TRANSACTION ... READ COMMITTED` override is not observable
+  through `@@transaction_isolation`, which reports the session default. Live coverage
+  proves Read Committed behavior with two ordinary reads around a concurrent commit.
+- MySQL 8.4 may validly choose any bounded left-prefix index for the price and coupon
+  lookups. EXPLAIN checks bind each accepted index to its required used-key prefix
+  instead of pinning one cost-based plan.
 - `TEXT` stores at most 65,535 bytes, so a 20,000-rune utf8mb4 description can exceed
   it; unconstrained conversation/summary and catalog description fields use
   `MEDIUMTEXT` and receive maximum-input round-trip tests.
