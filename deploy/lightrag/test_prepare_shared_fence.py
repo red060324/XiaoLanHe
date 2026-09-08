@@ -219,18 +219,39 @@ class PrepareSharedFenceTests(unittest.TestCase):
             (managed.stat().st_dev, managed.stat().st_ino),
         )
         if sys.platform.startswith("linux"):
-            # Linux-only real pre-held-FD path: follow /proc/self/fd through
-            # linkat(2), without resolving the managed name again.
-            os.link(
-                f"/proc/self/fd/{descriptor}",
-                external,
-                follow_symlinks=True,
+            # Supplying a destination dir_fd forces CPython to use linkat(2).
+            # AT_SYMLINK_FOLLOW then dereferences the /proc magic link to the
+            # pre-held file description. A plain os.link call may use link(2)
+            # instead and try to link the procfs symlink itself (EXDEV).
+            parent_descriptor = os.open(
+                external.parent, os.O_RDONLY | os.O_DIRECTORY
             )
+            try:
+                os.link(
+                    f"/proc/self/fd/{descriptor}",
+                    external.name,
+                    dst_dir_fd=parent_descriptor,
+                    follow_symlinks=True,
+                )
+            finally:
+                os.close(parent_descriptor)
         else:
             # Darwin has no Linux AT_EMPTY_PATH and rejects /dev/fd linkat.
             # Linking the still-bound name at this exact hook simulates the
             # same old-inode nlink transition for the portable assertions.
             os.link(managed, external)
+        external_status = external.stat()
+        managed_status = managed.stat()
+        linked_status = os.fstat(descriptor)
+        self.assertEqual(
+            (external_status.st_dev, external_status.st_ino),
+            (held_status.st_dev, held_status.st_ino),
+        )
+        self.assertEqual(linked_status.st_nlink, held_status.st_nlink + 1)
+        self.assertEqual(
+            (managed_status.st_dev, managed_status.st_ino),
+            (held_status.st_dev, held_status.st_ino),
+        )
 
     def run_as_root(self, operator_uid=501, shared_gid=1234):
         with self.simulated_root_metadata(
@@ -307,7 +328,13 @@ class PrepareSharedFenceTests(unittest.TestCase):
     def assert_sigkill_publish_checkpoint(self, checkpoint):
         if not hasattr(os, "fork"):
             self.skipTest("POSIX fork required")
-        self.run_as_root()
+        directories, regulars = self.populate_valid_layout()
+        original_identities = {
+            path: (path.stat().st_dev, path.stat().st_ino)
+            for path in regulars
+        }
+        original_contents = {path: path.read_bytes() for path in regulars}
+        lock_paths = {self.fence / name for name in MODULE._LOCK_NAMES}
         roots = [
             os.open(path, os.O_RDONLY | os.O_DIRECTORY)
             for path in (self.fence, self.writer)
@@ -371,6 +398,31 @@ class PrepareSharedFenceTests(unittest.TestCase):
             for descriptor in (*roots, *locks):
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+            # A pre-commit kill leaves the lifecycle gate sealed. Open it only
+            # after proving that state so the parent can inspect the complete
+            # child mutation without root privileges.
+            if checkpoint == "writer":
+                self.fence.chmod(0o700)
+            for directory in (*directories, self.writer):
+                self.assertTrue(directory.is_dir())
+                self.assert_mode(directory, MODULE.SHARED_DIRECTORY_MODE)
+            for path in regulars:
+                self.assertTrue(path.is_file())
+                self.assertEqual(path.read_bytes(), original_contents[path])
+                self.assert_mode(path, MODULE.REGULAR_MODE)
+                identity = (path.stat().st_dev, path.stat().st_ino)
+                if path in lock_paths:
+                    self.assertEqual(identity, original_identities[path])
+                else:
+                    self.assertNotEqual(identity, original_identities[path])
+            self.assertFalse(
+                any(
+                    MODULE._private_temp_target(path.name) is not None
+                    for root in (self.fence, self.writer)
+                    for path in root.rglob("*")
+                )
+            )
         finally:
             os.close(ready_read)
             os.close(block_write)
